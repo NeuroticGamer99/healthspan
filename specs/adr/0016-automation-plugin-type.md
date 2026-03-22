@@ -22,8 +22,20 @@ TBD — design after the event bus (ADR-0011) and job abstraction (ADR-0012) are
 
 The `automation` plugin type is reserved in ADR-0010. A plugin declaring `PLUGIN_TYPES = ["automation"]` will be recognized by the loader. The interface contract is TBD.
 
+## Design Requirements for Future Work
+
+### Execution tracing
+
+When the automation interface is designed, it must include an execution trace system. Each automation run should record which trigger fired, which conditions were evaluated (and their results), and which actions executed (with outcomes). Traces should be published as events on the bus (`automation.run.*`) and queryable via the REST API for debugging.
+
+Home Assistant's automation trace system (recording variables, branch decisions, and step outcomes at each execution step, visible in the UI) is strong prior art. Without tracing, "why didn't my automation fire?" is unanswerable.
+
+### Scheduled triggers
+
+Time-based triggers (intervals and cron expressions) are supported by the event bus scheduler (ADR-0011, `schedule.*` events). The automation engine should treat these identically to any other event trigger — no special time-handling code in the automation layer.
+
 ## Comparable Prior Art
-- Home Assistant automations (YAML-based trigger/condition/action)
+- Home Assistant automations (YAML-based trigger/condition/action) — includes execution trace UI
 - Node-RED flow-based programming
 - AWS EventBridge rules
 

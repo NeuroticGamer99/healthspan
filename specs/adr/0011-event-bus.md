@@ -106,6 +106,58 @@ Event types use dot-notation namespaces (consistent with service names in ADR-00
 | `schema.*` | `schema.migrated` |
 | `plugin.*` | `plugin.loaded`, `plugin.failed` |
 | `system.*` | `system.started`, `system.stopping` |
+| `schedule.*` | `schedule.interval`, `schedule.cron` |
+
+## Scheduled and Cron Triggers
+
+The event bus is reactive — events fire when something changes. But health data workflows also need time-based triggers: "every Monday, generate a weekly CGM summary"; "every 6 hours, poll Dexcom API for new readings"; "on the 1st of each month, check for overdue lab orders."
+
+A **scheduler component** inside the Core Service emits time-based events onto the bus, making scheduled triggers look like any other event to automation plugins (ADR-0016) and subscribers.
+
+### Event types
+
+**Interval events** fire at a fixed period:
+
+```json
+{
+  "type": "schedule.interval",
+  "payload": { "name": "dexcom_poll", "interval_seconds": 21600 }
+}
+```
+
+**Cron events** fire on a cron-style schedule:
+
+```json
+{
+  "type": "schedule.cron",
+  "payload": { "name": "weekly_cgm_summary", "cron": "0 8 * * MON" }
+}
+```
+
+### Configuration
+
+Schedules are declared in the shared TOML config:
+
+```toml
+[[schedule]]
+name = "dexcom_poll"
+type = "interval"
+interval = "6h"
+
+[[schedule]]
+name = "weekly_cgm_summary"
+type = "cron"
+cron = "0 8 * * MON"
+```
+
+Automation plugins can also register schedules programmatically via `context.events`.
+
+### Design constraints
+
+- The scheduler runs inside the Core Service process — no external cron daemon required
+- Missed triggers (Core Service was stopped) are not retroactively fired; the next scheduled time applies
+- Schedule names are unique; duplicate names in config are rejected at startup
+- The scheduler is a first-party plugin, consistent with the micro-kernel principle
 
 ## Qt Integration Pattern
 
