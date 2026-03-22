@@ -3,3 +3,4 @@ specs/personal/
 *.db-shm
 *.db-wal
 data/
+.claude/settings.local.json
