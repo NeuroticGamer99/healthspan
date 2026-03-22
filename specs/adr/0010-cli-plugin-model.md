@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The platform needs to be extensible without requiring users to fork the repository, build from source, or understand the full system. Beyond simple CLI command additions, the plugin system must support extending the AI interface, adding import adapters, contributing analysis functions, and providing services that other plugins can depend on. How should the plugin architecture be designed to support this?
+The platform needs to be extensible without requiring users to fork the repository, build from source, or understand the full system. Beyond simple command-line interface (CLI) command additions, the plugin system must support extending the AI interface, adding import adapters, contributing analysis functions, and providing services that other plugins can depend on. How should the plugin architecture be designed to support this?
 
 ## Decision Drivers
 - Extensions must be installable by dropping a file or directory into a plugins folder — no build step, no package manager

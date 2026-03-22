@@ -44,7 +44,7 @@ CLI + plugins           ─┘
 - **Core Service** — the only process that owns the database. Versioned REST API. Authentication on every endpoint. Input validation at the boundary.
 - **MCP Server** — exposes named tools to any MCP-compatible AI client. AI-provider agnostic.
 - **GUI** — standalone PySide6 desktop client. Replaceable: it's just another API client.
-- **CLI** — first-class scripting layer with a directory-scanning plugin system. Drop a `.py` file into the plugins directory; new commands appear.
+- **CLI (command-line interface)** — first-class scripting layer with a directory-scanning plugin system. Drop a `.py` file into the plugins directory; new commands appear.
 - **Event bus** — SSE-based by default. ZeroMQ and MQTT available as adapter plugins for more complex deployments.
 
 Full architectural documentation is in [`specs/`](specs/), including 20 Architecture Decision Records covering every major design choice.

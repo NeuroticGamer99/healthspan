@@ -15,7 +15,7 @@ A personal longitudinal health data platform that:
 
 ## Architectural Philosophy: Layered, Process-Isolated (Unix Principle)
 
-The platform is built as a set of independent processes with well-defined interfaces, not as a monolith. Each process has one job. No process has privileged status. The AI client interface, GUI, import pipeline, and CLI are all clients of the core service — none of them is the foundation.
+The platform is built as a set of independent processes with well-defined interfaces, not as a monolith. Each process has one job. No process has privileged status. The AI client interface, GUI, import pipeline, and command-line interface (CLI) are all clients of the core service — none of them is the foundation.
 
 This design has two practical goals:
 
