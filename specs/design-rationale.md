@@ -204,7 +204,7 @@ The rationale for tools over raw SQL: natural language queries from an AI client
 
 - The SQLite database file (`*.db`, `*.db-shm`, `*.db-wal`)
 - Any personal health data, even in document form
-- Personal context documents used to orient Claude during development sessions
+- Personal context documents used to orient Claude, GitHub Copilot or other AI coding agents during development sessions
 
 The schema DDL (`schema.sql`) and migration scripts are the source of truth for database structure. The database itself should be backed up via appropriate means (e.g. a cloud backup service) independently of the Git repository.
 
