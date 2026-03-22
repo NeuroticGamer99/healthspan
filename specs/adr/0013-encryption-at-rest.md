@@ -30,15 +30,16 @@ A related problem is key management: encryption is only meaningful if the key is
 ## Decision Outcome
 
 **Database encryption:** SQLCipher
-**Key management:** OS keychain via `keyring`, with passphrase-derived key as a supported alternative
+**Key management:** Two-factor hybrid — randomly generated secret key (stored in OS keychain via `keyring`) combined with a user master passphrase, derived together via Argon2id. Passphrase-only mode is a supported alternative for users who require full portability without any OS keychain dependency.
 
-These are independent choices that combine: the database is always encrypted with SQLCipher; how the key is stored is user-configurable, defaulting to the OS keychain.
+These are independent choices that combine: the database is always encrypted with SQLCipher; the key is always derived from two independent components in the default mode. The OS keychain is the storage mechanism for the secret key component — not the key management strategy itself. Neither the secret key alone nor the passphrase alone is sufficient to open the database.
 
 ### Positive Consequences
-- The database file is opaque ciphertext at rest — unreadable without the key regardless of how the file is obtained
-- OS keychain default requires zero user action beyond normal OS login — transparent to non-technical users
+- The database file is opaque ciphertext at rest — neither credential component alone is sufficient to decrypt it
+- Secret key is stored and retrieved automatically by the OS keychain — no manual key management under normal operation
+- Master passphrase adds a genuine second factor: an attacker who compromises the OS keychain still cannot open the database without it
+- Recovery Kit enables cross-device portability without ever transmitting the derived database key
 - `keyring` is a well-audited, widely deployed library (used by pip, poetry, AWS CLI, GitHub CLI, Jupyter) — not an experimental choice
-- Passphrase option gives technically sophisticated users explicit control and cross-device portability
 - Encryption is transparent after connection open — no changes to queries, schema, migrations, or the ORM layer
 
 ### Negative Consequences / Tradeoffs
@@ -173,6 +174,8 @@ biocontext init --restore
 
 Full auto-unlock stores the passphrase in the OS keychain for zero-friction startup. It sacrifices the two-factor security benefit but retains the Recovery Kit portability benefit.
 
+**Full auto-unlock passphrase storage:** The passphrase must be stored via `keyring.set_password()` — the same OS keychain API used for the secret key. It must never be written to a config file, environment variable, or any plaintext location. Storing it in the OS keychain means it is protected by the same OS-level encryption as the secret key (DPAPI on Windows, login keychain on macOS, libsecret on Linux). The security consequence is that both components now reside in the same credential store, which is why full auto-unlock collapses to single-factor protection — an attacker who can access the OS keychain obtains both without additional work.
+
 ### Comparison with prior approaches
 
 | | Pure OS keychain | Pure passphrase | Two-factor hybrid |
@@ -257,7 +260,27 @@ For containerized deployment the recommended approach is passphrase-derived key 
 
 ## Future Hardening Path
 
-Hardware-backed key storage — where key material never leaves a secure hardware enclave, providing protection even against processes running as the same user — is the meaningful next step:
+### Hardware security keys (Yubikey / FIDO2)
+
+Yubikey's HMAC-SHA1 challenge-response mode is a well-established pattern for local encryption key hardening — it is how KeePassXC integrates hardware tokens. The approach:
+
+1. At `biocontext init`, generate a random challenge and store it alongside the database config
+2. At each startup, send the stored challenge to the Yubikey; it returns a deterministic HMAC response computed from a secret stored in hardware
+3. Incorporate the response as a third key derivation input: `db_key = Argon2id(passphrase + secret_key + yubikey_response)`
+
+This provides genuine hardware-backed protection: an attacker who has both the OS keychain and knows the passphrase still cannot open the database without physical possession of the Yubikey. Python support exists via `yubikey-manager` (`ykman`). A backup Yubikey (or fallback to passphrase-only mode) must be provisioned at init to avoid lockout on hardware loss.
+
+This fits cleanly into the existing architecture as an optional third component — the key derivation function gains an additional input; nothing else changes.
+
+### TOTP authenticator apps — not suitable for key derivation
+
+TOTP (RFC 6238, used by Google Authenticator, Authy, etc.) is not suitable as a direct input to encryption key derivation. TOTP codes are time-based and change every 30 seconds; key derivation must be deterministic — the same inputs must produce the same key on every startup. A TOTP code from Monday cannot decrypt a database on Tuesday.
+
+TOTP is designed for *authentication* (proving identity to a server that can accept or reject a response) rather than *key derivation* (producing a stable cryptographic key). These are different problems with different requirements. TOTP could theoretically be used to unlock a stored wrapped copy of the db_key, but this adds significant complexity and failure modes (clock skew, TOTP secret loss) for no meaningful gain over the Yubikey approach.
+
+### OS-level hardware-backed storage (TPM / Secure Enclave)
+
+Hardware-backed key storage at the OS level — where key material never leaves a secure hardware enclave — provides protection even against processes running as the same user:
 
 - **Windows**: TPM via Windows CNG API
 - **macOS**: Secure Enclave via CryptoKit / Security framework
