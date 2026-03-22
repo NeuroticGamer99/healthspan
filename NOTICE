@@ -1,0 +1,48 @@
+biocontext
+Copyright (c) 2026 Matthew Zaleski
+
+Licensed under the MIT License. See LICENSE for details.
+
+-------------------------------------------------------------------------------
+
+IMPORTANT NOTICES REGARDING PERSONAL HEALTH DATA
+-------------------------------------------------
+
+This software is designed to store, organize, and analyze personal health
+information including laboratory results, clinical events, medications,
+body composition measurements, and continuous monitoring data.
+
+1. NO WARRANTY
+   This software is provided "as is" without warranty of any kind. The authors
+   make no representations regarding the accuracy, completeness, or fitness for
+   any particular purpose of this software or any analysis it produces. Do not
+   make medical decisions based solely on outputs from this software.
+
+2. NOT MEDICAL ADVICE
+   This software is a personal data organization and analysis tool. It is not
+   a medical device, clinical decision support system, or substitute for
+   professional medical advice, diagnosis, or treatment. Always consult a
+   qualified healthcare provider regarding your health.
+
+3. DATA SECURITY
+   This software encrypts the database file at rest using AES-256 (SQLCipher)
+   with a two-factor key model: a randomly generated secret key stored in the
+   OS keychain combined with a user master passphrase. The encrypted file is
+   opaque ciphertext and is safe for cloud backup and sync. You remain solely
+   responsible for:
+   - Safeguarding your master passphrase and Recovery Kit
+   - Ensuring your backup strategy is appropriate for your threat model
+   - Complying with any applicable privacy laws in your jurisdiction
+
+4. NO PERSONAL DATA IS INCLUDED
+   This repository contains only code, schema definitions, and documentation.
+   No personal health data is included. Any database file (*.db) is excluded
+   from version control via .gitignore and must never be committed.
+
+5. THIRD-PARTY SERVICES
+   This software may be configured to interact with third-party services
+   (AI clients, lab data providers, wearable platforms). Use of those services
+   is subject to their respective terms and privacy policies. Review those
+   terms before connecting your health data to any external service. When
+   using a cloud-based AI client, your health data leaves your machine during
+   analysis — use a local AI model if this is a concern.

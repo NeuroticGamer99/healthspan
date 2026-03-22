@@ -1,0 +1,5 @@
+specs/personal/
+*.db
+*.db-shm
+*.db-wal
+data/
