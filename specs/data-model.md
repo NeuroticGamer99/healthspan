@@ -94,7 +94,19 @@ Discrete architectural decisions that emerge from this document should be captur
   - `reason` enum: `scheduled_titration`, `lab_result`, `symptom_response`, `side_effect`, `cost_or_availability`, `physician_directed`, `protocol_change`, `other` — why the change was made; orthogonal to who made it
   - `notes` — free text for additional context (e.g. "testosterone trough was 420, targeting 600-800")
   - Standard audit columns
-- **Key design note:** `authority_type` and `reason` are intentionally separate. A `lab_result`-driven change can be either `prescribing_physician` (doctor reviewed labs and called in a new dose) or `self` (you reviewed labs and adjusted). Both dimensions matter for longitudinal interpretation.
+- **Key design note:** `authority_type` and `reason` are intentionally orthogonal axes. The same `reason` can occur under different authorities, and the combination carries meaning that neither field expresses alone:
+
+  | `reason`           | `authority_type`         | Meaning |
+  |--------------------|--------------------------|---------|
+  | `lab_result`       | `prescribing_physician`  | Doctor reviewed your testosterone trough and called in a new dose |
+  | `lab_result`       | `self`                   | You reviewed your own labs and adjusted without physician involvement |
+  | `symptom_response` | `supervising_clinician`  | NP adjusted based on reported symptoms at a follow-up visit |
+  | `symptom_response` | `self`                   | You adjusted based on how you were feeling |
+  | `scheduled_titration` | `protocol`            | Dose increase following a published TRT protocol, not a specific physician directive |
+  | `side_effect`      | `self`                   | You reduced dose due to elevated hematocrit or other adverse sign |
+  | `side_effect`      | `prescribing_physician`  | Physician directed reduction after reviewing labs showing adverse effect |
+
+  This lets an AI client answer questions that require both dimensions: *"show me all self-directed dose changes"*, *"what dose was I on when my hematocrit spiked, and who ordered it?"*, or *"have any of my self-adjustments been later validated by a physician titration in the same direction?"*
 - **Status:** Designed — ready to implement
 
 ### Clinical Documents & Visit Notes
