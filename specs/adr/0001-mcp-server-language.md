@@ -1,7 +1,7 @@
 # ADR-0001: Implementation Language
 
 ## Status
-Accepted
+Superseded by [ADR-0023](0023-distribution-mechanism.md)
 
 ## Context and Problem Statement
 The platform consists of multiple processes: Core Service, MCP Server, CLI, GUI, and Import Pipeline (see ADR-0006). A single consistent language across all components reduces context-switching, enables code sharing, and simplifies the development and contribution experience. What language should the platform be implemented in?
@@ -14,7 +14,7 @@ Note: this ADR was originally scoped to the MCP server only. It has been broaden
 - GUI framework availability (PySide6 for Qt — see ADR-0006)
 - FastAPI for the Core Service HTTP layer
 - Ease of open source contribution
-- Zero-friction installation for non-technical users — no Python knowledge required
+- Distributable binary support (Nuitka for compiled output)
 - Single language across all components
 
 ## Considered Options
@@ -33,12 +33,12 @@ Python is the language for all platform components: Core Service (FastAPI), MCP 
 - PySide6 (Qt for Python, LGPL) for the GUI — native performance, excellent charting, cross-platform
 - typer for the CLI — clean, declarative command definitions
 - Rich ecosystem for data ingestion: CSV, JSON, PDF parsing, HTTP clients for external APIs
-- `uv tool install biocontext` installs the full application into an isolated, self-contained environment — users need only `uv`, not Python
+- Nuitka compiles Python to C-based executables — shippable binary without requiring Python installed
 - `pip-audit` and `uv` for dependency management and security auditing
 
 ### Negative Consequences / Tradeoffs
 - The official Anthropic MCP SDK is TypeScript-first; the Python SDK (`mcp` / `fastmcp`) is slightly less mature — accepted given the ecosystem tradeoffs
-- Python packaging has historically been complex; mitigated by `uv tool install` for distribution
+- Python packaging has historically been complex; mitigated by `uv` and Nuitka for distribution
 
 ## Pros and Cons of the Options
 
@@ -56,6 +56,7 @@ Python is the language for all platform components: Core Service (FastAPI), MCP 
 - Con: Python MCP SDK is less mature than TypeScript equivalent — acceptable tradeoff
 
 ## Links
+- Superseded by: [ADR-0023](0023-distribution-mechanism.md) — replaces Nuitka with `uv tool install`
 - Related: [ADR-0006](0006-application-architecture.md) — full process architecture
 - Related: [ADR-0007](0007-mcp-transport.md) — MCP server uses fastmcp over HTTP/SSE
 - Resolved from: [open-questions.md](../open-questions.md)

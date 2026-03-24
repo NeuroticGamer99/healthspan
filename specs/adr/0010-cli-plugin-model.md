@@ -96,13 +96,8 @@ PLUGIN_TYPES = ["provider"]                 # service provider only
 ### Compatibility declarations
 
 ```python
-PLUGIN_VERSION = "1.2.0"        # required for third-party plugins — SemVer 2.0.0
 PLUGIN_API_MIN_VERSION = 1      # required — minimum platform API version
 PLUGIN_API_MAX_VERSION = 2      # optional — omit if no known upper bound
-PLUGIN_PACKAGES = [             # optional — pip packages required by this plugin
-    "pandas",                   # catalog-governed: biocontext resolves the version
-    "numpy",
-]
 PLUGIN_DEPENDENCIES = [         # optional — inter-plugin service dependencies
     "quest.parser >= 1",
     "quest.api_client >= 2",
@@ -110,8 +105,6 @@ PLUGIN_DEPENDENCIES = [         # optional — inter-plugin service dependencies
 ```
 
 Omitting `PLUGIN_API_MAX_VERSION` signals that the plugin author expects forward compatibility. A ceiling should only be set when a specific future incompatibility is known.
-
-`PLUGIN_VERSION` is required for any plugin distributed outside the biocontext repository. First-party plugins (shipped with biocontext) are exempt — they are versioned as a unit with the platform and are always mutually compatible.
 
 ---
 
@@ -253,15 +246,13 @@ dir = "~/.biocontext/plugins"
 At startup, the loader:
 
 1. Scans `plugins_dir` for `.py` files and directories with `__init__.py` (non-recursive at the top level)
-2. Imports each as a module; reads `PLUGIN_TYPES`, `PLUGIN_VERSION`, `PLUGIN_API_MIN_VERSION`, `PLUGIN_API_MAX_VERSION`, `PLUGIN_PACKAGES`, `PLUGIN_DEPENDENCIES`
+2. Imports each as a module; reads `PLUGIN_TYPES`, `PLUGIN_API_MIN_VERSION`, `PLUGIN_API_MAX_VERSION`, `PLUGIN_DEPENDENCIES`
 3. Validates API version compatibility; skips and warns on mismatch
-4. Installs any packages declared in `PLUGIN_PACKAGES` (see Plugin pip Package Dependencies below)
-5. Builds a dependency graph from `PLUGIN_DEPENDENCIES`
-6. Detects cycles; fails with a clear error if found
-7. Detects version conflicts in `PLUGIN_DEPENDENCIES`; fails with a clear error naming the conflicting requirements — the loader does not attempt to resolve conflicts (see Plugin Versioning below)
-8. Loads plugins in topological order (providers before consumers)
-9. Calls `register(context, api_version)` for each plugin
-10. Built-in first-party plugins are loaded first; user plugins loaded after may override built-in service registrations by registering the same service name
+4. Builds a dependency graph from `PLUGIN_DEPENDENCIES`
+5. Detects cycles; fails with a clear error if found
+6. Loads plugins in topological order (providers before consumers)
+7. Calls `register(context, api_version)` for each plugin
+8. Built-in first-party plugins are loaded first; user plugins loaded after may override built-in service registrations by registering the same service name
 
 A missing required dependency (`require_service` with no registered provider) fails at load time with a clear error naming the missing service and the plugin that requires it.
 
@@ -275,69 +266,10 @@ Minor additions (new context properties, new plugin types, new helpers) do not i
 
 | Declaration | Required | Purpose |
 |---|---|---|
-| `PLUGIN_VERSION` | Third-party only | Plugin's own version; SemVer 2.0.0 |
 | `PLUGIN_API_MIN_VERSION` | Yes | Lowest API version the plugin supports |
 | `PLUGIN_API_MAX_VERSION` | No | Highest API version; omit to indicate no known upper bound |
-| `PLUGIN_PACKAGES` | No | pip packages required by this plugin |
 | `PLUGIN_DEPENDENCIES` | No | Inter-plugin service dependencies with version constraints |
 | `api_version` in `register` | N/A | Current API version passed by loader; use for conditional behavior |
-
----
-
-## Plugin Versioning
-
-Third-party plugins must declare `PLUGIN_VERSION` using [SemVer 2.0.0](https://semver.org/). Breaking changes to a plugin's interface — changes that would cause a dependent plugin or consumer to fail — **must** increment the major version. Minor and patch increments must remain backwards-compatible within their major version.
-
-This convention makes `PLUGIN_DEPENDENCIES` version constraints meaningful. A consumer declaring `"quest.parser >= 1"` can trust that any `1.x` service is compatible. A jump to `2` signals a breaking change and requires explicit update of the dependent plugin.
-
-### Conflict detection
-
-When multiple `PLUGIN_DEPENDENCIES` declarations require incompatible versions of the same service, the loader fails at startup with a clear error naming:
-- The conflicting requirement
-- Each plugin that declared it
-- The versions in conflict
-
-The loader does not attempt to resolve conflicts. Resolution is left to the user (upgrade or remove a plugin). A dependency resolver is out of scope for v1 and should be revisited when the plugin ecosystem is large enough to justify the complexity.
-
-### First-party plugins
-
-Plugins shipped with biocontext are versioned as a unit with the platform. They do not declare `PLUGIN_VERSION` and are always mutually compatible. `PLUGIN_DEPENDENCIES` version constraints between first-party plugins are unnecessary.
-
----
-
-## Plugin pip Package Dependencies
-
-Plugins may declare pip packages they require via `PLUGIN_PACKAGES`. The loader installs these before calling `register()`.
-
-### Catalog-governed packages (default)
-
-biocontext maintains a curated catalog of approved packages at pinned versions. When a plugin declares a package name without a version, biocontext resolves the version from the catalog:
-
-```python
-PLUGIN_PACKAGES = ["pandas", "numpy"]   # biocontext catalog picks the version
-```
-
-All catalog-governed packages resolve to the same version across all plugins, preventing inter-plugin conflicts.
-
-### Off-catalog packages (expert override)
-
-An explicit version pin signals intentional deviation from the catalog:
-
-```python
-PLUGIN_PACKAGES = ["pandas==2.2.3", "some-obscure-lib==0.4.1"]  # expert territory
-```
-
-biocontext treats any explicit version or any package absent from the catalog as an off-catalog request:
-
-- **CLI**: warns and requires `--yes` or interactive confirmation before installing
-- **GUI**: modal warning — the user must explicitly accept before the plugin activates
-- **Config flag**: `allow_uncatalogued_packages = true` in the TOML config skips confirmation for users who opt in globally
-
-Version conflicts between off-catalog packages are the user's responsibility. biocontext will report installation failures clearly but will not attempt to mediate them.
-
-### Security note
-
-`PLUGIN_PACKAGES` installation carries the same trust boundary as the plugin itself. Installing a plugin already grants it arbitrary code execution. Declared package dependencies are an extension of that trust — review both the plugin and its declared dependencies before installing from an untrusted source.
 
 ---
 
@@ -395,9 +327,9 @@ Design deferred until the GUI is implemented and real plugin configuration patte
 ---
 
 ## Links
+- Extended by: [ADR-0024](0024-plugin-extensions.md) — adds `PLUGIN_VERSION`, `PLUGIN_PACKAGES`, pip dependency management, and plugin versioning policy
 - Related: [ADR-0006](0006-application-architecture.md) — micro-kernel architecture; plugins as the primary delivery mechanism for business logic
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — import adapters are a plugin type
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — reference range frameworks are a plugin type
 - Related: [ADR-0007](0007-mcp-transport.md) — MCP tools are a plugin type
-- Related: [ADR-0022](0022-semver.md) — biocontext version policy; governs `PLUGIN_VERSION` requirement
 - Related: [specs/security.md](../security.md) — plugin security requirements
