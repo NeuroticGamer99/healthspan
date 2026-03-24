@@ -78,8 +78,24 @@ Discrete architectural decisions that emerge from this document should be captur
 - **Sources:** Manual entry
 - **Cadence:** Duration-based (start date, end date or ongoing)
 - **Examples:** TRT, medications, supplements, therapies
-- **Schema considerations:** Dose, route, frequency; dose history child table TBD (see [open-questions.md](open-questions.md))
+- **Schema considerations:** Dose, route, frequency; current dose is a denormalized convenience column derived from the latest `intervention_dose_history` row
 - **Status:** Table defined; no data entered yet
+
+### Intervention Dose History
+- **Relationship:** Child table of `interventions` (many dose-history rows per intervention)
+- **Purpose:** Records every dose change for an intervention, preserving the full titration history with who directed the change and why — critical for correlating lab trends against dose adjustments over time
+- **Schema considerations:**
+  - `intervention_id` — FK to `interventions`
+  - `effective_date` — when this dose took effect; timestamp quadruple (UTC + local + tz + inferred flag)
+  - `dose`, `unit` — e.g. `200`, `mg/week`
+  - `change_type` enum: `initiation`, `increase`, `decrease`, `hold`, `resumption`, `discontinuation`
+  - `authority_type` enum: `prescribing_physician`, `supervising_clinician`, `self`, `protocol` — the primary axis for distinguishing medically directed changes from self-adjustment
+  - `ordered_by` — free text; name/role of the directing party (NULL when `authority_type = 'self'`)
+  - `reason` enum: `scheduled_titration`, `lab_result`, `symptom_response`, `side_effect`, `cost_or_availability`, `physician_directed`, `protocol_change`, `other` — why the change was made; orthogonal to who made it
+  - `notes` — free text for additional context (e.g. "testosterone trough was 420, targeting 600-800")
+  - Standard audit columns
+- **Key design note:** `authority_type` and `reason` are intentionally separate. A `lab_result`-driven change can be either `prescribing_physician` (doctor reviewed labs and called in a new dose) or `self` (you reviewed labs and adjusted). Both dimensions matter for longitudinal interpretation.
+- **Status:** Designed — ready to implement
 
 ### Clinical Documents & Visit Notes
 - **Sources:** Manual entry; future: patient portal export (FHIR DocumentReference, CCDA), PDF import

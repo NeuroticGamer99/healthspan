@@ -43,8 +43,7 @@ Decide the degree of separation between write and read models before designing t
 Add a `biomarker_aliases` table now, or handle lab-to-canonical name normalization at import time?
 Adding it now keeps the schema self-contained and makes aliases a first-class concept. Handling it at import time defers complexity but risks inconsistency as data entry scales.
 
-**Intervention dose history**
-If a tracked intervention has dose changes over time, a `intervention_dose_history` child table is needed. Define the pattern now before any interventions are entered, or add it on first need?
+~~**Intervention dose history**~~ → Resolved — see Resolved section.
 
 **Biomarker category taxonomy**
 The `biomarkers` table has a `category` column (lipids, metabolic, thyroid, hormones, inflammation, etc.). This taxonomy should be defined and documented before bulk data entry begins so categories are consistent across sources.
@@ -104,6 +103,8 @@ What export options exist for each body composition device (currently InBody 120
 ## Resolved
 
 - **Timezone storage convention** → UTC as ground truth (ISO 8601). Every timestamp table carries four columns: `*_utc` (UTC, ground truth), `*_local_recorded` (original value from source, immutable), `*_local_tz` (IANA timezone name, best guess), `*_tz_inferred` (boolean — 1 if timezone was assumed not known). Correction workflow: update `local_tz`, recompute `*_utc` from `local_recorded`, clear `tz_inferred`. See [design-rationale.md](design-rationale.md) for the full convention.
+
+- **Intervention dose history** → `intervention_dose_history` child table with FK to `interventions`. Key fields: `change_type` enum (`initiation`, `increase`, `decrease`, `hold`, `resumption`, `discontinuation`), `authority_type` enum (`prescribing_physician`, `supervising_clinician`, `self`, `protocol`), `ordered_by` free text (NULL when self), `reason` enum (`scheduled_titration`, `lab_result`, `symptom_response`, `side_effect`, `cost_or_availability`, `physician_directed`, `protocol_change`, `other`). `authority_type` and `reason` are orthogonal — a lab-result-driven change can be either physician-directed or self-adjusted. See [data-model.md](data-model.md).
 
 - **Cloud backup strategy** → Cloud backup of the encrypted SQLite file is explicitly safe and recommended. The database file is AES-256 ciphertext (SQLCipher, ADR-0013); the cloud provider cannot read it. The provider is in the "do not trust" tier for storage — the encryption model handles this correctly. Recommended services: Dropbox, iCloud Drive, OneDrive, Backblaze, or any similar sync/backup service. Hot backups produced by `biocontext db backup` are also encrypted and safe to store in cloud. Cloud sync of the live file is safe for backup purposes but must respect SQLite's single-writer constraint — see ADR-0019 for the single-writer + cloud sync pattern.
 
