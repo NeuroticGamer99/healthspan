@@ -52,7 +52,7 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 
 | ADR | Title | Status |
 |---|---|---|
-| [ADR-0001](0001-mcp-server-language.md) | Implementation Language | Accepted |
+| [ADR-0001](0001-mcp-server-language.md) | Implementation Language | Superseded by ADR-0023 |
 | [ADR-0002](0002-ai-provider-interface.md) | AI Client Interface | Proposed |
 | [ADR-0003](0003-database-backend.md) | Database Backend | Proposed |
 | [ADR-0004](0004-data-ingestion-strategy.md) | Data Ingestion Strategy | Accepted (partially) |
@@ -73,3 +73,6 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0019](0019-multi-device-sync.md) | Multi-Device Sync | Proposed — stub |
 | [ADR-0020](0020-plugin-registry.md) | Plugin Registry / Marketplace | Proposed — stub |
 | [ADR-0021](0021-time-series-aggregation.md) | Time-Series Data Aggregation Strategy | Proposed — stub |
+| [ADR-0022](0022-semver.md) | Version Policy (SemVer 2.0.0) | Accepted |
+| [ADR-0023](0023-distribution-mechanism.md) | Distribution Mechanism | Accepted |
+| [ADR-0024](0024-plugin-extensions.md) | Plugin System Extensions — pip Dependencies and Versioning | Accepted |

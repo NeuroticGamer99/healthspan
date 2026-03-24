@@ -26,3 +26,4 @@ Before creating or modifying any file in `specs/adr/`:
 3. **Supersede, don't edit** — if a decision changes, create a new ADR that supersedes the old one. Mark the old ADR's status as `Superseded by ADR-XXXX`.
 4. **Extend, don't modify** — if an accepted ADR needs additions (new fields, new policies that don't reverse the original decision), create a new ADR that extends it. Add an `Extended by ADR-XXXX` navigation link to the original's `## Links` section. Keep the original's status as `Accepted`.
 5. **Minor edits only for typos/links** — fixing a broken link or correcting a typo in an accepted ADR is acceptable without a new ADR. Anything that changes decision content is not.
+6. **Keep the index current** — after any ADR change (new file, status update, title change), update the `## Index` table in `specs/adr/README.md` to reflect it. The index must always match the actual files and their `## Status` fields.
