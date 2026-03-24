@@ -16,3 +16,13 @@
 - Anything safe to publish in a public repository
 
 When creating or editing any file, verify it contains no personal health data before placing it outside `specs/personal/`.
+
+## ADR governance
+
+Before creating or modifying any file in `specs/adr/`:
+
+1. **Check the ADR's current status** — read the `## Status` field. Also check the remote origin for the latest version (`git fetch` if needed) since the branch may be behind.
+2. **Never modify an accepted ADR's content** — accepted ADRs are immutable historical records. The only permitted in-place edits are: correcting the `## Status` field to `Superseded by ADR-XXXX`, and adding a navigation link to the `## Links` section pointing to the superseding ADR.
+3. **Supersede, don't edit** — if a decision changes, create a new ADR that supersedes the old one. Mark the old ADR's status as `Superseded by ADR-XXXX`.
+4. **Extend, don't modify** — if an accepted ADR needs additions (new fields, new policies that don't reverse the original decision), create a new ADR that extends it. Add an `Extended by ADR-XXXX` navigation link to the original's `## Links` section. Keep the original's status as `Accepted`.
+5. **Minor edits only for typos/links** — fixing a broken link or correcting a typo in an accepted ADR is acceptable without a new ADR. Anything that changes decision content is not.
