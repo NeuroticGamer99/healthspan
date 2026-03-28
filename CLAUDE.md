@@ -17,6 +17,24 @@
 
 When creating or editing any file, verify it contains no personal health data before placing it outside `specs/personal/`.
 
+## PowerShell file encoding
+
+When running PowerShell commands that read or write project files, always use explicit UTF-8 encoding. The project contains multibyte Unicode characters (em dashes, box-drawing characters, arrows) that Windows-1252 — PowerShell's default encoding — will corrupt silently.
+
+**Reading files:**
+```powershell
+[System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+# or
+Get-Content $path -Encoding UTF8 -Raw
+```
+
+**Writing files:**
+```powershell
+[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))
+```
+
+Never use `Get-Content -Raw` without `-Encoding UTF8` on project files, and never use `Set-Content` without `-Encoding UTF8`. The `$false` parameter to `UTF8Encoding` suppresses the BOM.
+
 ## ADR governance
 
 Before creating or modifying any file in `specs/adr/`:
