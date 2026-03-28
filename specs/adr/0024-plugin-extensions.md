@@ -4,17 +4,17 @@
 Accepted
 
 ## Context and Problem Statement
-ADR-0010 established the plugin architecture: directory scanning, `PluginContext`, the service registry, and inter-plugin dependency declarations. As the plugin ecosystem is designed to support third-party plugins installable from outside the healthspan repository, two gaps emerged:
+ADR-0010 established the plugin architecture: directory scanning, `PluginContext`, the service registry, and inter-plugin dependency declarations. As the plugin ecosystem is designed to support third-party plugins installable from outside the Healthspan repository, two gaps emerged:
 
-1. **pip package dependencies**: A plugin requiring pandas, numpy, or any other pip package has no way to declare those dependencies. The base `uv tool install` environment contains only healthspan's own dependencies.
-2. **Plugin versioning**: Third-party plugins can be installed and updated independently of healthspan. Without a declared version and a compatibility contract, breaking changes in one plugin silently break its dependents.
+1. **pip package dependencies**: A plugin requiring pandas, numpy, or any other pip package has no way to declare those dependencies. The base `uv tool install` environment contains only Healthspan's own dependencies.
+2. **Plugin versioning**: Third-party plugins can be installed and updated independently of Healthspan. Without a declared version and a compatibility contract, breaking changes in one plugin silently break its dependents.
 
 ## Decision Drivers
 - Non-technical users must be able to activate plugins that need pandas or numpy without manually managing pip packages
-- Expert users must be able to use packages outside the healthspan-maintained catalog at their own risk
+- Expert users must be able to use packages outside the Healthspan-maintained catalog at their own risk
 - Plugin authors need a clear rule for when a version increment is required
 - The platform must fail loudly on incompatible plugin combinations rather than silently misbehaving
-- healthspan's security model (locked versions, curated dependencies) must extend to plugin-introduced packages
+- Healthspan's security model (locked versions, curated dependencies) must extend to plugin-introduced packages
 
 ## Decision Outcome
 Extend the plugin interface contract (ADR-0010) with three additions: `PLUGIN_VERSION`, `PLUGIN_PACKAGES`, and a versioning policy.
@@ -29,7 +29,7 @@ Third-party plugins must declare their own version using SemVer 2.0.0 (see ADR-0
 PLUGIN_VERSION = "1.2.0"
 ```
 
-This field is required for any plugin distributed outside the healthspan repository. First-party plugins (shipped with healthspan) are exempt — they are versioned implicitly with the platform release and are always mutually compatible.
+This field is required for any plugin distributed outside the Healthspan repository. First-party plugins (shipped with Healthspan) are exempt — they are versioned implicitly with the platform release and are always mutually compatible.
 
 ---
 
@@ -45,13 +45,13 @@ The loader installs these before calling `register()`.
 
 ### Catalog-governed packages (default)
 
-healthspan maintains a curated catalog of approved packages at pinned versions. A package declared by name without a version is resolved from the catalog:
+Healthspan maintains a curated catalog of approved packages at pinned versions. A package declared by name without a version is resolved from the catalog:
 
 ```python
 PLUGIN_PACKAGES = ["pandas", "numpy"]   # healthspan catalog picks the version
 ```
 
-All catalog-governed packages resolve to the same version across all plugins, preventing inter-plugin conflicts. The catalog is part of the healthspan release and follows the same locked-version security model as healthspan's own dependencies.
+All catalog-governed packages resolve to the same version across all plugins, preventing inter-plugin conflicts. The catalog is part of the Healthspan release and follows the same locked-version security model as Healthspan's own dependencies.
 
 ### Off-catalog packages (expert override)
 
@@ -61,13 +61,13 @@ An explicit version pin signals intentional deviation from the catalog:
 PLUGIN_PACKAGES = ["pandas==2.2.3", "some-obscure-lib==0.4.1"]
 ```
 
-healthspan treats any explicit version pin, or any package absent from the catalog entirely, as an off-catalog request:
+Healthspan treats any explicit version pin, or any package absent from the catalog entirely, as an off-catalog request:
 
 - **CLI**: warns and requires `--yes` or interactive confirmation before installing
 - **GUI**: modal warning — the user must explicitly accept before the plugin activates
 - **Config flag**: `allow_uncatalogued_packages = true` in the TOML config skips prompts for users who opt in globally
 
-Version conflicts between off-catalog packages from different plugins are the user's responsibility. healthspan reports installation failures clearly but does not mediate them.
+Version conflicts between off-catalog packages from different plugins are the user's responsibility. Healthspan reports installation failures clearly but does not mediate them.
 
 ### Security boundary
 

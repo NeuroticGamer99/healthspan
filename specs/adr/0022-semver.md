@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-healthspan exposes multiple versioned interfaces: a REST API, a plugin API, plugin service contracts, and a distributable application. Without a declared version policy, consumers of these interfaces — plugin authors, API clients, and users upgrading the application — cannot reason about compatibility or know when a change requires action on their part.
+Healthspan exposes multiple versioned interfaces: a REST API, a plugin API, plugin service contracts, and a distributable application. Without a declared version policy, consumers of these interfaces — plugin authors, API clients, and users upgrading the application — cannot reason about compatibility or know when a change requires action on their part.
 
 ## Decision Drivers
 - Plugin authors need to know what version increment a platform change requires
@@ -15,7 +15,7 @@ healthspan exposes multiple versioned interfaces: a REST API, a plugin API, plug
 ## Decision Outcome
 Chosen option: **SemVer 2.0.0 across all versioned surfaces**
 
-healthspan follows [Semantic Versioning 2.0.0](https://semver.org/) for its application releases and requires third-party plugins to do the same. The rule is simple: breaking changes increment the major version; everything else does not.
+Healthspan follows [Semantic Versioning 2.0.0](https://semver.org/) for its application releases and requires third-party plugins to do the same. The rule is simple: breaking changes increment the major version; everything else does not.
 
 ### Positive Consequences
 - Plugin authors have a clear, unambiguous rule for when to bump major/minor/patch
@@ -34,7 +34,7 @@ healthspan follows [Semantic Versioning 2.0.0](https://semver.org/) for its appl
 Each surface below is governed by SemVer. The version clock for each surface is independent.
 
 ### Application release version
-The top-level version of the healthspan distribution (the `version` field in `pyproject.toml`). This is what users install with `uv tool install healthspan` and what `healthspan --version` reports.
+The top-level version of the Healthspan distribution (the `version` field in `pyproject.toml`). This is what users install with `uv tool install healthspan` and what `healthspan --version` reports.
 
 **Breaking change examples**: removing a CLI command, changing a command's interface in a non-additive way, dropping support for a database migration path, changing the config schema in a non-backwards-compatible way.
 
@@ -49,7 +49,7 @@ The integer passed to `context.register_service(name, service, version=N)`. Incr
 ### Third-party plugin versions (`PLUGIN_VERSION`)
 Third-party plugins declare their own version using full SemVer 2.0.0 (e.g. `"1.2.0"`). The same rule applies: breaking changes to the plugin's own interface — changes that would cause a dependent plugin or consumer to fail — must increment the major version.
 
-First-party plugins (shipped with healthspan) do not declare `PLUGIN_VERSION`. They are versioned implicitly by the application release version and are always mutually compatible.
+First-party plugins (shipped with Healthspan) do not declare `PLUGIN_VERSION`. They are versioned implicitly by the application release version and are always mutually compatible.
 
 ### REST API version
 The path prefix (`/v1/`, `/v2/`, etc.) increments on breaking changes to the REST API contract. Additive changes (new endpoints, new optional fields) do not require a new prefix. See `design-rationale.md` for the full list of REST versioning conventions.

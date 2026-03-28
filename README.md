@@ -1,8 +1,8 @@
-# healthspan
+# Healthspan
 
 **Your health data, analyzed on your terms.**
 
-healthspan is a local-first personal health data platform. It aggregates lab results, continuous glucose monitoring, body composition, wearable activity, and clinical history into a single encrypted database — then exposes that data to AI-driven analysis through an open, extensible, plugin-driven architecture.
+Healthspan is a local-first personal health data platform. It aggregates lab results, continuous glucose monitoring, body composition, wearable activity, and clinical history into a single encrypted database — then exposes that data to AI-driven analysis through an open, extensible, plugin-driven architecture.
 
 Think of it as Home Assistant for personal health data: a stable, privacy-respecting core with a hackable plugin ecosystem where the line between built-in capability and your own extensions is intentionally blurred.
 
@@ -12,7 +12,7 @@ Think of it as Home Assistant for personal health data: a stable, privacy-respec
 
 Personal health data is spread across labs, patient portals, wearables, CGM apps, and clinical records — each in a different format, each siloed, none talking to the others. Making sense of it requires normalizing years of data from sources that don't agree on units, biomarker names, or reference ranges.
 
-Beyond the data problem, there's an analysis problem. Fasting insulin from Quest and fasting insulin from a hospital lab are not the same number — different immunoassay platforms produce systematically different values. Any analytical tool that doesn't track lab source alongside every result will produce misleading trends. healthspan is built around this reality.
+Beyond the data problem, there's an analysis problem. Fasting insulin from Quest and fasting insulin from a hospital lab are not the same number — different immunoassay platforms produce systematically different values. Any analytical tool that doesn't track lab source alongside every result will produce misleading trends. Healthspan is built around this reality.
 
 The goal: a single longitudinal record of your health data, queryable by AI and scriptable by you, with security and privacy treated as design requirements rather than afterthoughts.
 
@@ -32,7 +32,7 @@ The goal: a single longitudinal record of your health data, queryable by AI and 
 
 ## Architecture
 
-healthspan is built as a set of independent processes with well-defined, versioned interfaces:
+Healthspan is built as a set of independent processes with well-defined, versioned interfaces:
 
 ```
 GUI (PySide6)           ─┐

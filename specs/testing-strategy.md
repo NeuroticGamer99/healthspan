@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Standards and approach for testing the healthspan platform. Testing is a design concern — the multi-process architecture, encryption layer, plugin system, and health data sensitivity all create challenges that must be addressed before implementation begins.
+Standards and approach for testing the Healthspan platform. Testing is a design concern — the multi-process architecture, encryption layer, plugin system, and health data sensitivity all create challenges that must be addressed before implementation begins.
 
 ---
 

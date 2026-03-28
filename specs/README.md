@@ -1,6 +1,6 @@
 # specs/ — Architecture and Design Documentation
 
-This directory contains all architectural documentation for the healthspan platform. It is the primary entry point for understanding how the system is designed and why.
+This directory contains all architectural documentation for the Healthspan platform. It is the primary entry point for understanding how the system is designed and why.
 
 ---
 
@@ -28,7 +28,7 @@ The design documents inform ADRs; the ADRs formalize specific decisions that eme
 | [observability.md](observability.md) | Standards for health endpoints, structured logging, metrics, and request tracing across all platform processes. |
 | [glossary.md](glossary.md) | Project-specific terminology with definitions and source references. Covers architecture, data model, plugin system, security, and observability terms. |
 | [open-questions.md](open-questions.md) | Architectural and technical decisions that need resolution before or during implementation. Includes resolved items with links to their outcomes. |
-| [reference-home-assistant-architecture.md](reference-home-assistant-architecture.md) | Research reference documenting Home Assistant's architecture in detail. Used to inform healthspan design decisions — HA is the closest architectural analog. Not a spec for this project. |
+| [reference-home-assistant-architecture.md](reference-home-assistant-architecture.md) | Research reference documenting Home Assistant's architecture in detail. Used to inform Healthspan design decisions — HA is the closest architectural analog. Not a spec for this project. |
 
 ---
 
@@ -45,9 +45,9 @@ Design documents and ADRs serve complementary roles:
 
 ## arc42 mapping
 
-The documentation structure is informed by [arc42](https://arc42.org/), a widely-adopted software architecture documentation template. The table below maps arc42 sections to their healthspan equivalents for readers familiar with that framework. We use descriptive file names rather than arc42's numbered sections — the navigation benefit comes from the completeness checklist, not the naming convention.
+The documentation structure is informed by [arc42](https://arc42.org/), a widely-adopted software architecture documentation template. The table below maps arc42 sections to their Healthspan equivalents for readers familiar with that framework. We use descriptive file names rather than arc42's numbered sections — the navigation benefit comes from the completeness checklist, not the naming convention.
 
-| arc42 Section | healthspan Document |
+| arc42 Section | Healthspan Document |
 |---|---|
 | 1. Introduction and Goals | [README.md](../README.md) (project overview) |
 | 2. Constraints | Captured per-decision in [ADRs](adr/) (decision drivers sections) |

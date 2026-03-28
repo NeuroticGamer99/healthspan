@@ -1,6 +1,6 @@
 # Glossary
 
-Project-specific terminology used across the healthspan documentation. Terms are grouped by domain. General software terms (REST, JSON, SQLite, etc.) are not included — only terms that have specific meanings in this project.
+Project-specific terminology used across the Healthspan documentation. Terms are grouped by domain. General software terms (REST, JSON, SQLite, etc.) are not included — only terms that have specific meanings in this project.
 
 ---
 

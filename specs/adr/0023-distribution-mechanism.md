@@ -7,7 +7,7 @@ Accepted
 ADR-0001 selected Python as the implementation language and listed Nuitka as the distribution mechanism — compiling Python to a C-based executable so end users would not need Python installed. Designing the plugin architecture (ADR-0010) made clear that this approach is fundamentally unviable: Nuitka produces a compiled binary that cannot dynamically import arbitrary Python files dropped into a plugins directory at runtime. The plugin model is the primary delivery mechanism for business logic; any distribution strategy that breaks it is a non-starter. `uv tool install` installs the application into a fully isolated, self-contained environment, resolving all dependencies automatically — achieving the same user-facing goal (no Python knowledge required) without the constraint that breaks plugins.
 
 ## Decision Drivers
-- End users (non-technical, health-focused) must be able to install healthspan without understanding Python environments
+- End users (non-technical, health-focused) must be able to install Healthspan without understanding Python environments
 - Distribution must work reliably across macOS, Linux, and Windows
 - Build and release process should be as simple as possible for maintainers
 - Installation should be fast and reproducible
