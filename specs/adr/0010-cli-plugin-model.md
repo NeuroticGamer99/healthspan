@@ -56,13 +56,13 @@ The package form is the natural choice for anything providing a named suite of s
 Every plugin inherits from a trivial base class. It provides no behavior in v1 — its purpose is to reserve the seam for future shared behavior without a breaking change:
 
 ```python
-from biocontext.plugin import BiocontextPlugin
+from healthspan.plugin import HealthspanPlugin
 
-class MyPlugin(BiocontextPlugin):
+class MyPlugin(HealthspanPlugin):
     pass
 ```
 
-Inheriting from `BiocontextPlugin` is a declaration of intent. When common patterns emerge across plugin types, v2 can add shared behavior to the base class without changing the inheritance relationship.
+Inheriting from `HealthspanPlugin` is a declaration of intent. When common patterns emerge across plugin types, v2 can add shared behavior to the base class without changing the inheritance relationship.
 
 ### register function
 
@@ -240,7 +240,7 @@ The plugins directory path is configured in the shared TOML config:
 
 ```toml
 [plugins]
-dir = "~/.biocontext/plugins"
+dir = "~/.healthspan/plugins"
 ```
 
 At startup, the loader:

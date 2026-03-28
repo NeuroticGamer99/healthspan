@@ -17,7 +17,7 @@ TBD — deferred until the plugin ecosystem has enough plugins to justify the in
 
 ## Likely Approach When Addressed
 - A curated index (JSON file in a public repository) listing plugin metadata: name, author, description, version, download URL, compatibility
-- CLI command: `biocontext plugin search <query>`, `biocontext plugin install <name>`
+- CLI command: `healthspan plugin search <query>`, `healthspan plugin install <name>`
 - Trust levels: `official` (first-party), `verified` (reviewed by maintainers), `community` (unreviewed)
 - Security warning displayed for non-official plugins at install time
 

@@ -1,6 +1,6 @@
 [project]
 name = "healthspan"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "Local-first personal health data platform with MCP server for AI-assisted longitudinal analysis"
 readme = "README.md"
 authors = [

@@ -85,7 +85,7 @@ The database file contains sensitive personal health data and must be encrypted.
 - Committed to version control
 - Logged
 
-**Migration path:** For users with an existing unencrypted database, `biocontext db encrypt` migrates in place using SQLCipher's `sqlcipher_export()`, verifies integrity, and retains the original as a backup.
+**Migration path:** For users with an existing unencrypted database, `healthspan db encrypt` migrates in place using SQLCipher's `sqlcipher_export()`, verifies integrity, and retains the original as a backup.
 
 ---
 

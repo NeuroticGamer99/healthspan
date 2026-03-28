@@ -6,7 +6,7 @@ Proposed — stub
 ## Context and Problem Statement
 Some biomarker data sources produce high-frequency time-series data. Continuous glucose monitors (CGM) record readings every 5 minutes — roughly 288 readings per day or 105,000 per year. Other wearable sources (heart rate, activity, sleep stages) can be similarly dense. Raw data must be preserved for clinical accuracy, but dashboards and trend analyses need pre-computed aggregates to render efficiently without scanning millions of rows on every query.
 
-Home Assistant solves a similar problem with a two-stage statistics pipeline (raw → 5-minute → hourly), purging raw data after 10 days. Biocontext cannot purge raw health data — it has permanent clinical value — but it faces the same query performance challenge.
+Home Assistant solves a similar problem with a two-stage statistics pipeline (raw → 5-minute → hourly), purging raw data after 10 days. Healthspan cannot purge raw health data — it has permanent clinical value — but it faces the same query performance challenge.
 
 ## Decision Drivers
 - Raw readings must never be discarded — personal health data has permanent value for longitudinal analysis

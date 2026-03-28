@@ -1,6 +1,6 @@
 # Glossary
 
-Project-specific terminology used across the biocontext documentation. Terms are grouped by domain. General software terms (REST, JSON, SQLite, etc.) are not included — only terms that have specific meanings in this project.
+Project-specific terminology used across the healthspan documentation. Terms are grouped by domain. General software terms (REST, JSON, SQLite, etc.) are not included — only terms that have specific meanings in this project.
 
 ---
 
@@ -134,7 +134,7 @@ A user-chosen passphrase that is the second component of the two-factor hybrid k
 The key management approach where the database encryption key is derived via Argon2id from two independent components: the secret key (stored in the OS keychain) and the master passphrase (known only to the user). Neither component alone is sufficient to decrypt the database. See [ADR-0013](adr/0013-encryption-at-rest.md).
 
 **Recovery Kit**
-A printable document generated at `biocontext init` containing the secret key as a QR code and Base32 string, with a blank line to handwrite the master passphrase. Enables cross-device database recovery. Useless without the passphrase. See [ADR-0013](adr/0013-encryption-at-rest.md).
+A printable document generated at `healthspan init` containing the secret key as a QR code and Base32 string, with a blank line to handwrite the master passphrase. Enables cross-device database recovery. Useless without the passphrase. See [ADR-0013](adr/0013-encryption-at-rest.md).
 
 **Passphrase-only mode**
 An alternative key management mode where the encryption key is derived solely from the passphrase via Argon2id. No secret key, no OS keychain dependency. Single-factor protection. Fully portable without a Recovery Kit. See [ADR-0013](adr/0013-encryption-at-rest.md).

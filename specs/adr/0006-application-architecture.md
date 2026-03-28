@@ -65,7 +65,7 @@ No client process routes through another.
                         └───────────────────────────────┘
 ```
 
-**CLI exception:** `biocontext db migrate` and `biocontext db backup` access the database
+**CLI exception:** `healthspan db migrate` and `healthspan db backup` access the database
 directly. All other CLI operations use the Core REST API.
 
 ## Process Responsibilities
@@ -78,7 +78,7 @@ directly. All other CLI operations use the Core REST API.
 
 **Import Pipeline** — per-source importer processes. All writes go through the Core REST API bulk import endpoint, which validates and applies them transactionally. No direct database access. See ADR-0004.
 
-**CLI** — first-class scripting layer (typer). Wraps the Core REST API for power users and automation. Two exceptions where the CLI accesses the database directly: schema migrations (`biocontext db migrate`) and hot backup (`biocontext db backup`). Supports a plugin model for user-defined extensions. See ADR-0010.
+**CLI** — first-class scripting layer (typer). Wraps the Core REST API for power users and automation. Two exceptions where the CLI accesses the database directly: schema migrations (`healthspan db migrate`) and hot backup (`healthspan db backup`). Supports a plugin model for user-defined extensions. See ADR-0010.
 
 ## Shared Configuration
 A single TOML file (versioned) is read by all processes. Contains: service ports, bearer token, database path, binding address, log level, and plugin directory path. Processes do not hardcode any of these values. See versioning surfaces in design-rationale.md.

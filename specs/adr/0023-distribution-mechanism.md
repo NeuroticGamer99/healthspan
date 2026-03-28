@@ -7,7 +7,7 @@ Accepted
 ADR-0001 selected Python as the implementation language and listed Nuitka as the distribution mechanism — compiling Python to a C-based executable so end users would not need Python installed. Designing the plugin architecture (ADR-0010) made clear that this approach is fundamentally unviable: Nuitka produces a compiled binary that cannot dynamically import arbitrary Python files dropped into a plugins directory at runtime. The plugin model is the primary delivery mechanism for business logic; any distribution strategy that breaks it is a non-starter. `uv tool install` installs the application into a fully isolated, self-contained environment, resolving all dependencies automatically — achieving the same user-facing goal (no Python knowledge required) without the constraint that breaks plugins.
 
 ## Decision Drivers
-- End users (non-technical, health-focused) must be able to install biocontext without understanding Python environments
+- End users (non-technical, health-focused) must be able to install healthspan without understanding Python environments
 - Distribution must work reliably across macOS, Linux, and Windows
 - Build and release process should be as simple as possible for maintainers
 - Installation should be fast and reproducible
@@ -19,15 +19,15 @@ ADR-0001 selected Python as the implementation language and listed Nuitka as the
 - PyInstaller — bundle Python interpreter and dependencies into a single executable
 
 ## Decision Outcome
-Chosen option: **`uv tool install biocontext`**
+Chosen option: **`uv tool install healthspan`**
 
 Users install with a single command. `uv` manages the isolated environment, dependency resolution, and upgrades. No compilation, no bundled interpreter, no platform-specific binary artifacts.
 
 ### Positive Consequences
-- Single install command: `uv tool install biocontext` — no Python version management required by the user
+- Single install command: `uv tool install healthspan` — no Python version management required by the user
 - `uv` itself is a single static binary easily installed on any platform; it becomes the only prerequisite
-- Upgrade path is trivial: `uv tool upgrade biocontext`
-- Plugin pip dependencies (`PLUGIN_PACKAGES`, see ADR-0024) can be added to the tool environment via `uv tool upgrade biocontext --with <package>` or installed automatically by the loader at runtime
+- Upgrade path is trivial: `uv tool upgrade healthspan`
+- Plugin pip dependencies (`PLUGIN_PACKAGES`, see ADR-0024) can be added to the tool environment via `uv tool upgrade healthspan --with <package>` or installed automatically by the loader at runtime
 - No compilation step in CI/CD — release is publishing to PyPI
 - Reproducible installs via `uv.lock`
 

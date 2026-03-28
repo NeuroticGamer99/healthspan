@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This folder contains the Architecture Decision Records (ADRs) for the biocontext platform.
+This folder contains the Architecture Decision Records (ADRs) for the healthspan platform.
 
 ---
 

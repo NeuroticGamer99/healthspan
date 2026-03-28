@@ -29,7 +29,7 @@ The recommended near-term approach for multi-device use:
 
 3. **Single-writer enforcement.** To prevent concurrent write corruption, Core Service writes a lock file alongside the database. If another machine's sync client delivers an updated database file while Core Service is running, it must not be swapped in while the connection is open. The recommended pattern: sync service syncs the file; Core Service checks modification time at startup and warns if the file changed unexpectedly while it was offline.
 
-4. **Hot backup is encrypted.** `biocontext db backup` produces an encrypted backup file (ADR-0013). Backup files can be safely synced to cloud storage alongside the live database.
+4. **Hot backup is encrypted.** `healthspan db backup` produces an encrypted backup file (ADR-0013). Backup files can be safely synced to cloud storage alongside the live database.
 
 ## Future Approach: Multi-Master Sync
 

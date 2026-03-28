@@ -25,7 +25,7 @@ Chosen option: **Launcher script as the default; Docker Compose as a supported a
 The launcher script is the out-of-the-box experience. Docker Compose is the supported path for containerized or multi-machine deployment. systemd is documented for users who want the platform to run as a background service on Linux.
 
 ### Positive Consequences
-- Single command (`biocontext start`) brings the full stack up for new users
+- Single command (`healthspan start`) brings the full stack up for new users
 - No Docker required for local-first deployment
 - Power users can still start individual processes directly
 - Docker Compose path supports self-hosted and LAN deployment without architectural changes
@@ -38,19 +38,19 @@ The launcher script is the out-of-the-box experience. Docker Compose is the supp
 ## Option Details
 
 ### Launcher script (default)
-A Python script (`biocontext start`) that:
+A Python script (`healthspan start`) that:
 1. Reads the shared TOML config
 2. Validates that required config values are present (generates a bearer token on first run if absent)
-3. Runs any pending database migrations (`biocontext db migrate`)
+3. Runs any pending database migrations (`healthspan db migrate`)
 4. Starts Core Service, MCP Server, and optionally GUI as subprocesses
 5. Forwards stdout/stderr from each process with a process-name prefix
 6. On SIGINT/SIGTERM, shuts all child processes down gracefully
 
 Individual processes can also be started directly for partial deployments:
 ```
-biocontext service start      # Core Service only
-biocontext mcp start          # MCP Server only
-biocontext gui                # GUI only
+healthspan service start      # Core Service only
+healthspan mcp start          # MCP Server only
+healthspan gui                # GUI only
 ```
 
 ### Docker Compose (supported alternative)
@@ -65,7 +65,7 @@ Unit files for each service are documented (not shipped as defaults). Suitable f
 ## First-Run Behavior
 On first run, the launcher:
 1. Checks for a config file; if absent, generates one with defaults and a new random bearer token
-2. Checks for the database file; if absent, runs `biocontext init` to initialize encryption (generate secret key, prompt for master passphrase, prompt to save Recovery Kit — see ADR-0013), then runs the full migration sequence to create it
+2. Checks for the database file; if absent, runs `healthspan init` to initialize encryption (generate secret key, prompt for master passphrase, prompt to save Recovery Kit — see ADR-0013), then runs the full migration sequence to create it
 3. Prints the bearer token and instructions for configuring AI clients
 4. Starts the stack
 

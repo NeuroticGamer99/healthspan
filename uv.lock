@@ -4,5 +4,5 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "healthspan"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 source = { editable = "." }

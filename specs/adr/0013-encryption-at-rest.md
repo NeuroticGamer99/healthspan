@@ -58,7 +58,7 @@ The API is identical to `sqlite3` with one additional call at connection open ti
 ```python
 import sqlcipher3
 
-conn = sqlcipher3.connect("biocontext.db")
+conn = sqlcipher3.connect("healthspan.db")
 conn.execute(f"PRAGMA key='{encryption_key}'")
 # All subsequent operations are identical to standard SQLite
 ```
@@ -86,10 +86,10 @@ import secrets
 
 # First run: generate and store
 key = secrets.token_hex(32)
-keyring.set_password("biocontext", "db_encryption_key", key)
+keyring.set_password("healthspan", "db_encryption_key", key)
 
 # Every subsequent run: retrieve
-key = keyring.get_password("biocontext", "db_encryption_key")
+key = keyring.get_password("healthspan", "db_encryption_key")
 ```
 
 The key never appears in a config file, environment variable, source file, or log. It is generated once, stored by the OS, and retrieved automatically after user login.
@@ -129,7 +129,7 @@ The **secret key** is a randomly generated 32-byte value stored in the OS keycha
 ### First run
 
 ```
-biocontext init
+healthspan init
 ```
 
 1. Generate a random secret key; store in OS keychain
@@ -144,7 +144,7 @@ On the primary machine the secret key is retrieved automatically from the OS key
 
 ### Recovery Kit
 
-The Recovery Kit is a printable document generated once at `biocontext init` and on demand via `biocontext keys recovery-kit`. It contains:
+The Recovery Kit is a printable document generated once at `healthspan init` and on demand via `healthspan keys recovery-kit`. It contains:
 
 - The secret key encoded as a **QR code** (for scanning with a phone camera) and as a **Base32 string** (for manual entry if QR fails)
 - A blank line to **handwrite the master passphrase** — it is never printed
@@ -156,7 +156,7 @@ The kit is useless without the passphrase. The passphrase alone is useless witho
 ### New machine setup
 
 ```
-biocontext init --restore
+healthspan init --restore
 ```
 
 1. User scans the Recovery Kit QR code (or types the Base32 string)
@@ -193,7 +193,7 @@ Neither option has a recovery path if all credentials are lost (forgotten passph
 For users who want full portability without any OS keychain dependency, the passphrase-only mode is available:
 
 ```
-biocontext init --key-from-passphrase
+healthspan init --key-from-passphrase
 ```
 
 The key is derived solely from the passphrase using Argon2id. No secret key is generated. No OS keychain is used. The passphrase alone unlocks the database on any machine. This is the lowest-friction cross-device option but provides only single-factor protection.
@@ -236,7 +236,7 @@ Software-only solutions cannot protect against malware running with the same use
 
 ## Implementation Requirements
 
-**Hot backups are encrypted.** SQLCipher uses the standard SQLite Online Backup API (`sqlite3_backup`). Backups produced by `biocontext db backup` are encrypted ciphertext — not plaintext copies. The backup file requires the same key as the source database to open. There is no path from a hot backup to a plaintext database file without the key.
+**Hot backups are encrypted.** SQLCipher uses the standard SQLite Online Backup API (`sqlite3_backup`). Backups produced by `healthspan db backup` are encrypted ciphertext — not plaintext copies. The backup file requires the same key as the source database to open. There is no path from a hot backup to a plaintext database file without the key.
 
 **Connection lifetime**: The SQLCipher connection must be closed when not actively in use. The Core Service opens a connection per request session and closes it on completion. The key must not be held in memory indefinitely.
 
@@ -264,7 +264,7 @@ For containerized deployment the recommended approach is passphrase-derived key 
 
 Yubikey's HMAC-SHA1 challenge-response mode is a well-established pattern for local encryption key hardening — it is how KeePassXC integrates hardware tokens. The approach:
 
-1. At `biocontext init`, generate a random challenge and store it alongside the database config
+1. At `healthspan init`, generate a random challenge and store it alongside the database config
 2. At each startup, send the stored challenge to the Yubikey; it returns a deterministic HMAC response computed from a secret stored in hardware
 3. Incorporate the response as a third key derivation input: `db_key = Argon2id(passphrase + secret_key + yubikey_response)`
 

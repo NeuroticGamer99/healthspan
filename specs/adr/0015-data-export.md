@@ -47,17 +47,17 @@ A JSON envelope containing all exported data with the platform's schema version,
 One CSV file per data type, with a manifest file listing the included files and metadata. Human-readable, importable into Excel/Sheets, compatible with most data tools.
 
 ### SQLite backup
-`biocontext db backup` produces a hot backup of the database file. Not portable (requires the platform to read), but useful for disaster recovery. This is distinct from the export command and already partially addressed in ADR-0006.
+`healthspan db backup` produces a hot backup of the database file. Not portable (requires the platform to read), but useful for disaster recovery. This is distinct from the export command and already partially addressed in ADR-0006.
 
 ## CLI Interface
 
 ```
-biocontext export                          # full export, platform-native JSON
-biocontext export --format csv             # full export, CSV per data type
-biocontext export --since 2024-01-01       # date-filtered
-biocontext export --type labs,events       # data-type filtered
-biocontext export --biomarker insulin      # biomarker-filtered
-biocontext export --output ./my_export/    # output directory
+healthspan export                          # full export, platform-native JSON
+healthspan export --format csv             # full export, CSV per data type
+healthspan export --since 2024-01-01       # date-filtered
+healthspan export --type labs,events       # data-type filtered
+healthspan export --biomarker insulin      # biomarker-filtered
+healthspan export --output ./my_export/    # output directory
 ```
 
 ## Round-Trip Guarantee

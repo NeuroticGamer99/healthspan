@@ -20,7 +20,7 @@ The database schema will evolve over time as new data types are supported, exist
 - Custom migration runner — purpose-built, ~50 lines of Python, no additional dependencies
 
 ## Decision Outcome
-Chosen option: **Custom migration runner as a CLI subcommand (`biocontext db migrate`)**
+Chosen option: **Custom migration runner as a CLI subcommand (`healthspan db migrate`)**
 
 The logic required is straightforward and well-understood. A custom runner is fully transparent, introduces no additional dependencies, and is directly aligned with the `sql/migrations/` convention already specified in design-rationale.md. Alembic can be reconsidered if the database layer grows to require multi-backend migration management.
 
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 ```
 
-## Runner Behavior (`biocontext db migrate`)
+## Runner Behavior (`healthspan db migrate`)
 
 1. Read all `.sql` files in `sql/migrations/` in numeric order
 2. Query `schema_version` for already-applied migration numbers
@@ -76,7 +76,7 @@ The runner is invoked automatically by the process launcher on startup (ADR-0008
 
 Rollback is not automated. If a migration must be reversed:
 1. Write a new migration file that undoes the change (a "down migration" by another name)
-2. Apply it with `biocontext db migrate`
+2. Apply it with `healthspan db migrate`
 3. Never modify or delete an already-applied migration file
 
 ## Future Consideration

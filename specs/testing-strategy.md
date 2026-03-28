@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Standards and approach for testing the biocontext platform. Testing is a design concern — the multi-process architecture, encryption layer, plugin system, and health data sensitivity all create challenges that must be addressed before implementation begins.
+Standards and approach for testing the healthspan platform. Testing is a design concern — the multi-process architecture, encryption layer, plugin system, and health data sensitivity all create challenges that must be addressed before implementation begins.
 
 ---
 
@@ -79,9 +79,9 @@ Tests that exercise the full multi-process stack: Core Service + MCP Server + CL
 
 **Coverage targets:**
 - MCP tool calls: AI client sends a tool call → MCP server translates to REST API request → Core Service queries database → result returned
-- CLI commands: `biocontext import`, `biocontext export`, plugin-registered commands
+- CLI commands: `healthspan import`, `healthspan export`, plugin-registered commands
 - Process lifecycle: launcher starts processes in correct order; health endpoint readiness gating works; graceful shutdown
-- First-run flow: `biocontext init` generates secret key, prompts for passphrase, creates encrypted database, runs migrations
+- First-run flow: `healthspan init` generates secret key, prompts for passphrase, creates encrypted database, runs migrations
 
 ### Security tests
 
@@ -104,7 +104,7 @@ Tests that validate the database migration system.
 **Coverage targets:**
 - Fresh database: all migrations apply in sequence from empty
 - Incremental: each migration applies cleanly to a database at the previous version
-- Idempotency: running `biocontext db migrate` twice produces no errors and no duplicate rows in `schema_version`
+- Idempotency: running `healthspan db migrate` twice produces no errors and no duplicate rows in `schema_version`
 - Failure recovery: a deliberately broken migration rolls back cleanly; subsequent valid migrations still apply
 - Schema integrity: after all migrations, the database schema matches the expected table/column/index set
 
