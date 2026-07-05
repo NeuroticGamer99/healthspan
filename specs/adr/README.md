@@ -81,3 +81,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0026](0026-named-scoped-tokens.md) | Named Scoped Bearer Tokens | Proposed |
 | [ADR-0027](0027-audit-trail-and-corrections.md) | Audit Trail and Data Corrections — Event Sourcing Rejected | Proposed |
 | [ADR-0028](0028-key-derivation-and-rotation.md) | Key Derivation, Rotation, and Key Lifetime | Proposed |
+| [ADR-0029](0029-mcp-streamable-http.md) | MCP Transport Refresh — Streamable HTTP | Proposed |

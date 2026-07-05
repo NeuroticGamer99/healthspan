@@ -67,6 +67,7 @@ These requirements apply regardless of binding address:
 The MCP server interface must not reference any specific AI product by name in configuration keys, tool descriptions, or documentation. "AI client" is the correct term. Any MCP-compatible client is a valid consumer.
 
 ## Links
+- Extended by: [ADR-0029](0029-mcp-streamable-http.md) — transport refreshed to Streamable HTTP (the MCP spec deprecated HTTP+SSE in its 2025-03-26 revision); all reasoning and security requirements carry over
 - Related: [ADR-0002](0002-ai-provider-interface.md) — AI client pluggability
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation architecture
 - Related: [ADR-0008](0008-process-lifecycle.md) — process lifecycle management

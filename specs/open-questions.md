@@ -116,7 +116,7 @@ What export options exist for each body composition device (currently InBody 120
 - **Implementation language** → Python. Single language across all components; best ecosystem fit for data tooling, GUI (PySide6), and MCP server (fastmcp). See [ADR-0001](adr/0001-mcp-server-language.md) (Accepted; only its Nuitka distribution choice was superseded by ADR-0023).
 - **Database backend** → SQLite-only for v1. Already committed in practice by SQLCipher encryption (ADR-0013) and the single-dialect migration runner (ADR-0009); PostgreSQL would require a new ADR revisiting both. See [ADR-0003](adr/0003-database-backend.md).
 - **AI client interface** → MCP-based pluggability. The MCP server is the provider interface; client choice is user configuration, including fully local LLMs. See [ADR-0002](adr/0002-ai-provider-interface.md).
-- **MCP transport** → HTTP/SSE. Required for process isolation and AI client pluggability. See [ADR-0007](adr/0007-mcp-transport.md).
+- **MCP transport** → Streamable HTTP (the MCP spec deprecated HTTP+SSE in its 2025-03-26 revision). Long-lived HTTP server, required for process isolation and AI client pluggability. See [ADR-0007](adr/0007-mcp-transport.md) and [ADR-0029](adr/0029-mcp-streamable-http.md).
 - **Application architecture** → Layered process-isolated. Core Service as stable REST API contract; all other processes are clients. See [ADR-0006](adr/0006-application-architecture.md).
 - **Process lifecycle** → Launcher script default; Docker Compose supported. See [ADR-0008](adr/0008-process-lifecycle.md).
 - **Database migration** → Custom runner as `healthspan db migrate` CLI subcommand. See [ADR-0009](adr/0009-database-migration.md).

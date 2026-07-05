@@ -156,7 +156,7 @@ Full event sourcing is the wrong trade for a single-user analytical store — ma
 
 ### 3.B ADR-0007 refresh: MCP HTTP+SSE transport is deprecated
 
-- [ ] Extending ADR before implementation: the MCP spec (since the 2025-03-26 revision) replaced HTTP+SSE with **Streamable HTTP**; `fastmcp` supports it. None of the reasoning changes — still a long-lived HTTP server. (ADR-0011's *internal* SSE event stream for the GUI is unaffected — plain SSE, not MCP.)
+- [x] Extending ADR before implementation: the MCP spec (since the 2025-03-26 revision) replaced HTTP+SSE with **Streamable HTTP**; `fastmcp` supports it. None of the reasoning changes — still a long-lived HTTP server. (ADR-0011's *internal* SSE event stream for the GUI is unaffected — plain SSE, not MCP.) — *Resolved by [ADR-0029](adr/0029-mcp-streamable-http.md) (Proposed): Streamable HTTP only, no legacy HTTP+SSE compatibility mode (no deployed clients to break); ADR-0007's five security requirements carry over unchanged (token storage per ADR-0026; the spec's new origin-validation requirement is already met by the Host/CORS rules); ADR-0011's internal SSE stream explicitly called out as non-impacted. ADR-0007 got an "Extended by" navigation link; open-questions.md's resolved MCP-transport entry and ADR-0001's link annotation updated.*
 
 ### 3.C Fix ADR-0013's connection-lifetime requirement
 

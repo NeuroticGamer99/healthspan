@@ -58,5 +58,5 @@ Python is the language for all platform components: Core Service (FastAPI), MCP 
 ## Links
 - Partially superseded by: [ADR-0023](0023-distribution-mechanism.md) — replaces only the Nuitka distribution choice with `uv tool install`; the Python language decision recorded here stands and this ADR remains its authoritative record
 - Related: [ADR-0006](0006-application-architecture.md) — full process architecture
-- Related: [ADR-0007](0007-mcp-transport.md) — MCP server uses fastmcp over HTTP/SSE
+- Related: [ADR-0007](0007-mcp-transport.md) — MCP server uses fastmcp over HTTP (transport refreshed to Streamable HTTP by [ADR-0029](0029-mcp-streamable-http.md))
 - Resolved from: [open-questions.md](../open-questions.md)
