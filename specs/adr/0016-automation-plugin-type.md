@@ -9,10 +9,10 @@ Users will want rule-based automated responses to health data events: "when fast
 This is a named plugin type in the plugin architecture (ADR-0010) but its interface is not yet designed.
 
 ## Decision Drivers
-- Automations are event-driven — they subscribe to the event bus (ADR-0011) and react to matching events
+- Automations are event-driven — they subscribe to the event stream (ADR-0011, via SSE) and react to matching events
 - Conditions may involve querying the database (e.g. "if the new value is more than 2 SD from the mean of the last 10 results")
 - Actions may include: submitting a job, publishing an event, calling a REST endpoint, triggering a notification
-- The automation engine itself should be a first-party plugin, consistent with the micro-kernel principle
+- The automation engine is first-party code hosted in the Automation Host process — not in the Core Service (ADR-0025)
 - Automations written by users should have the same expressive power as first-party automations
 
 ## Decision Outcome
@@ -21,6 +21,17 @@ TBD — design after the event bus (ADR-0011) and job abstraction (ADR-0012) are
 ## Placeholder: Plugin Type Declaration
 
 The `automation` plugin type is reserved in ADR-0010. A plugin declaring `PLUGIN_TYPES = ["automation"]` will be recognized by the loader. The interface contract is TBD.
+
+## Host Process and Execution Model (decided by ADR-0025)
+
+Automation code executes in the **Automation Host** process — never in the Core Service. The host subscribes to the event stream (`GET /v1/events`, SSE with `Last-Event-ID` replay), evaluates triggers and conditions, and performs actions exclusively through the Core REST API with a scoped bearer token.
+
+Automations take two forms with one execution locus:
+
+- **Declarative rules** — trigger/condition/action definitions are *data* (config or database rows submitted via REST). The first-party rule engine in the Automation Host interprets them. The Core Service may store and validate rules; it never executes them.
+- **Code automations** — `automation` plugins containing arbitrary Python, loaded by the Automation Host from the plugins directory.
+
+Both forms see the same events and can invoke the same actions — equal expressive power, per the decision drivers. Condition queries ("is the new value more than 2 SD from the mean of the last 10 results?") run via the Core REST API, not direct database access.
 
 ## Design Requirements for Future Work
 
@@ -58,6 +69,7 @@ The choice depends on how frequently real use cases require multi-step stateful 
 - AWS EventBridge rules
 
 ## Links
+- Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — automations execute in the Automation Host process; declarative rules are data, never code in the Core Service
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin type system
 - Related: [ADR-0011](0011-event-bus.md) — automations are event subscribers
 - Related: [ADR-0012](0012-job-abstraction.md) — automations may submit jobs as actions

@@ -23,7 +23,12 @@ The `notification_channel` plugin type is reserved in ADR-0010. Initial channels
 - Webhook (HTTP POST to a configured URL)
 - Email (SMTP)
 
+## Host Process (decided by ADR-0025)
+
+Notification channel plugins load in the **Automation Host** process. They subscribe to `alert.*` (and other notification-bearing) events over the SSE stream and deliver via their channel. Channel credentials (SMTP passwords, webhook URLs) live in the Automation Host's configuration scope — never in the Core Service. Delivery does not depend on the GUI being open.
+
 ## Links
+- Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — notification channels execute in the Automation Host process
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin type system
 - Related: [ADR-0011](0011-event-bus.md) — channels subscribe to alert events on the bus
 - Related: [ADR-0016](0016-automation-plugin-type.md) — notifications are a common automation action

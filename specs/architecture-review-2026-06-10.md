@@ -10,7 +10,7 @@ Full review of README, all design documents, and all 24 ADRs, plus packaging and
 
 ### A. Plugin host-process model is contradictory ⚠️ most important finding
 
-- [ ] Resolve which process loads which plugin type, and update all four documents to agree.
+- [x] Resolve which process loads which plugin type, and update all four documents to agree. — *Resolved by [ADR-0025](adr/0025-plugin-host-process-matrix.md) (Proposed), with conforming edits to ADR-0011, ADR-0012, ADR-0016, ADR-0017, and security.md (host matrix + Security Invariants).*
 
 The contradiction:
 
@@ -182,7 +182,7 @@ Full event sourcing is the wrong trade for a single-user analytical store — ma
 
 ### 3.H ADR-0020's sandboxing note deserves promotion
 
-- [ ] The trust-tier/sandboxed-subprocess design buried in the registry stub is the long-term answer to finding 1.A (which plugins may live in Core Service). Cross-link from ADR-0010's security boundary so the two evolve together.
+- [x] The trust-tier/sandboxed-subprocess design buried in the registry stub is the long-term answer to finding 1.A (which plugins may live in Core Service). Cross-link from ADR-0010's security boundary so the two evolve together. — *Done: ADR-0010 ↔ ADR-0020 cross-links added; [ADR-0025](adr/0025-plugin-host-process-matrix.md) names ADR-0020's trust tiers as the only sanctioned path to relaxing the matrix (must address INV-2 explicitly).*
 
 ---
 

@@ -10,7 +10,7 @@ Project-specific terminology used across the Healthspan documentation. Terms are
 The central process that owns the database connection. Exposes a versioned REST API (`/v1/`). All other processes — GUI, MCP server, import pipeline, CLI — are clients of the Core Service. The only process that performs database writes during normal operation. See [ADR-0006](adr/0006-application-architecture.md).
 
 **Micro-kernel architecture**
-The design principle where the Core Service is a thin host that enforces contracts (auth, validation, transactions), and business logic is delivered as plugins against the same interfaces available to third-party contributors. There is no privileged distinction between first-party and user-contributed plugins. See [ADR-0006](adr/0006-application-architecture.md).
+The design principle where the Core Service is a thin host that enforces contracts (auth, validation, transactions), and business logic is delivered as plugins against the same interfaces available to third-party contributors. There is no privileged distinction between first-party and user-contributed plugins at the *interface* level; which process hosts each plugin type — and why the Core Service loads none — is defined in [ADR-0025](adr/0025-plugin-host-process-matrix.md). See [ADR-0006](adr/0006-application-architecture.md).
 
 **Process isolation**
 Each platform component (Core Service, MCP server, GUI, import pipeline, CLI) runs as an independent process communicating over HTTP. No process has privileged access; the Core Service enforces auth and validation uniformly for all clients. See [ADR-0006](adr/0006-application-architecture.md).

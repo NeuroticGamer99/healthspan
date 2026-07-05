@@ -23,7 +23,7 @@ TBD — deferred until the plugin ecosystem has enough plugins to justify the in
 
 ## Design Requirement: Trust Tiers and Sandboxed Execution
 
-The current plugin model (ADR-0010) treats all plugins as trusted-user code — they run in-process with full access to the bearer token, config, and filesystem. This is correct for self-authored and first-party plugins.
+The current plugin model (ADR-0010) treats all plugins as trusted-user code — they run in-process within their assigned host process (ADR-0025) with full access to that process's bearer token, config, and filesystem. This is correct for self-authored and first-party plugins.
 
 When a registry introduces community plugins from unknown authors, the trust model must differentiate. The registry design should account for:
 
@@ -37,4 +37,5 @@ This is not needed for v1 — the trusted-user model is sufficient while the use
 
 ## Links
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin discovery, loading, and security boundary
+- Related: [ADR-0025](0025-plugin-host-process-matrix.md) — host-process matrix; trust tiers are the future path to relaxing it
 - Related: [specs/security.md](../security.md) — plugin security boundary

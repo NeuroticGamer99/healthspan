@@ -328,6 +328,8 @@ Design deferred until the GUI is implemented and real plugin configuration patte
 
 ## Links
 - Extended by: [ADR-0024](0024-plugin-extensions.md) — adds `PLUGIN_VERSION`, `PLUGIN_PACKAGES`, pip dependency management, and plugin versioning policy
+- Extended by: [ADR-0025](0025-plugin-host-process-matrix.md) — host-process matrix per plugin type, `PluginType` enumeration, and the Core Service isolation rule (which process may load which plugin type, and why Core Service loads none)
+- Related: [ADR-0020](0020-plugin-registry.md) — trust tiers and sandboxed execution: the future path for relaxing the plugin security boundary defined above
 - Related: [ADR-0006](0006-application-architecture.md) — micro-kernel architecture; plugins as the primary delivery mechanism for business logic
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — import adapters are a plugin type
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — reference range frameworks are a plugin type

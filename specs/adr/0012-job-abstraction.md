@@ -90,9 +90,13 @@ Jobs older than a configurable retention period are pruned automatically.
 
 ## Execution Model
 
-**Lightweight jobs** (small imports, quick analysis) — asyncio tasks within the Core Service process. Low overhead, immediate scheduling.
+**Lightweight jobs** (small internal operations) — asyncio tasks within the Core Service process. Low overhead, immediate scheduling. Restricted to **first-party internal handlers** shipped in the `healthspan` package: plugin-provided handler code never executes in the Core Service process (ADR-0025, INV-2).
 
-**Heavyweight jobs** (large backfills, intensive computation) — separate processes spawned by the Core Service. The child process publishes progress events back via the REST API (`POST /v1/events/inbound`). The Core Service fans these out to subscribers. The child process has no direct database access — all writes go through the Core REST API.
+**Heavyweight jobs** (large backfills, intensive computation, and **all plugin-provided handlers**) — separate processes spawned by the Core Service:
+
+- Children are created with the multiprocessing `spawn` start method, set explicitly on all platforms — never `fork`. A forked child inherits a copy of the parent's memory, including the derived encryption key (violating ADR-0025 INV-1); a spawned child starts from a fresh interpreter. Do not rely on platform defaults (`fork` is the historical default on Linux).
+- The child receives a scoped bearer token for Core REST API access. It never receives the encryption key and has no direct database access — all reads and writes go through the REST API.
+- The child publishes progress events back via the REST API (`POST /v1/events/inbound`). The Core Service fans these out to subscribers.
 
 The job type declaration (in the plugin that registers the job handler) specifies which execution model to use:
 
@@ -101,6 +105,8 @@ context.register_service("jobs.import.quest_labs", QuestLabsImportJob(),
                           version=1, execution="heavyweight")
 ```
 
+For plugin-registered handlers, `execution="heavyweight"` is mandatory — the loader rejects a plugin-provided handler declaring lightweight execution. Handler *registrations* reach the Core Service as data (job type name, execution declaration, owning plugin); the handler code itself is loaded only by the spawned child process at execution time, subject to ADR-0025's host allowlists. The Core Service orchestrates job metadata; it never imports handler code.
+
 ## Cancellation
 
 Not all jobs are cancellable. A job handler declares whether it supports cancellation:
@@ -108,6 +114,7 @@ Not all jobs are cancellable. A job handler declares whether it supports cancell
 - Non-cancellable jobs (e.g. schema migrations) ignore cancellation requests
 
 ## Links
+- Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — plugin-provided handlers never execute in the Core Service process; children are spawned, never forked
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation
 - Related: [ADR-0011](0011-event-bus.md) — job events flow through the event bus
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system

@@ -44,6 +44,19 @@ Communication between processes on the same trusted machine (localhost HTTP) is 
 
 ---
 
+## Security Invariants
+
+Numbered, testable invariants the architecture must preserve. **Any ADR that would change one of these must cite it by number and explicitly supersede or extend the ADR that establishes it.** Breaking an invariant must be a visible, deliberate decision — never a side effect of an unrelated design change.
+
+| # | Invariant | Why | Established by |
+|---|---|---|---|
+| INV-1 | The derived database key exists only in Core Service memory. It is never transmitted, logged, or inherited by child processes (jobs use `spawn`, never `fork`). | The key is the single secret the entire encryption-at-rest story rests on. | [ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-2 | The Core Service never executes code from the plugins directory. First-party in-core components ship inside the `healthspan` package and are imported explicitly. | The plugins directory is the platform's invited-code channel; keeping it out of the key-holding process makes plugin isolation true by architecture, not by audit. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-3 | A plugin's maximum capability is its host process's credentials. | Bounds the blast radius of a malicious or compromised plugin to a knowable, revocable token scope. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-4 | Plugins alter Core Service behavior only via data submitted through the validated REST API. | Data is inert and validated at the boundary; code is not. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+
+---
+
 ## Authentication
 
 **Bearer token on every HTTP endpoint.** The Core REST API and MCP Server require a valid `Authorization: Bearer <token>` header on every request, including requests from localhost. No endpoint is unauthenticated.
@@ -136,12 +149,21 @@ This applies to: import staging files, export staging files, database migration 
 
 ## Plugin Security
 
-Plugins execute arbitrary Python code in the CLI process. This is intentional and enables full extensibility, but the security boundary must be clearly communicated:
+Plugin code executes in a host process determined by the plugin's type — **never in the Core Service**. The host-process matrix, its enforcement mechanism, and the full reasoning are defined in [ADR-0025](adr/0025-plugin-host-process-matrix.md). In summary:
+
+| Host process | Plugin types loaded |
+|---|---|
+| CLI | `cli`, `import_adapter`, `reference_ranges`, `analysis`, `query`, `provider` |
+| MCP Server | `mcp_tool`, `analysis`, `query`, `provider` |
+| Automation Host | `automation`, `notification_channel`, `analysis`, `query`, `provider` |
+| Core Service | **None — the Core Service never loads plugin code** (INV-2) |
+
+The security boundary must be clearly communicated:
 
 - Plugins are a **trusted-user feature**. Only install plugins you have read and trust.
-- The platform does not sandbox plugins. A malicious plugin has full access to anything the CLI process can reach, including the bearer token and config file.
+- The platform does not sandbox plugins. A malicious plugin has full access to anything its **host process** can reach — including that process's bearer token and the config file — but never the encryption key or the database, which are reachable only from the Core Service (INV-1, INV-2, INV-3).
 - Plugin authors must not store or transmit health data outside the local system without explicit user consent and documentation.
-- This boundary must be documented prominently in any user-facing plugin documentation. See ADR-0010.
+- This boundary must be documented prominently in any user-facing plugin documentation. See ADR-0010 and ADR-0025.
 
 ---
 

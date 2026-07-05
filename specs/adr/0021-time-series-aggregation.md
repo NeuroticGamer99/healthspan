@@ -14,7 +14,7 @@ Home Assistant solves a similar problem with a two-stage statistics pipeline (ra
 - Different biomarker types have different natural aggregation windows (CGM is minute-scale; labs are quarterly)
 - Aggregation strategy must work with SQLite (the default backend) and not require a dedicated time-series database
 - Materialized aggregates must stay consistent with source data — stale summaries erode trust
-- The aggregation system should be implementable as a first-party plugin (micro-kernel principle)
+- The aggregation system should be implementable behind the plugin interface (micro-kernel principle) — noting that if it runs inside the Core Service, it must be a first-party internal component, not a loadable plugin (ADR-0025)
 
 ## Decision Outcome
 TBD — design after the database schema (ADR-0003, ADR-0009) and at least one high-frequency data importer (CGM) are implemented.

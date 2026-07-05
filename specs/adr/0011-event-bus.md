@@ -12,7 +12,7 @@ The REST API handles request-response well but has no mechanism for the Core Ser
 - External event sources (MQTT devices, webhooks) should be able to push events into the platform
 - The event system should not require a separate broker process by default (no Redis, no RabbitMQ dependency)
 - Transport should be swappable — SSE for HTTP clients today, ZeroMQ or WebSocket later if needed
-- Consistent with the micro-kernel principle: transport adapters are plugins
+- Consistent with the micro-kernel principle: transport adapters implement the plugin interface — as internal components compiled into the platform, not loadable plugins (see ADR-0025)
 
 ## Considered Options
 - Polling — clients poll REST API endpoints for changes
@@ -23,12 +23,12 @@ The REST API handles request-response well but has no mechanism for the Core Ser
 ## Decision Outcome
 Chosen option: **Internal event bus with pluggable transport adapters; SSE as the default adapter**
 
-The Core Service hosts an internal asyncio-based event bus. Transport adapters bridge the internal bus to external protocols. SSE ships as the default adapter. ZeroMQ and MQTT are available as optional adapter plugins. The internal event API is uniform regardless of which adapters are active.
+The Core Service hosts an internal asyncio-based event bus. Transport adapters bridge the internal bus to external protocols. SSE ships as the default adapter. ZeroMQ and MQTT are available as optional adapters, enabled in config. Adapters are **internal components** (ADR-0025): they implement the plugin interface but are never loaded from the plugins directory, because they execute inside the Core Service process. The internal event API is uniform regardless of which adapters are active.
 
 ### Positive Consequences
 - No additional infrastructure dependency by default — the event bus runs inside the Core Service process
-- The GUI, MCP server, and CLI subscribe via the SSE stream — a standard HTTP connection, no special client library required
-- Transport adapters are plugins — MQTT and ZeroMQ are opt-in, not forced
+- The Automation Host, GUI, MCP server, and CLI subscribe via the SSE stream — a standard HTTP connection, no special client library required
+- Transport adapters sit behind a uniform internal interface — MQTT and ZeroMQ are opt-in, not forced
 - Qt integration is clean: one background thread subscribes to the SSE stream and emits Qt signals on the GUI main thread, with no Qt dependency in the Core Service
 - External event sources (MQTT devices, webhooks) feed through inbound adapters into the same bus
 
@@ -42,9 +42,9 @@ The Core Service hosts an internal asyncio-based event bus. Transport adapters b
 External MQTT device  → MQTT inbound adapter  ─┐
 Webhook / HTTP POST   → HTTP inbound adapter   ─┤
                                                  ├→ Internal Event Bus
-Plugin (in-process)   → context.events.publish ─┘      │
-                                                         ├→ SSE outbound adapter  → GUI / MCP server / CLI
-                                                         ├→ ZeroMQ outbound adapter → plugin processes
+Internal component    → bus publish            ─┘      │
+(scheduler, jobs)                                        ├→ SSE outbound adapter  → Automation Host / GUI / MCP server / CLI
+                                                         ├→ ZeroMQ outbound adapter → external processes
                                                          └→ MQTT outbound adapter → external subscribers
 ```
 
@@ -53,23 +53,41 @@ Plugin (in-process)   → context.events.publish ─┘      │
 **Inbound adapters** translate external events into internal bus events:
 - `http_webhook` — `POST /v1/events/inbound` accepts JSON event payloads from external sources
 - `mqtt_inbound` — subscribes to configured MQTT topics; each message becomes an internal event
-- More can be added as plugins
+- More can be added at build time — adapters are internal components, not loadable plugins (ADR-0025)
 
 **Outbound adapters** broadcast internal events to external subscribers:
 - `sse` (default) — `GET /v1/events` — persistent HTTP stream; clients subscribe and receive a continuous text/event-stream
-- `zeromq_pub` (optional) — ZeroMQ PUB socket; plugin processes subscribe via ZeroMQ SUB
+- `zeromq_pub` (optional) — ZeroMQ PUB socket; external processes subscribe via ZeroMQ SUB
 - `mqtt_outbound` (optional) — publishes internal events to configured MQTT topics
 
 Adapters are configured in TOML. Inactive adapters consume no resources.
 
-## Internal Event API (via PluginContext)
+## Delivery Guarantees and Event Replay
+
+In-process subscribers cannot miss events; SSE subscribers can — a dropped connection or a restart creates a gap. For the GUI this is cosmetic. For the Automation Host it is a correctness problem: an automation must not silently miss its trigger (ADR-0025). The SSE adapter therefore provides bounded replay:
+
+- Every event carries a monotonically increasing sequence ID (per Core Service run), sent as the SSE `id:` field
+- The Core Service retains a bounded replay window of recent events (configurable; default 10,000 events or 24 hours, whichever is smaller). The window is held in memory — events are not written to the database
+- On reconnect, a client sends the standard SSE `Last-Event-ID` header; the adapter replays retained events after that ID, then resumes live streaming
+- If the requested ID has already aged out of the window, the stream begins with an explicit `gap` marker event, so the subscriber knows delivery was lossy and can run reconciliation (e.g. re-query recent data via REST)
+- The Automation Host persists its last-processed event ID across restarts (ADR-0025)
+
+Events are best-effort beyond the replay window. A persistent event log remains a future option if real usage shows the window is insufficient.
+
+## Event API (via PluginContext)
+
+No plugin code runs inside the Core Service (ADR-0025), so no plugin touches the in-process bus directly. `context.events` presents the same API in every host process; the implementation behind it differs by host:
+
+- **Core Service internal components** (scheduler, job orchestrator, adapters): direct in-process bus access
+- **Automation Host plugins**: `publish` POSTs to `/v1/events/inbound`; `subscribe` is backed by the host's SSE connection with replay
+- **CLI and MCP Server plugins**: `publish` POSTs to `/v1/events/inbound`; `subscribe` is unavailable — persistent event subscription belongs to the Automation Host
 
 ```python
-# Publishing (any plugin)
+# Publishing (uniform in every host)
 context.events.publish("data.imported", {"source": "quest", "count": 42})
 context.events.publish("alert.triggered", {"biomarker": "insulin", "value": 18.4})
 
-# Subscribing (same-process plugins only — cross-process uses transport)
+# Subscribing (Automation Host plugins and Core Service internal components)
 context.events.subscribe("data.imported", my_handler)
 context.events.subscribe("alert.*", my_wildcard_handler)  # namespace wildcards
 
@@ -77,7 +95,7 @@ context.events.subscribe("alert.*", my_wildcard_handler)  # namespace wildcards
 context.events.unsubscribe("data.imported", my_handler)
 ```
 
-Cross-process subscribers (GUI, MCP server, separate plugin processes) use the SSE stream or ZeroMQ — they do not call `context.events` directly.
+The GUI subscribes to the SSE stream directly (see Qt Integration Pattern) — it is not a plugin host.
 
 ## Event Schema
 
@@ -150,14 +168,14 @@ type = "cron"
 cron = "0 8 * * MON"
 ```
 
-Automation plugins can also register schedules programmatically via `context.events`.
+Automation plugins can also register schedules programmatically via the Core REST API (they run in the Automation Host — ADR-0025).
 
 ### Design constraints
 
 - The scheduler runs inside the Core Service process — no external cron daemon required
 - Missed triggers (Core Service was stopped) are not retroactively fired; the next scheduled time applies
 - Schedule names are unique; duplicate names in config are rejected at startup
-- The scheduler is a first-party plugin, consistent with the micro-kernel principle
+- The scheduler is an internal component: it implements the plugin interface (micro-kernel principle) but is not loadable from the plugins directory, because it runs inside the Core Service process (ADR-0025)
 
 ## Qt Integration Pattern
 
@@ -196,7 +214,8 @@ The Core Service has no knowledge of Qt. The conversion is entirely inside the G
 - Con: Additional process dependency — contradicts local-first, zero-config goal
 
 ## Links
+- Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — no plugin code in the Core Service; adapters and scheduler are internal components; replay requirements come from the Automation Host
 - Related: [ADR-0006](0006-application-architecture.md) — process architecture
-- Related: [ADR-0010](0010-cli-plugin-model.md) — transport adapters as plugins; PluginContext events API
+- Related: [ADR-0010](0010-cli-plugin-model.md) — plugin type system; PluginContext events API
 - Related: [ADR-0012](0012-job-abstraction.md) — job events flow through this bus
 - Related: [ADR-0014](0014-websocket.md) — bidirectional extension to this architecture
