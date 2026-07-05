@@ -1,7 +1,7 @@
 # ADR-0003: Database Backend
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The platform stores longitudinal health data — lab results, body composition, clinical events, interventions, CGM readings, and wearable aggregates. The initial target is a single-user local deployment. Should the database layer be SQLite-only, or should the architecture support pluggable backends to accommodate users who want a server-based database or a hosted option?
@@ -19,13 +19,24 @@ The platform stores longitudinal health data — lab results, body composition, 
 - SQLite with optional PostgreSQL sync (local primary, remote replica)
 
 ## Decision Outcome
-Chosen option: **[TBD]**
+Chosen option: **SQLite-only for v1 (no abstraction)**
+
+This decision was made in practice before it was recorded here: [ADR-0013](0013-encryption-at-rest.md) (Accepted) is SQLCipher-specific, and [ADR-0009](0009-database-migration.md)'s custom migration runner was justified on a single known SQL dialect. This ADR makes the record match reality.
+
+The platform targets SQLite exclusively. Queries, migrations, and schema design may use SQLite-specific features freely — there is no common-subset constraint and no abstraction layer to maintain before the core feature set exists.
+
+PostgreSQL (or any other backend) is not a configuration option to be added later; it is an architectural change requiring a new ADR. That ADR must also revisit at minimum:
+- [ADR-0009](0009-database-migration.md) — the custom migration runner assumes a single dialect; multi-backend migration management was the explicit trigger for reconsidering Alembic
+- [ADR-0013](0013-encryption-at-rest.md) / [ADR-0028](0028-key-derivation-and-rotation.md) — encryption at rest is SQLCipher-specific and does not transfer to PostgreSQL, which has an entirely different model (TDE, pgcrypto, or disk-level encryption)
 
 ### Positive Consequences
--
+- Single portable encrypted file, trivial backup (`healthspan db backup`), no server dependency — the local-first privacy default costs nothing to operate
+- SQLite-specific features (JSON functions, partial indexes, generated columns) are freely available to the schema and query layer
+- Sufficient for personal-scale data indefinitely — SQLite handles millions of rows well beyond any single person's health record volume
 
 ### Negative Consequences / Tradeoffs
--
+- No path to multi-device write access or multi-user households without a future ADR that reworks migrations and encryption alongside the backend
+- Users who already run PostgreSQL cannot point the platform at it
 
 ## Pros and Cons of the Options
 
@@ -49,5 +60,7 @@ Chosen option: **[TBD]**
 - Con: Two databases in play increases operational complexity for users
 
 ## Links
+- Related: [ADR-0009](0009-database-migration.md) — migration runner justified on a single dialect
+- Related: [ADR-0013](0013-encryption-at-rest.md) — SQLCipher-specific encryption at rest
 - Related: [ADR-0001](0001-mcp-server-language.md)
 - Related: [design-rationale.md](../design-rationale.md)

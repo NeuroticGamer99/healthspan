@@ -1,7 +1,7 @@
 # ADR-0001: Implementation Language
 
 ## Status
-Superseded by [ADR-0023](0023-distribution-mechanism.md)
+Accepted (partially superseded by [ADR-0023](0023-distribution-mechanism.md))
 
 ## Context and Problem Statement
 The platform consists of multiple processes: Core Service, MCP Server, CLI, GUI, and Import Pipeline (see ADR-0006). A single consistent language across all components reduces context-switching, enables code sharing, and simplifies the development and contribution experience. What language should the platform be implemented in?
@@ -56,7 +56,7 @@ Python is the language for all platform components: Core Service (FastAPI), MCP 
 - Con: Python MCP SDK is less mature than TypeScript equivalent — acceptable tradeoff
 
 ## Links
-- Superseded by: [ADR-0023](0023-distribution-mechanism.md) — replaces Nuitka with `uv tool install`
+- Partially superseded by: [ADR-0023](0023-distribution-mechanism.md) — replaces only the Nuitka distribution choice with `uv tool install`; the Python language decision recorded here stands and this ADR remains its authoritative record
 - Related: [ADR-0006](0006-application-architecture.md) — full process architecture
 - Related: [ADR-0007](0007-mcp-transport.md) — MCP server uses fastmcp over HTTP/SSE
 - Resolved from: [open-questions.md](../open-questions.md)

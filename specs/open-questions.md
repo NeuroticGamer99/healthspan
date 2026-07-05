@@ -20,13 +20,11 @@ Architectural and technical decisions that need resolution before or during impl
 
 ## Architecture — Undecided ADRs
 
-Three ADRs have TBD decisions that should be resolved as design progresses:
+One ADR has a TBD decision that should be resolved as design progresses:
 
-**Database backend ([ADR-0003](adr/0003-database-backend.md))**
-SQLite-only vs pluggable backend (PostgreSQL). Affects the migration runner (ADR-0009), time-series aggregation (ADR-0021), and multi-device sync (ADR-0019). The pluggable option adds complexity that may not be justified before core features exist.
+~~**Database backend ([ADR-0003](adr/0003-database-backend.md))**~~ → Resolved (SQLite-only for v1) — see Resolved section and [ADR-0003](adr/0003-database-backend.md).
 
-**AI client interface ([ADR-0002](adr/0002-ai-provider-interface.md))**
-Claude-only vs MCP-based pluggability vs full provider abstraction. The architecture already assumes MCP-based pluggability (ADR-0007 chose HTTP/SSE transport for AI-client-agnostic access), but the ADR itself is still formally Proposed with TBD.
+~~**AI client interface ([ADR-0002](adr/0002-ai-provider-interface.md))**~~ → Resolved (MCP-based pluggability) — see Resolved section and [ADR-0002](adr/0002-ai-provider-interface.md).
 
 **Reference range frameworks ([ADR-0005](adr/0005-reference-range-frameworks.md))**
 Schema approach for named reference range frameworks. Affects how "is this result optimal?" queries work for the MCP server and GUI. The schema sketch exists in the ADR but no decision is recorded.
@@ -115,7 +113,9 @@ What export options exist for each body composition device (currently InBody 120
 
 - **Cloud backup strategy** → Cloud backup of the encrypted SQLite file is explicitly safe and recommended. The database file is AES-256 ciphertext (SQLCipher, ADR-0013); the cloud provider cannot read it. The provider is in the "do not trust" tier for storage — the encryption model handles this correctly. Recommended services: Dropbox, iCloud Drive, OneDrive, Backblaze, or any similar sync/backup service. Hot backups produced by `healthspan db backup` are also encrypted and safe to store in cloud. Cloud sync of the live file is safe for backup purposes but must respect SQLite's single-writer constraint — see ADR-0019 for the single-writer + cloud sync pattern.
 
-- **Implementation language** → Python. Single language across all components; best ecosystem fit for data tooling, GUI (PySide6), and MCP server (fastmcp). See [ADR-0001](adr/0001-mcp-server-language.md).
+- **Implementation language** → Python. Single language across all components; best ecosystem fit for data tooling, GUI (PySide6), and MCP server (fastmcp). See [ADR-0001](adr/0001-mcp-server-language.md) (Accepted; only its Nuitka distribution choice was superseded by ADR-0023).
+- **Database backend** → SQLite-only for v1. Already committed in practice by SQLCipher encryption (ADR-0013) and the single-dialect migration runner (ADR-0009); PostgreSQL would require a new ADR revisiting both. See [ADR-0003](adr/0003-database-backend.md).
+- **AI client interface** → MCP-based pluggability. The MCP server is the provider interface; client choice is user configuration, including fully local LLMs. See [ADR-0002](adr/0002-ai-provider-interface.md).
 - **MCP transport** → HTTP/SSE. Required for process isolation and AI client pluggability. See [ADR-0007](adr/0007-mcp-transport.md).
 - **Application architecture** → Layered process-isolated. Core Service as stable REST API contract; all other processes are clients. See [ADR-0006](adr/0006-application-architecture.md).
 - **Process lifecycle** → Launcher script default; Docker Compose supported. See [ADR-0008](adr/0008-process-lifecycle.md).

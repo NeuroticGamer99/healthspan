@@ -8,7 +8,7 @@ Healthspan exposes multiple versioned interfaces: a REST API, a plugin API, plug
 
 ## Decision Drivers
 - Plugin authors need to know what version increment a platform change requires
-- Third-party plugins declare `PLUGIN_VERSION` (ADR-0010); that field needs a scheme
+- Third-party plugins declare `PLUGIN_VERSION` (ADR-0024); that field needs a scheme
 - Users and package managers need predictable compatibility guarantees
 - The plugin ecosystem's `PLUGIN_DEPENDENCIES` version constraints are only meaningful if the underlying versioning convention is well-defined
 
@@ -71,7 +71,8 @@ A breaking change is any change that causes a correctly-written consumer of the 
 ---
 
 ## Links
-- Related: [ADR-0010](0010-cli-plugin-model.md) — `PLUGIN_VERSION`, `PLUGIN_DEPENDENCIES`, plugin service versioning
-- Related: [ADR-0001](0001-mcp-server-language.md) — `uv tool install` as the distribution mechanism
+- Related: [ADR-0010](0010-cli-plugin-model.md) — plugin API and plugin service versioning
+- Related: [ADR-0024](0024-plugin-extensions.md) — `PLUGIN_VERSION`, `PLUGIN_DEPENDENCIES`
+- Related: [ADR-0023](0023-distribution-mechanism.md) — `uv tool install` as the distribution mechanism
 - Related: [specs/design-rationale.md](../design-rationale.md) — full list of versioning surfaces
 - External: [semver.org](https://semver.org/) — SemVer 2.0.0 specification

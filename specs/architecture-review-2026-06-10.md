@@ -25,7 +25,7 @@ These can't all be true. If transport-adapter/automation/analysis plugins load i
 
 ### B. ADR-0001's supersession orphans the language decision
 
-- [ ] Restore an authoritative record of the Python language decision.
+- [x] Restore an authoritative record of the Python language decision. — *Resolved by restatusing [ADR-0001](adr/0001-mcp-server-language.md) as `Accepted (partially superseded by ADR-0023)` (a permitted status-field correction): ADR-0023 replaced only the Nuitka distribution choice; ADR-0001 remains the authoritative Python record. Status variant added to the ADR README status table.*
 
 [ADR-0023](adr/0023-distribution-mechanism.md) explicitly replaces only the Nuitka distribution choice ("language choice (Python) is unchanged"), yet ADR-0001's status is fully `Superseded by ADR-0023`, and [open-questions.md](open-questions.md) still cites ADR-0001 as the resolved record for "Implementation language." There is now no Accepted ADR recording that the platform is Python.
 
@@ -47,21 +47,23 @@ The README diagram and [ADR-0006](adr/0006-application-architecture.md) draw it 
 
 ### E. ADR-0003 and ADR-0002 are decided in practice but not on paper
 
-- [ ] Accept ADR-0003 as SQLite-only for v1 (PostgreSQL as a future ADR that must also revisit ADR-0009 and ADR-0013).
-- [ ] Accept ADR-0002 as "MCP-based pluggability."
+- [x] Accept ADR-0003 as SQLite-only for v1 (PostgreSQL as a future ADR that must also revisit ADR-0009 and ADR-0013). — *Done: decision outcome written (SQLite-specific features freely usable; a PostgreSQL ADR must revisit ADR-0009 and ADR-0013/0028), status Accepted.*
+- [x] Accept ADR-0002 as "MCP-based pluggability." — *Done: decision outcome written (MCP server is the provider interface; client choice is configuration, local LLMs supported), status Accepted.*
 
 [ADR-0006](adr/0006-application-architecture.md)'s diagram says "Database (pluggable)," but [ADR-0013](adr/0013-encryption-at-rest.md) (Accepted) is SQLCipher-specific — encryption at rest does not transfer to PostgreSQL (entirely different model: TDE/pgcrypto/disk encryption), and [ADR-0009](adr/0009-database-migration.md)'s custom migration runner was justified on a single-dialect assumption. Likewise [ADR-0007](adr/0007-mcp-transport.md) (Accepted) already chose AI-client-agnostic MCP, and the README asserts it.
 
 ### F. ADR-0022 has two wrong cross-references
 
-- [ ] Fix (permitted as minor link fixes under ADR governance):
-  - `PLUGIN_VERSION` attributed to ADR-0010 — it's defined in [ADR-0024](adr/0024-plugin-extensions.md)
-  - Links section credits "ADR-0001 — uv tool install as the distribution mechanism" — that's [ADR-0023](adr/0023-distribution-mechanism.md)
+- [x] Fix (permitted as minor link fixes under ADR governance):
+  - `PLUGIN_VERSION` attributed to ADR-0010 — it's defined in [ADR-0024](adr/0024-plugin-extensions.md) — *fixed in the decision driver and the Links section*
+  - Links section credits "ADR-0001 — uv tool install as the distribution mechanism" — that's [ADR-0023](adr/0023-distribution-mechanism.md) — *fixed*
 
 ### G. ADR-0009 cites SQLite syntax that doesn't exist
 
 - [ ] Correct: SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 - [ ] Drop the per-file idempotency requirement — it's redundant with the runner's own `schema_version` tracking (applied files are skipped).
+
+*Deferred into item 3.F's migration ADR: dropping the idempotency requirement changes decision content in an Accepted ADR, so it needs an extending ADR — which 3.F (migration transaction discipline, pragmas) will create anyway. One ADR will extend ADR-0009 once, covering both.*
 
 ### H. "Cloud sync of the live file is safe" is overstated
 

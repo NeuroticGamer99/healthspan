@@ -26,6 +26,7 @@ The value of ADRs is institutional memory. A future contributor — or the origi
 | **Proposed — stub** | Placeholder created; content not yet written |
 | **Accepted** | Decision is made; implementation may proceed |
 | **Accepted (partially)** | Core decision is made; open sub-decisions remain |
+| **Accepted (partially superseded by ADR-XXXX)** | Decision stands, but a later ADR replaced a distinct part of it |
 | **Deprecated** | Was accepted; no longer applies |
 | **Superseded by ADR-XXXX** | Replaced by a later decision |
 
@@ -52,9 +53,9 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 
 | ADR | Title | Status |
 |---|---|---|
-| [ADR-0001](0001-mcp-server-language.md) | Implementation Language | Superseded by ADR-0023 |
-| [ADR-0002](0002-ai-provider-interface.md) | AI Client Interface | Proposed |
-| [ADR-0003](0003-database-backend.md) | Database Backend | Proposed |
+| [ADR-0001](0001-mcp-server-language.md) | Implementation Language | Accepted (partially superseded by ADR-0023) |
+| [ADR-0002](0002-ai-provider-interface.md) | AI Client Interface | Accepted |
+| [ADR-0003](0003-database-backend.md) | Database Backend | Accepted |
 | [ADR-0004](0004-data-ingestion-strategy.md) | Data Ingestion Strategy | Accepted (partially) |
 | [ADR-0005](0005-reference-range-frameworks.md) | Reference Range Frameworks | Proposed |
 | [ADR-0006](0006-application-architecture.md) | Application Architecture | Accepted |
