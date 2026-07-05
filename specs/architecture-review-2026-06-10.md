@@ -73,8 +73,8 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### I. Minor items
 
-- [ ] README presents several still-Proposed ADRs (event bus adapters, reference range frameworks, jobs) as settled — add a "designed, not final" caveat.
-- [ ] Verify [pyproject.toml](../pyproject.toml) author email `neuroticgamer01@…` vs repo URL `NeuroticGamer99` — possible typo.
+- [x] README presents several still-Proposed ADRs (event bus adapters, reference range frameworks, jobs) as settled — add a "designed, not final" caveat. — *Resolved: added inline "designed, not final" caveats with ADR links at the three spots that overstated design status — event bus adapters (ADR-0011), reference range frameworks/automation rules/notification channels (ADR-0005/0016/0017), and the job system backing long-running imports (ADR-0012).*
+- [x] Verify [pyproject.toml](../pyproject.toml) author email `neuroticgamer01@…` vs repo URL `NeuroticGamer99` — possible typo. — *Not a typo: `NeuroticGamer99` is Matthew's deliberately public GitHub handle; `neuroticgamer01@zaleski.net` is the real, non-alias email PyPI requires for publishing. No change needed.*
 
 ---
 
