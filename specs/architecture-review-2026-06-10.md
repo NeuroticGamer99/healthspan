@@ -132,9 +132,9 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 ### 2.10 Smaller items
 
 - [x] Auth-failure rate limiting + audit logging for LAN deployments — *consolidated into [ADR-0026](adr/0026-named-scoped-tokens.md) and security.md's Authentication section (rate limiting applies to localhost too; `auth_audit` table records token names, never values)*
-- [ ] Harden [publish.yml](../.github/workflows/publish.yml): pin actions to commit SHAs, add explicit `permissions: contents: read`
-- [ ] Expand `.gitignore`: export output directories, `*.sqlite`
-- [ ] ADR-0015: add an export-encryption option (passphrase-protected archive) for the "share with physician" path — exports are deliberate plaintext
+- [x] Harden [publish.yml](../.github/workflows/publish.yml): pin actions to commit SHAs, add explicit `permissions: contents: read` — *Done: `actions/checkout` pinned to `34e11487…` (v4.3.1), `astral-sh/setup-uv` pinned to `d4b2f3b6…` (v5.4.2), `contents: read` added alongside `id-token: write`. Note: setup-uv's current major is v8; staying on the pinned v5.4.2 until a deliberate upgrade.*
+- [x] Expand `.gitignore`: export output directories, `*.sqlite` — *Done: added `*.sqlite`, `*.sqlite3`, and `exports/`/`export/` (annotated as plaintext-health-data output per ADR-0015).*
+- [x] ADR-0015: add an export-encryption option (passphrase-protected archive) for the "share with physician" path — exports are deliberate plaintext — *Done: ADR-0015 (Proposed, freely editable) gained a decision driver and an "Export Encryption Option" section — `--encrypt` wraps any export format in a passphrase-protected archive; one-time sharing passphrase (never the master passphrase, never stored), candidate mechanism AES-256 ZIP for recipient ergonomics (ZipCrypto explicitly unacceptable), staging files under security.md temp-file rules. Plaintext stays the default. Final mechanism folded into the ADR's existing TBD format-specification work.*
 
 ---
 

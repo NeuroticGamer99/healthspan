@@ -2,7 +2,13 @@ specs/personal/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 data/
+
+# Export output (plaintext health data — see ADR-0015)
+exports/
+export/
 .claude/settings.local.json
 
 # Python

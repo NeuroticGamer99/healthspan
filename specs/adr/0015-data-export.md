@@ -14,6 +14,7 @@ Health data ownership means nothing without the ability to get your data out. Im
 - Healthcare interoperability (FHIR) is a future consideration (see ADR-0018)
 - The CLI must support export as a first-class command
 - Export of encrypted data must produce the decrypted content — the export is the user's data
+- Plaintext export is deliberate, but the "share with physician" path needs an encrypted transport option — an export that leaves the machine (email, USB stick, patient portal upload) should not have to travel as plaintext health data
 
 ## Considered Options
 - JSON (platform-native format)
@@ -58,7 +59,19 @@ healthspan export --since 2024-01-01       # date-filtered
 healthspan export --type labs,events       # data-type filtered
 healthspan export --biomarker insulin      # biomarker-filtered
 healthspan export --output ./my_export/    # output directory
+healthspan export --encrypt                # passphrase-protected archive (see below)
 ```
+
+## Export Encryption Option
+
+Exports are decrypted plaintext by default — that is the point of an export, and the default stays that way. But the primary sharing scenario (send a filtered export to a physician) moves health data across email, USB media, or an upload portal, where plaintext is the wrong transport format. `--encrypt` addresses this:
+
+- Wraps the export output (any format) in a single passphrase-protected archive
+- The passphrase is a **one-time sharing passphrase** entered at export time and communicated to the recipient out-of-band — it is never the master passphrase, never stored, and never written to config or logs
+- Candidate mechanism: AES-256 encrypted ZIP (e.g. `pyzipper`) — chosen for recipient ergonomics, since a physician's office can open it with common tools (7-Zip, WinZip, macOS Archive Utility alternatives) without installing platform software. Legacy ZipCrypto is explicitly unacceptable. Stronger tools with worse recipient ergonomics (`age`, GPG) can be offered later via plugin if demand exists.
+- The unencrypted staging files created while building the archive fall under security.md's temp-file handling rules (create with restrictive permissions, delete on completion)
+
+Final mechanism choice is part of the format specification work gating this ADR's decision outcome.
 
 ## Round-Trip Guarantee
 
@@ -73,4 +86,4 @@ A full export re-imported to a fresh database must produce an identical database
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — export format mirrors import format
 - Related: [ADR-0012](0012-job-abstraction.md) — large exports may use the job system
 - Related: [ADR-0018](0018-fhir-interoperability.md) — FHIR export deferred here
-- Related: [specs/security.md](../security.md) — export produces decrypted plaintext; handle with care
+- Related: [specs/security.md](../security.md) — export produces decrypted plaintext by default (`--encrypt` wraps it for transport); temp-file handling rules apply to staging files
