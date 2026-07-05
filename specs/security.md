@@ -34,7 +34,7 @@ Communication between processes on the same trusted machine (localhost HTTP) is 
 
 ## Principles
 
-**Least privilege per process.** Each process has access only to what it needs. The GUI has no database credentials. The import pipeline has no MCP configuration. The MCP server has no write access beyond what the Core REST API permits. See ADR-0006.
+**Least privilege per process.** Each process has access only to what it needs. The GUI has no database credentials. The import pipeline has no MCP configuration. The MCP server holds a read-only token by default — write capability for an AI client is a deliberately issued, named credential, never a default (ADR-0026). See ADR-0006.
 
 **Defense in depth.** No single control is relied upon alone. Authentication, host header validation, and CORS work together. A bypass of one does not grant access.
 
@@ -52,8 +52,9 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 |---|---|---|---|
 | INV-1 | The derived database key exists only in Core Service memory. It is never transmitted, logged, or inherited by child processes (jobs use `spawn`, never `fork`). | The key is the single secret the entire encryption-at-rest story rests on. | [ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
 | INV-2 | The Core Service never executes code from the plugins directory. First-party in-core components ship inside the `healthspan` package and are imported explicitly. | The plugins directory is the platform's invited-code channel; keeping it out of the key-holding process makes plugin isolation true by architecture, not by audit. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
-| INV-3 | A plugin's maximum capability is its host process's credentials. | Bounds the blast radius of a malicious or compromised plugin to a knowable, revocable token scope. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-3 | A plugin's maximum handed capability is its host process's plugin-tier credential; escalation requires deliberate, named token issuance by the user. | The host assignment bounds *where* plugin code runs; the credential tier bounds *what it is given*. | [ADR-0025](adr/0025-plugin-host-process-matrix.md), [ADR-0026](adr/0026-named-scoped-tokens.md) |
 | INV-4 | Plugins alter Core Service behavior only via data submitted through the validated REST API. | Data is inert and validated at the boundary; code is not. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-5 | Every issued credential is named, scoped, and revocable; no anonymous shared credential exists, and `admin` scope is never handed to directory-loaded plugin code. | Bounds prompt-injection blast radius to the holder's scopes; control-plane subversion requires a visible, audited issuance event rather than a silent copy. | [ADR-0026](adr/0026-named-scoped-tokens.md) |
 
 ---
 
@@ -61,7 +62,19 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 **Bearer token on every HTTP endpoint.** The Core REST API and MCP Server require a valid `Authorization: Bearer <token>` header on every request, including requests from localhost. No endpoint is unauthenticated.
 
-**Token generation.** The bearer token is generated automatically on first run (cryptographically random, minimum 32 bytes, base64url-encoded). It is stored in the shared TOML config file. It is never hardcoded, never committed to version control, and never logged.
+**Named, scoped, revocable tokens — no shared credential.** Every credential the platform issues is named (identifies its holder), scoped (grants an explicit capability subset: `read`, `write`, `import`, `events`, `jobs`, `admin`), and individually revocable. Each client — GUI, MCP Server, CLI, Automation Host, webhook callers, job children — holds its own token with default scopes per the matrix in [ADR-0026](adr/0026-named-scoped-tokens.md). The MCP server's token is read-only by default. The inbound webhook token can only publish events. Job children receive ephemeral single-job tokens. See INV-5.
+
+**Event publication is namespace-bound.** Tokens carrying `events` publish only within their declared event namespaces; the event `source` field is stamped from token identity, never caller-supplied; and reserved namespaces (`data.*`, `job.*`, `schedule.*`, `schema.*`, `system.*`, `plugin.*`) are emitted only by the Core Service itself. Forged internal events are structurally impossible — the event system cannot be used to launder scopes through automations, and a forged `alert.resolved` cannot mask a genuine clinical alert. See ADR-0026.
+
+**Token generation and verification.** Tokens are minted at first run (cryptographically random, minimum 32 bytes, base64url-encoded, `hsp_<name>_` prefixed). The Core Service stores only SHA-256 hashes of token values; verification uses `secrets.compare_digest`. Plaintext values exist only at issuance and in each client's own storage.
+
+**Token storage.** Each client stores only its own token, in the OS keychain via `keyring` (per-client config file fallback with owner-read-only permissions for headless deployments). **No token is stored in the shared TOML config file** — a shared file is how a single token becomes every client's token.
+
+**Credential tiers for plugins.** Directory-loaded plugins receive their host process's plugin-tier token via `context.api` — never a credential carrying `admin`. Package-shipped first-party plugins receive the process credential. See ADR-0026 and INV-3.
+
+**Lifecycle.** `healthspan token create | list | revoke | rotate` (admin scope; `list` shows names and scopes, never values). Revocation is immediate; there is no grace overlap.
+
+**Rate limiting and audit.** Failed authentication attempts are rate-limited per source address with exponential backoff, including from localhost. Auth events (token *name*, endpoint, outcome — never token values, never health data) are recorded in an append-only audit log; all `admin`-scoped actions are always audited. See ADR-0026.
 
 **Config file permissions.** The TOML config file must be created with owner-read-only permissions (`chmod 600` equivalent). The platform should warn on startup if the config file has broader permissions.
 
@@ -181,7 +194,7 @@ The security boundary must be clearly communicated:
 
 **The MCP server does not trust the AI client.** Tool call inputs from the AI client are validated by the Core REST API identically to any other client. The AI client is not granted elevated trust.
 
-**Prompt injection awareness.** Data retrieved from the database and returned to the AI client may contain user-authored text (clinical notes, intervention descriptions). This text could contain prompt injection attempts if the database has been compromised or if data from untrusted sources has been imported. The MCP server should not construct tool responses in ways that amplify injected instructions.
+**Prompt injection awareness.** Data retrieved from the database and returned to the AI client may contain user-authored text (clinical notes, intervention descriptions). This text could contain prompt injection attempts if the database has been compromised or if data from untrusted sources has been imported. The MCP server should not construct tool responses in ways that amplify injected instructions. The MCP server's default read-only token (ADR-0026) bounds the impact of any injected instructions to data exfiltration — they cannot mutate or delete data.
 
 ---
 

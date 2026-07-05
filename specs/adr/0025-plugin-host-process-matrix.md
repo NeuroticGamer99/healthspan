@@ -45,7 +45,7 @@ Option 3 remains the right long-term direction for *relaxing* this decision (run
 
 ### Positive Consequences
 - ADR-0013's "the key never crosses the process boundary" guarantee becomes architecturally true and stays true without auditing any plugin
-- A plugin's maximum capability is exactly its host process's bearer-token scope — composable with per-client scoped tokens (planned; see security review item 2.1)
+- A plugin's maximum capability is exactly its host process's bearer-token scope — composable with per-client scoped tokens (ADR-0026)
 - The plugin type catalog becomes complete: everything that uses the plugin interface has an explicit host and an explicit loadability status
 - Automations gain an honest reliability story: a supervised resident process with event catch-up, instead of in-process coupling
 - The micro-kernel principle survives intact — first-party in-core components still implement the plugin interface; they are simply not *loadable*
@@ -170,7 +170,7 @@ The fourth launcher-supervised process (extending ADR-0008's Core Service + MCP 
   - the declarative rule engine — interprets trigger/condition/action rules (ADR-0016); rules are data, the engine is code, and the code runs here, not in Core Service
   - the watch-folder importer — the one import concern that genuinely needs residency (see review item 1.D); a watch-folder import *is* an automation: trigger = file appears, action = submit import job
 - **Subscribes:** `GET /v1/events` (SSE). On reconnect it sends the standard SSE `Last-Event-ID` header; Core Service replays events after that ID from a retained window (requirement levied on ADR-0011, below). The host persists its last-processed event ID locally (the cursor file contains only the event ID — no health data).
-- **Acts:** exclusively via the Core REST API with its own bearer token. When per-client scoped tokens land (security review item 2.1), the Automation Host token covers read, event publication, and job submission — never admin scope.
+- **Acts:** exclusively via the Core REST API with its own bearer token, carrying `read`, `events`, and `jobs` scopes — never `admin` (ADR-0026).
 - **Never:** opens the database, touches the encryption key, or loads code on behalf of Core Service.
 
 ### Lifecycle
@@ -191,7 +191,7 @@ ADR-0012's lightweight execution model — asyncio tasks inside Core Service —
 
 - **Plugin-provided job handlers always use the heavyweight model**: a separate child process. Only first-party internal handlers may run as in-process asyncio tasks.
 - Job child processes are created with the **`spawn` start method, explicitly, on all platforms** — never `fork`. A forked child inherits a copy of the parent's memory, including the derived encryption key; a spawned child starts from a fresh interpreter. (On Linux, `fork` is the historical default in Python ≤ 3.13; do not rely on defaults.)
-- A job child receives a scoped bearer token for REST access. It never receives the key and never opens the database.
+- A job child receives an ephemeral, single-job bearer token for REST access (ADR-0026). It never receives the key and never opens the database.
 
 ---
 
@@ -203,7 +203,7 @@ These four invariants summarize this ADR's contract together with ADR-0013's. Th
 |---|---|---|
 | INV-1 | The derived database key exists only in Core Service memory. It is never transmitted, logged, or inherited by child processes (spawn, not fork). | The key is the single secret the entire encryption-at-rest story rests on (ADR-0013). |
 | INV-2 | Core Service never executes code from the plugins directory. First-party in-core components ship inside the `healthspan` package and are imported explicitly. | The plugins directory is the platform's invited-code channel; keeping it out of the key-holding process makes ADR-0013's plugin isolation true by architecture. |
-| INV-3 | A plugin's maximum capability is its host process's credentials. | Bounds the blast radius of any malicious or compromised plugin to a knowable, revocable token scope (composes with per-client scoped tokens, review item 2.1). |
+| INV-3 | A plugin's maximum capability is its host process's credentials. | Bounds the blast radius of any malicious or compromised plugin to a knowable, revocable token scope (refined by ADR-0026's credential tiers: directory-loaded plugins are handed the plugin-tier token). |
 | INV-4 | Plugins alter Core Service behavior only via data submitted through the validated REST API. | Data is inert and validated at the boundary (security.md); code is not. This is Principle 1 in enforceable form. |
 
 ---
@@ -246,5 +246,6 @@ Conforming edits required by this ADR (all target documents are Proposed or free
 - Constrains: [ADR-0011](0011-event-bus.md), [ADR-0012](0012-job-abstraction.md), [ADR-0016](0016-automation-plugin-type.md), [ADR-0017](0017-notification-channels.md)
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation and the micro-kernel principle
 - Related: [ADR-0020](0020-plugin-registry.md) — trust tiers as the future relaxation path
+- Related: [ADR-0026](0026-named-scoped-tokens.md) — named scoped tokens; per-host credentials and credential tiers
 - Related: [specs/security.md](../security.md) — Security Invariants
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.A and 3.H

@@ -80,10 +80,12 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.1 Replace the single shared bearer token with per-client, scoped tokens ⚠️
 
-- [ ] Named tokens per client with scopes (`read`, `write`, `import`, `admin`)
-- [ ] MCP server defaults to read-only
-- [ ] `healthspan token rotate` command
-- [ ] Constant-time comparison (`secrets.compare_digest`) specified in security.md
+- [x] Named tokens per client with scopes (`read`, `write`, `import`, `admin`)
+- [x] MCP server defaults to read-only
+- [x] `healthspan token rotate` command
+- [x] Constant-time comparison (`secrets.compare_digest`) specified in security.md
+
+*Resolved by [ADR-0026](adr/0026-named-scoped-tokens.md) (Proposed): six scopes (adds `events`, `jobs`), per-client default matrix, hashed server-side storage, keyring-per-client storage (tokens removed from shared TOML), CLI credential tiers by plugin provenance, ephemeral single-job tokens, and INV-5. security.md Authentication section rewritten.*
 
 [security.md](security.md) claims "The MCP server has no write access beyond what the Core REST API permits" — but with one token shared by GUI, MCP, CLI, plugins, and the inbound webhook, the MCP server (and therefore the AI client, and therefore anything that prompt-injects the AI client) has full write/delete/import capability. A read-only MCP token bounds the blast radius of injected instructions to data exfiltration rather than data destruction.
 
@@ -125,7 +127,7 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.10 Smaller items
 
-- [ ] Auth-failure rate limiting + audit logging for LAN deployments
+- [x] Auth-failure rate limiting + audit logging for LAN deployments — *consolidated into [ADR-0026](adr/0026-named-scoped-tokens.md) and security.md's Authentication section (rate limiting applies to localhost too; `auth_audit` table records token names, never values)*
 - [ ] Harden [publish.yml](../.github/workflows/publish.yml): pin actions to commit SHAs, add explicit `permissions: contents: read`
 - [ ] Expand `.gitignore`: export output directories, `*.sqlite`
 - [ ] ADR-0015: add an export-encryption option (passphrase-protected archive) for the "share with physician" path — exports are deliberate plaintext

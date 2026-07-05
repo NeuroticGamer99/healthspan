@@ -51,7 +51,7 @@ Internal component    → bus publish            ─┘      │
 ## Transport Adapters
 
 **Inbound adapters** translate external events into internal bus events:
-- `http_webhook` — `POST /v1/events/inbound` accepts JSON event payloads from external sources
+- `http_webhook` — `POST /v1/events/inbound` accepts JSON event payloads from external sources; callers authenticate with the `events`-scoped webhook token, which grants nothing else and may publish only `external.*` events (ADR-0026)
 - `mqtt_inbound` — subscribes to configured MQTT topics; each message becomes an internal event
 - More can be added at build time — adapters are internal components, not loadable plugins (ADR-0025)
 
@@ -79,8 +79,8 @@ Events are best-effort beyond the replay window. A persistent event log remains 
 No plugin code runs inside the Core Service (ADR-0025), so no plugin touches the in-process bus directly. `context.events` presents the same API in every host process; the implementation behind it differs by host:
 
 - **Core Service internal components** (scheduler, job orchestrator, adapters): direct in-process bus access
-- **Automation Host plugins**: `publish` POSTs to `/v1/events/inbound`; `subscribe` is backed by the host's SSE connection with replay
-- **CLI and MCP Server plugins**: `publish` POSTs to `/v1/events/inbound`; `subscribe` is unavailable — persistent event subscription belongs to the Automation Host
+- **Automation Host plugins**: `publish` POSTs to `/v1/events/inbound`, bounded by the host token's publish-namespace allowlist (`alert.*`, `sync.*`, `external.*` — ADR-0026); `subscribe` is backed by the host's SSE connection with replay
+- **CLI and MCP Server plugins**: `publish` requires the host token to carry `events` scope — under the default token set it does not (ADR-0026), so publication from these hosts fails closed; `subscribe` is unavailable — persistent event subscription belongs to the Automation Host
 
 ```python
 # Publishing (uniform in every host)
@@ -113,18 +113,23 @@ Every event has a consistent envelope:
 
 Event types use dot-notation namespaces (consistent with service names in ADR-0010).
 
+**Provenance is stamped, not claimed.** The `source` field is set by the platform, never by the publisher: the Core Service stamps inbound events with the authenticated token's name and rejects payloads that attempt to supply `source`; internal components' events are stamped by the bus itself. Subscribers may treat `source` as trustworthy data (ADR-0026).
+
 ## Initial Event Type Catalog
 
-| Namespace | Events |
-|---|---|
-| `data.*` | `data.imported`, `data.corrected`, `data.deleted` |
-| `job.*` | `job.queued`, `job.started`, `job.progress`, `job.complete`, `job.failed` |
-| `alert.*` | `alert.triggered`, `alert.resolved` |
-| `sync.*` | `sync.started`, `sync.complete`, `sync.failed` |
-| `schema.*` | `schema.migrated` |
-| `plugin.*` | `plugin.loaded`, `plugin.failed` |
-| `system.*` | `system.started`, `system.stopping` |
-| `schedule.*` | `schedule.interval`, `schedule.cron` |
+| Namespace | Events | Emitted by |
+|---|---|---|
+| `data.*` | `data.imported`, `data.corrected`, `data.deleted` | Core Service, on validated mutations — **reserved** |
+| `job.*` | `job.queued`, `job.started`, `job.progress`, `job.complete`, `job.failed` | Core Service job orchestrator; children report via `POST /v1/jobs/{id}/progress` — **reserved** |
+| `alert.*` | `alert.triggered`, `alert.resolved` | Core internals and the Automation Host |
+| `sync.*` | `sync.started`, `sync.complete`, `sync.failed` | Automation Host (sync/poller plugins) |
+| `schema.*` | `schema.migrated` | Core Service migration path — **reserved** |
+| `plugin.*` | `plugin.loaded`, `plugin.failed` | Core Service, on host loader status reports — **reserved** |
+| `system.*` | `system.started`, `system.stopping` | Core Service — **reserved** |
+| `schedule.*` | `schedule.interval`, `schedule.cron` | Core Service scheduler — **reserved** |
+| `external.*` | externally sourced events | Inbound adapters (webhook, MQTT); source-stamped per token |
+
+**Reserved** namespaces are statements of platform fact and are never accepted through the generic `/v1/events/inbound` endpoint, for any token — the facts they represent enter only through purpose-built, validated REST endpoints, from which the Core Service emits the event itself (ADR-0026). Non-reserved publication is bounded by each token's publish-namespace allowlist.
 
 ## Scheduled and Cron Triggers
 
@@ -215,6 +220,7 @@ The Core Service has no knowledge of Qt. The conversion is entirely inside the G
 
 ## Links
 - Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — no plugin code in the Core Service; adapters and scheduler are internal components; replay requirements come from the Automation Host
+- Related: [ADR-0026](0026-named-scoped-tokens.md) — webhook and subscriber token scopes
 - Related: [ADR-0006](0006-application-architecture.md) — process architecture
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin type system; PluginContext events API
 - Related: [ADR-0012](0012-job-abstraction.md) — job events flow through this bus

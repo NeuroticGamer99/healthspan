@@ -103,6 +103,7 @@ See [ADR-0010](0010-cli-plugin-model.md) for the full plugin architecture.
 - Conflict resolution for duplicate data
 
 ## Links
+- Extended by: [ADR-0026](0026-named-scoped-tokens.md) — the shared configuration no longer carries a bearer token; each client holds its own named, scoped token
 - Related: [ADR-0001](0001-mcp-server-language.md) — implementation language
 - Related: [ADR-0002](0002-ai-provider-interface.md) — AI client pluggability
 - Related: [ADR-0003](0003-database-backend.md) — database pluggability

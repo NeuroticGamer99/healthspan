@@ -19,7 +19,7 @@ Each platform component (Core Service, MCP server, GUI, import pipeline, CLI) ru
 Any MCP-compatible application that connects to the MCP server to query health data. This is the correct term — the platform does not reference any specific AI product by name in interfaces, configuration, or documentation. See [ADR-0007](adr/0007-mcp-transport.md).
 
 **Shared TOML config**
-A single versioned TOML configuration file read by all processes. Contains: service ports, bearer token, database path, binding address, log level, plugin directory path, and schedule definitions. Processes do not hardcode any of these values. See [design-rationale.md](design-rationale.md).
+A single versioned TOML configuration file read by all processes. Contains: service ports, database path, binding address, log level, plugin directory path, and schedule definitions. It contains no credentials — each client stores its own token separately (see [ADR-0026](adr/0026-named-scoped-tokens.md)). Processes do not hardcode any of these values. See [design-rationale.md](design-rationale.md).
 
 ---
 
@@ -122,7 +122,7 @@ An async operation that runs as a separate process spawned by the Core Service. 
 ## Security and Encryption
 
 **Bearer token**
-A cryptographically random token (minimum 32 bytes, base64url-encoded) required in the `Authorization` header of every HTTP request. Generated automatically on first run. Stored in the shared TOML config file. Never appears in URLs, logs, or source code. See [security.md](security.md).
+A named, scoped, revocable credential (cryptographically random, minimum 32 bytes, base64url-encoded, `hsp_`-prefixed) required in the `Authorization` header of every HTTP request. The default token set is issued on first run; each client stores only its own token via the OS keychain — never in the shared TOML config. The Core Service stores only hashes. Never appears in URLs, logs, or source code. See [ADR-0026](adr/0026-named-scoped-tokens.md) and [security.md](security.md).
 
 **Secret key**
 A randomly generated 32-byte value stored in the OS keychain via `keyring`. One of the two components of the two-factor hybrid key model. Never typed by the user under normal operation. See [ADR-0013](adr/0013-encryption-at-rest.md).

@@ -77,3 +77,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0023](0023-distribution-mechanism.md) | Distribution Mechanism | Accepted |
 | [ADR-0024](0024-plugin-extensions.md) | Plugin System Extensions — pip Dependencies and Versioning | Accepted |
 | [ADR-0025](0025-plugin-host-process-matrix.md) | Plugin Host-Process Matrix and Core Service Isolation | Proposed |
+| [ADR-0026](0026-named-scoped-tokens.md) | Named Scoped Bearer Tokens | Proposed |

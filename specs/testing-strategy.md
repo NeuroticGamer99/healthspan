@@ -88,7 +88,9 @@ Tests that exercise the full multi-process stack: Core Service + MCP Server + CL
 Tests that specifically validate security properties.
 
 **Coverage targets:**
-- **Authentication**: requests without bearer token are rejected; requests with invalid token are rejected; every endpoint enforces auth (no accidental unauthenticated endpoints)
+- **Authentication**: requests without bearer token are rejected; requests with invalid or revoked tokens are rejected; every endpoint enforces auth (no accidental unauthenticated endpoints)
+- **Authorization**: requests authenticated with a token lacking a required scope are rejected with 403; every route declares its required scope (no accidental scope-free endpoints); job submission enforces the job type's declared scopes (ADR-0026)
+- **Event forgery**: `/v1/events/inbound` rejects reserved namespaces (`data.*`, `job.*`, `schedule.*`, `schema.*`, `system.*`, `plugin.*`) for every token; rejects payloads supplying `source`; rejects publication outside the token's namespace allowlist; a job-child token cannot report progress for a different job ID (ADR-0026)
 - **SQL injection**: parameterized queries only — test with known injection payloads against all user-input-accepting endpoints
 - **Host header validation**: requests with unexpected Host headers are rejected
 - **CORS**: cross-origin requests from non-allowlisted origins are rejected; preflight requests are denied

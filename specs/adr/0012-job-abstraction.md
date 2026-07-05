@@ -95,8 +95,8 @@ Jobs older than a configurable retention period are pruned automatically.
 **Heavyweight jobs** (large backfills, intensive computation, and **all plugin-provided handlers**) — separate processes spawned by the Core Service:
 
 - Children are created with the multiprocessing `spawn` start method, set explicitly on all platforms — never `fork`. A forked child inherits a copy of the parent's memory, including the derived encryption key (violating ADR-0025 INV-1); a spawned child starts from a fresh interpreter. Do not rely on platform defaults (`fork` is the historical default on Linux).
-- The child receives a scoped bearer token for Core REST API access. It never receives the encryption key and has no direct database access — all reads and writes go through the REST API.
-- The child publishes progress events back via the REST API (`POST /v1/events/inbound`). The Core Service fans these out to subscribers.
+- The child receives an ephemeral, single-job bearer token for Core REST API access — minted at spawn, scoped to the job type's declared scopes, delivered via stdin, expired when the job reaches a terminal state (ADR-0026). It never receives the encryption key and has no direct database access — all reads and writes go through the REST API.
+- The child reports progress via the dedicated `POST /v1/jobs/{id}/progress` endpoint — its single-job token is bound to that job ID. The Core Service validates the report, emits the corresponding `job.progress` events, and fans them out to subscribers. Job children cannot publish arbitrary events (ADR-0026).
 
 The job type declaration (in the plugin that registers the job handler) specifies which execution model to use:
 
@@ -115,6 +115,7 @@ Not all jobs are cancellable. A job handler declares whether it supports cancell
 
 ## Links
 - Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — plugin-provided handlers never execute in the Core Service process; children are spawned, never forked
+- Related: [ADR-0026](0026-named-scoped-tokens.md) — ephemeral single-job tokens; job submission requires the job type's declared scopes
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation
 - Related: [ADR-0011](0011-event-bus.md) — job events flow through the event bus
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system
