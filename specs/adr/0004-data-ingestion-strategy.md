@@ -102,7 +102,7 @@ The specific interface contract is not finalized — it will be refined as the f
 
 ## Links
 - Related: [ADR-0003](0003-database-backend.md) — database backend
-- Related: [ADR-0006](0006-application-architecture.md) — import pipeline as a first-class process
+- Related: [ADR-0006](0006-application-architecture.md) — process architecture (the import pipeline is a data path, not a daemon — see [ADR-0025](0025-plugin-host-process-matrix.md))
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugins can add new import sources
 - Related: [specs/security.md](../security.md) — bulk import validation requirements
 - Related: [open-questions.md](../open-questions.md) — per-source export format research

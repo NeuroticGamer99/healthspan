@@ -34,7 +34,7 @@ Communication between processes on the same trusted machine (localhost HTTP) is 
 
 ## Principles
 
-**Least privilege per process.** Each process has access only to what it needs. The GUI has no database credentials. The import pipeline has no MCP configuration. The MCP server holds a read-only token by default — write capability for an AI client is a deliberately issued, named credential, never a default (ADR-0026). See ADR-0006.
+**Least privilege per process.** Each process has access only to what it needs. The GUI has no database credentials. The Automation Host token carries no `admin` scope. The MCP server holds a read-only token by default — write capability for an AI client is a deliberately issued, named credential, never a default (ADR-0026). See ADR-0006.
 
 **Defense in depth.** No single control is relied upon alone. Authentication, host header validation, and CORS work together. A bypass of one does not grant access.
 

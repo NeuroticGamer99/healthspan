@@ -39,7 +39,7 @@ These can't all be true. If transport-adapter/automation/analysis plugins load i
 
 ### D. What is the Import Pipeline, actually?
 
-- [ ] Decide: long-running process, or CLI/job-system operations? Correct the diagrams and startup order.
+- [x] Decide: long-running process, or CLI/job-system operations? Correct the diagrams and startup order. — *Resolved: decision made in ADR-0025 — imports are job-system operations, there is no Import Pipeline daemon, and the fourth supervised process is the Automation Host (which hosts the watch-folder importer, the one import concern needing residency). Diagrams and startup order corrected: README diagram + new Automation Host bullet, observability.md health-endpoint heading and startup step 4, glossary (client rosters, new Automation Host entry, "Import Pipeline" section retitled "Data Import" with an entry stating the pipeline is a pattern not a process, stale "transport adapters are plugins" entry fixed), design-rationale.md and security.md client/process mentions. Accepted ADR-0006 got a navigation link to ADR-0025 only; its diagram stands as a historical record.*
 
 The README diagram and [ADR-0006](adr/0006-application-architecture.md) draw it as a first-class long-running process; [observability.md](observability.md) has the launcher starting it fourth; but [ADR-0008](adr/0008-process-lifecycle.md) starts only Core + MCP + GUI, and [ADR-0012](adr/0012-job-abstraction.md) implies imports are jobs submitted to Core Service.
 

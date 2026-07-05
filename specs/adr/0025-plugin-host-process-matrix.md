@@ -244,7 +244,7 @@ Conforming edits required by this ADR (all target documents are Proposed or free
 - Extends: [ADR-0008](0008-process-lifecycle.md) — adds the Automation Host as the fourth supervised process
 - Preserves: [ADR-0013](0013-encryption-at-rest.md) — makes the "Plugin isolation" guarantee architecturally true
 - Constrains: [ADR-0011](0011-event-bus.md), [ADR-0012](0012-job-abstraction.md), [ADR-0016](0016-automation-plugin-type.md), [ADR-0017](0017-notification-channels.md)
-- Related: [ADR-0006](0006-application-architecture.md) — process isolation and the micro-kernel principle
+- Extends: [ADR-0006](0006-application-architecture.md) — process isolation and the micro-kernel principle; replaces the Import Pipeline daemon in the process roster with the Automation Host
 - Related: [ADR-0020](0020-plugin-registry.md) — trust tiers as the future relaxation path
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — named scoped tokens; per-host credentials and credential tiers
 - Related: [specs/security.md](../security.md) — Security Invariants

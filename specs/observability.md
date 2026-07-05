@@ -30,7 +30,7 @@ GET /health
 ```
 Returns `200` when ready to accept AI client connections.
 
-### Import Pipeline, other processes
+### Automation Host, other processes
 Same pattern: `GET /health` returning status and process-specific readiness indicators.
 
 ---
@@ -115,7 +115,7 @@ Startup order (enforced by launcher):
 1. Core Service (runs migrations on startup)
 2. MCP Server (depends on Core Service being healthy)
 3. GUI (depends on Core Service being healthy)
-4. Import Pipeline (depends on Core Service)
+4. Automation Host (depends on Core Service being healthy)
 
 This order is determined by health endpoint readiness, not fixed sleep intervals.
 
@@ -123,4 +123,5 @@ This order is determined by health endpoint readiness, not fixed sleep intervals
 
 ## Links
 - Related: [ADR-0008](adr/0008-process-lifecycle.md) — process lifecycle and launcher behavior
+- Related: [ADR-0025](adr/0025-plugin-host-process-matrix.md) — the Automation Host, the fourth supervised process; there is no Import Pipeline daemon (imports run as jobs, [ADR-0012](adr/0012-job-abstraction.md))
 - Related: [security.md](security.md) — health data logging prohibition

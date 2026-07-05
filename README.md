@@ -41,7 +41,7 @@ Healthspan is built as a set of independent processes with well-defined, version
 ```
 GUI (PySide6)           ─┐
 MCP Server (fastmcp)    ─┤→  Core Service (FastAPI, REST API v1)  →  SQLite (SQLCipher)
-Import Pipeline         ─┤       ↑ auth, validation, event bus
+Automation Host         ─┤       ↑ auth, validation, event bus
 CLI + plugins           ─┘
 ```
 
@@ -49,6 +49,7 @@ CLI + plugins           ─┘
 - **MCP Server** — exposes named tools to any MCP-compatible AI client. AI-provider agnostic.
 - **GUI** — standalone PySide6 desktop client. Replaceable: it's just another API client.
 - **CLI (command-line interface)** — first-class scripting layer with a directory-scanning plugin system. Drop a `.py` file into the plugins directory; new commands appear.
+- **Automation Host** — resident process where automation rules, notification channels, and the watch-folder importer run, reacting to events (see [ADR-0025](specs/adr/0025-plugin-host-process-matrix.md), currently Proposed). There is no separate import daemon — imports run as jobs submitted to the Core Service.
 - **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapter plugins for more complex deployments (design not yet finalized — see [ADR-0011](specs/adr/0011-event-bus.md), currently Proposed).
 
 Full architectural documentation is in [`specs/`](specs/), including 20+ Architecture Decision Records covering every major design choice.

@@ -7,13 +7,16 @@ Project-specific terminology used across the Healthspan documentation. Terms are
 ## Architecture
 
 **Core Service**
-The central process that owns the database connection. Exposes a versioned REST API (`/v1/`). All other processes — GUI, MCP server, import pipeline, CLI — are clients of the Core Service. The only process that performs database writes during normal operation. See [ADR-0006](adr/0006-application-architecture.md).
+The central process that owns the database connection. Exposes a versioned REST API (`/v1/`). All other processes — GUI, MCP server, Automation Host, CLI — are clients of the Core Service. The only process that performs database writes during normal operation. See [ADR-0006](adr/0006-application-architecture.md).
 
 **Micro-kernel architecture**
 The design principle where the Core Service is a thin host that enforces contracts (auth, validation, transactions), and business logic is delivered as plugins against the same interfaces available to third-party contributors. There is no privileged distinction between first-party and user-contributed plugins at the *interface* level; which process hosts each plugin type — and why the Core Service loads none — is defined in [ADR-0025](adr/0025-plugin-host-process-matrix.md). See [ADR-0006](adr/0006-application-architecture.md).
 
 **Process isolation**
-Each platform component (Core Service, MCP server, GUI, import pipeline, CLI) runs as an independent process communicating over HTTP. No process has privileged access; the Core Service enforces auth and validation uniformly for all clients. See [ADR-0006](adr/0006-application-architecture.md).
+Each platform component (Core Service, MCP server, GUI, Automation Host, CLI) runs as an independent process communicating over HTTP. No process has privileged access; the Core Service enforces auth and validation uniformly for all clients. See [ADR-0006](adr/0006-application-architecture.md).
+
+**Automation Host**
+The fourth launcher-supervised process (after Core Service, MCP server, GUI) and the single execution locus for event-driven plugin code. Hosts `automation` and `notification_channel` plugins, the first-party declarative rule engine, and the watch-folder importer. Subscribes to events via SSE with `Last-Event-ID` replay; acts exclusively through the Core REST API with its own scoped token. See [ADR-0025](adr/0025-plugin-host-process-matrix.md).
 
 **AI client**
 Any MCP-compatible application that connects to the MCP server to query health data. This is the correct term — the platform does not reference any specific AI product by name in interfaces, configuration, or documentation. See [ADR-0007](adr/0007-mcp-transport.md).
@@ -55,7 +58,10 @@ An enum on the `intervention_dose_history` table recording the nature of a dose 
 
 ---
 
-## Import Pipeline
+## Data Import
+
+**Import pipeline**
+The structured path all data takes into the system: adapter parse/validate/normalize, then submission to the bulk import endpoint. It is a *pattern*, not a process — there is no resident import daemon. Imports run as jobs through the Core Service ([ADR-0012](adr/0012-job-abstraction.md)); the one import concern that needs residency, watch-folder importing, runs in the Automation Host ([ADR-0025](adr/0025-plugin-host-process-matrix.md)).
 
 **Bulk import endpoint**
 `POST /v1/import` on the Core REST API. The single entry point for all data entering the system. Provides full-batch validation before any write, atomic transactions, dry-run mode, and explicit conflict policies. See [ADR-0004](adr/0004-data-ingestion-strategy.md).
@@ -105,7 +111,7 @@ A pip package declared in `PLUGIN_PACKAGES` by name only (no version pin), resol
 An internal asyncio-based event bus hosted by the Core Service. Transport adapters bridge the internal bus to external protocols. Events use dot-notation namespaces (e.g. `data.imported`, `job.progress`, `alert.triggered`). See [ADR-0011](adr/0011-event-bus.md).
 
 **Transport adapter**
-A plugin that bridges the internal event bus to an external protocol. Inbound adapters (HTTP webhook, MQTT) translate external events into internal bus events. Outbound adapters (SSE, ZeroMQ, MQTT) broadcast internal events to external subscribers. See [ADR-0011](adr/0011-event-bus.md).
+An internal component (not a loadable plugin — see [ADR-0025](adr/0025-plugin-host-process-matrix.md)) that bridges the internal event bus to an external protocol. Inbound adapters (HTTP webhook, MQTT) translate external events into internal bus events. Outbound adapters (SSE, ZeroMQ, MQTT) broadcast internal events to external subscribers. See [ADR-0011](adr/0011-event-bus.md).
 
 ---
 
