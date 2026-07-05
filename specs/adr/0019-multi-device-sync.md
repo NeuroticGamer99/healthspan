@@ -6,11 +6,12 @@ Proposed — stub
 ## Context and Problem Statement
 A user who works on both a desktop and a laptop needs the database to stay in sync across devices. The current local-first SQLite design has no sync mechanism. ADR-0003 decided SQLite-only for v1, so a PostgreSQL backend on a shared server is not an available answer without a new ADR (which must also revisit migrations and encryption); sync semantics (conflict resolution, offline use, which device is authoritative) are unaddressed either way.
 
-ADR-0013 changes the sync picture materially: the SQLCipher-encrypted database file is opaque ciphertext. A cloud storage provider or sync service that holds the file never sees plaintext. Cloud backup and cloud sync of the encrypted file are explicitly safe — the storage provider is untrusted and the encryption model handles this correctly.
+ADR-0013 changes the sync picture materially on confidentiality: the SQLCipher-encrypted database file is opaque ciphertext, so a cloud storage provider or sync service that holds it never sees plaintext. But confidentiality is not the same as safety to sync. The live database runs in WAL mode (`*.db-wal` / `*.db-shm` are gitignored, and Core Service holds a persistent connection per ADR-0028) — a sync client can snapshot `db` and `-wal` at different instants mid-write, capturing a torn, internally inconsistent copy. Encryption makes this worse, not better: a torn ciphertext file cannot be partially salvaged or diagnosed the way a torn plaintext file sometimes can. **Only the output of `healthspan db backup` — a checkpointed, single-file, self-consistent snapshot — is safe to sync continuously. The live database file must never be synced while Core Service may be writing to it.**
 
 ## Decision Drivers
 - Local-first is the primary deployment model; sync is an enhancement, not a requirement
-- The encrypted database file is cloud-safe (ADR-0013) — no data exposure risk from cloud backup or sync
+- The encrypted database file is confidentiality-safe for any untrusted storage provider (ADR-0013) — but confidentiality does not imply the file is safe to sync while live; WAL mode makes an in-progress sync of the live file a torn-copy hazard, independent of encryption
+- Only `healthspan db backup` output is a checkpointed, self-consistent snapshot safe to sync continuously
 - SQLite has a single-writer constraint: concurrent writes from multiple machines corrupt the database; only one Core Service instance may write at a time
 - Offline use (editing on a device without network access) requires a merge/conflict model
 - Health data conflicts (same biomarker result entered on two devices) have clear resolution rules (last write wins is dangerous; human review is safer)
@@ -22,14 +23,14 @@ The recommended near-term approach for multi-device use:
 
 1. **One active Core Service at a time.** Only one machine runs the Core Service and holds a write connection to the database. Other devices read via the Core REST API over the LAN/VPN, or wait until the primary machine is accessible.
 
-2. **Cloud sync as backup and transfer.** The encrypted database file can be safely placed in Dropbox, iCloud Drive, OneDrive, or any similar sync service. Cloud sync provides:
-   - Continuous off-site backup (the cloud provider cannot read the ciphertext)
-   - A mechanism to transfer the database between machines without manual copy
+2. **Sync backup output only, never the live database file.** The live `db` file (plus its WAL-mode `-wal`/`-shm` companions) must not be placed in Dropbox, iCloud Drive, OneDrive, or any similar sync service — a sync client can capture it mid-write and deliver a torn, unrecoverable copy on the receiving machine. Instead, a scheduled `healthspan db backup` writes a checkpointed, self-consistent, encrypted snapshot to a designated backup directory; that directory — and only that directory — is what gets synced. Cloud sync of backup output provides:
+   - Continuous off-site backup (the cloud provider cannot read the ciphertext, and each synced file is internally consistent)
+   - A mechanism to transfer the database between machines: restore from the latest synced backup, never by copying the live file
    - Version history (most sync services retain deleted/overwritten versions)
 
-3. **Single-writer enforcement.** To prevent concurrent write corruption, Core Service writes a lock file alongside the database. If another machine's sync client delivers an updated database file while Core Service is running, it must not be swapped in while the connection is open. The recommended pattern: sync service syncs the file; Core Service checks modification time at startup and warns if the file changed unexpectedly while it was offline.
+3. **Single-writer enforcement.** Only one Core Service instance may hold the write connection to the live database file at a time; that file stays local to the machine running Core Service and is never itself a sync target. Core Service writes a lock file alongside the database to detect a second instance attempting to open it. Moving the active database to a new machine is a restore operation — stop Core Service, transfer the latest backup (via sync or manual copy), restore it as the new live file, start Core Service there.
 
-4. **Hot backup is encrypted.** `healthspan db backup` produces an encrypted backup file (ADR-0013). Backup files can be safely synced to cloud storage alongside the live database.
+4. **Backup is the only sync-safe artifact.** `healthspan db backup` produces a checkpointed, encrypted backup file (ADR-0013) that is safe to sync continuously. The live database file is never safe to sync while Core Service may be writing to it, regardless of encryption.
 
 ## Future Approach: Multi-Master Sync
 
@@ -40,10 +41,11 @@ True offline multi-master sync (both machines write, later reconcile) requires e
 A PostgreSQL backend over a LAN or VPN with a single authoritative server would be the natural path when more than one machine needs simultaneous write access, at the cost of that ADR chain. CRDT-based SQLite sync is a more complex future direction.
 
 ## Decision Outcome
-TBD — deferred for multi-master. Near-term recommendation is single-writer + cloud sync of the encrypted file. See above for the recommended pattern.
+TBD — deferred for multi-master. Near-term recommendation is single-writer, with cloud sync limited to `healthspan db backup` output — never the live database file. See above for the recommended pattern.
 
 ## Links
 - Related: [ADR-0003](0003-database-backend.md) — SQLite-only for v1; multi-master write access requires a new ADR revisiting migrations and encryption
 - Related: [ADR-0008](0008-process-lifecycle.md) — Docker Compose deployment supports LAN access
-- Related: [ADR-0013](0013-encryption-at-rest.md) — encrypted file is cloud-safe; hot backups are encrypted
+- Related: [ADR-0013](0013-encryption-at-rest.md) — encrypted file is cloud-safe from a confidentiality standpoint; hot backups are the sync-safe artifact
+- Related: [ADR-0028](0028-key-derivation-and-rotation.md) — persistent connection held for the life of Core Service; the live file is under active write at any time it runs
 - Related: [specs/security.md](../security.md) — Trust Model section; storage layer is zero-knowledge

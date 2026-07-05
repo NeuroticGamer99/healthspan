@@ -67,7 +67,7 @@ The README diagram and [ADR-0006](adr/0006-application-architecture.md) draw it 
 
 ### H. "Cloud sync of the live file is safe" is overstated
 
-- [ ] Update [open-questions.md](open-questions.md) resolved item and [ADR-0019](adr/0019-multi-device-sync.md): sync only `healthspan db backup` outputs (checkpointed, consistent), never the live file.
+- [x] Update [open-questions.md](open-questions.md) resolved item and [ADR-0019](adr/0019-multi-device-sync.md): sync only `healthspan db backup` outputs (checkpointed, consistent), never the live file. — *Done: both rewritten to state the live WAL-mode file must never be synced (torn-copy hazard, unrelated to encryption); only backup output is sync-safe. security.md's trust table and design-rationale.md's pattern reference were checked and don't repeat the overstated claim — no change needed there.*
 
 With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal` mid-write can capture a torn, unrecoverable copy — encrypted ciphertext makes partial copies worse, not better. ADR-0019's mtime check is weak protection.
 
