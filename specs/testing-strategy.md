@@ -34,7 +34,7 @@ Two distinct sub-categories of function belong here:
 - Import record parsing and validation (per-source importer modules)
 - Reference range comparison logic
 - Plugin compatibility checking (API version range validation, dependency resolution)
-- Argon2id key derivation (deterministic output for known inputs)
+- Argon2id key derivation (ADR-0028): known-answer vectors — fixed passphrase + secret key + parameters produce the expected 32-byte key; NFC normalization (composed and decomposed passphrase forms derive identically); Base32 secret-key round-trip; `.keyparams` sidecar parse/serialize round-trip
 - Configuration parsing and validation
 
 **Coverage targets — in-memory data transforms:**
@@ -98,6 +98,7 @@ Tests that specifically validate security properties.
 - **CORS**: cross-origin requests from non-allowlisted origins are rejected; preflight requests are denied
 - **Input validation**: malformed import payloads are rejected with full error details; oversized payloads are handled gracefully
 - **Encryption round-trip**: create database with SQLCipher → close → reopen with correct key → data intact; reopen with wrong key → failure
+- **Rekey (ADR-0028)**: `change-passphrase` and `rotate-secret-key` flows — old credentials fail after rotation, new credentials open, data intact; the pre-rekey backup still opens with the *old* credentials; rotation refuses to run without a verified backup unless `--no-backup`; missing `.keyparams` sidecar fails with the documented recovery guidance
 - **Recovery Kit flow**: init → generate Recovery Kit → simulate new machine → restore from kit → database unlocks
 - **Health data in logs**: after a test run that exercises all endpoints, grep all log output for known test biomarker values — none should appear
 

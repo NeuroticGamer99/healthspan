@@ -33,7 +33,7 @@ These can't all be true. If transport-adapter/automation/analysis plugins load i
 
 ### C. ADR-0013 (Accepted) still contains Nuitka
 
-- [ ] Write an extending/superseding ADR correcting the code-signing requirement and the macOS keychain claim (per ADR governance — not an in-place edit).
+- [x] Write an extending/superseding ADR correcting the code-signing requirement and the macOS keychain claim (per ADR governance — not an in-place edit). — *Resolved by [ADR-0028](adr/0028-key-derivation-and-rotation.md) (Proposed): code-signing requirement withdrawn (no binary exists to sign under uv); macOS keychain ACL claim corrected to same-user parity with Windows/Linux; a future signed app-bundle distribution noted as what would restore it.*
 
 [ADR-0013](adr/0013-encryption-at-rest.md) requires signing "the Nuitka-compiled binary." Beyond the stale reference, this matters substantively: the macOS keychain per-app ACL story assumed a signed hardened-runtime binary. Under `uv tool install`, the keychain client is the Python interpreter in a uv venv — any same-user Python script gets the same ACL identity, which materially weakens the claimed macOS asymmetry advantage.
 
@@ -91,14 +91,16 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.2 Specify the key derivation construction precisely
 
-- [ ] Use the 32-byte secret key as the Argon2id salt (essentially 1Password's construction) — current spec says `Argon2id(passphrase + secret_key)`, naive concatenation, no salt mentioned at all
-- [ ] Specify encodings
-- [ ] Pin Argon2id parameters to OWASP minimums (≥19 MiB memory, t≥2) in the spec
-- [ ] Pass the derived key as raw hex: `PRAGMA key = "x'<64 hex>'"` — skips SQLCipher's internal PBKDF2 (a stronger KDF already ran) and eliminates the quoting hazard in ADR-0013's `f"PRAGMA key='{key}'"` example, which contradicts security.md's "no SQL by string interpolation" rule
+- [x] Use the 32-byte secret key as the Argon2id salt (essentially 1Password's construction) — current spec says `Argon2id(passphrase + secret_key)`, naive concatenation, no salt mentioned at all
+- [x] Specify encodings
+- [x] Pin Argon2id parameters to OWASP minimums (≥19 MiB memory, t≥2) in the spec
+- [x] Pass the derived key as raw hex: `PRAGMA key = "x'<64 hex>'"` — skips SQLCipher's internal PBKDF2 (a stronger KDF already ran) and eliminates the quoting hazard in ADR-0013's `f"PRAGMA key='{key}'"` example, which contradicts security.md's "no SQL by string interpolation" rule
+
+*All four resolved by [ADR-0028](adr/0028-key-derivation-and-rotation.md) (Proposed): secret key as salt (passphrase-only mode gets a random salt in a `.keyparams` sidecar); NFC-normalized UTF-8 passphrase, raw-byte salt, Base32 human representations; OWASP minimums as the recorded floor with argon2-cffi defaults (64 MiB, t=3) as initial values, parameters pinned per database in the sidecar; raw-hex `PRAGMA key` as the single sanctioned interpolation exception.*
 
 ### 2.3 Key/passphrase rotation is entirely missing
 
-- [ ] Extension ADR to ADR-0013: `healthspan keys change-passphrase` via `PRAGMA rekey`; secret key rotation; document that old backups still open with old credentials.
+- [x] Extension ADR to ADR-0013: `healthspan keys change-passphrase` via `PRAGMA rekey`; secret key rotation; document that old backups still open with old credentials. — *Resolved by [ADR-0028](adr/0028-key-derivation-and-rotation.md): both commands specified; mandatory verified backup before rekey (`--no-backup` override); secret-key rotation invalidates printed Recovery Kits; non-retroactivity documented and printed by the commands.*
 
 ### 2.4 `healthspan db encrypt` retains a plaintext backup
 
@@ -156,7 +158,7 @@ Full event sourcing is the wrong trade for a single-user analytical store — ma
 
 ### 3.C Fix ADR-0013's connection-lifetime requirement
 
-- [ ] "Open a connection per request and don't hold the key in memory" is self-contradictory and slow: opening the next connection requires holding the derived key (or re-running Argon2id, ~hundreds of ms per request, by design). The threat model already accepts memory scraping as unprotected.
+- [x] "Open a connection per request and don't hold the key in memory" is self-contradictory and slow: opening the next connection requires holding the derived key (or re-running Argon2id, ~hundreds of ms per request, by design). The threat model already accepts memory scraping as unprotected. — *Resolved by [ADR-0028](adr/0028-key-derivation-and-rotation.md): derive once at startup, hold the raw key in Core memory under `SecretStr` discipline, persistent connection pool, best-effort zeroization at shutdown; replaces ADR-0013's connection-lifetime requirement.*
 
 **Honest and fast:** derive once at startup, hold the raw key in process memory (optionally mlock-style best effort), keep a persistent connection/pool, zero the key on shutdown. SQLite + WAL + a connection pool is also how to get decent concurrent-read behavior under FastAPI.
 
