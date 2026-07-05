@@ -35,7 +35,25 @@ The directory-scanning loader (ADR-0010) does not need to change. The registry l
 
 This is not needed for v1 — the trusted-user model is sufficient while the user base is small and plugins are self-authored. The registry design should reserve this capability so it can be added without architectural changes.
 
+## Design Requirement: Publication Age Gate (Supply-Chain Cooldown)
+
+Registry installs and updates must enforce a configurable **minimum publication age** on the plugin version being installed *and on every version in its transitive pip dependency set* (`PLUGIN_PACKAGES`, ADR-0024). A version younger than the threshold is not installed — even when the user explicitly runs a refresh or first-time install — until it has aged past the gate.
+
+```toml
+[registry]
+min_release_age_days = 14   # default; user-configurable
+```
+
+**Why:** The dominant real-world supply-chain pattern is fast-burn — a maintainer account is compromised or a malicious version is published, and the ecosystem detects and yanks it within hours to days. An age gate keeps users out of that window entirely: by the time a version is installable, it has survived the period in which such attacks are typically discovered. This is freshness protection; it is complementary to (not a substitute for) the authenticity protections of the pinned catalog (ADR-0024) and hash pinning (security review item 2.7). It does not defend against patient, long-dormant attacks — that remains the role of trust tiers and review.
+
+**Requirements:**
+- The gate applies to first-time installs, updates, and dependency resolution performed at install time. Dependency versions must be resolved and age-checked at install time, then pinned, so the runtime loader (ADR-0024 loader step 4) never pulls an unvetted fresh version later.
+- Override is per-invocation only (e.g. `healthspan plugin install <name> --allow-fresh`) with a prominent warning naming each version that fails the gate and its age. There is no global config option to disable the gate — setting `min_release_age_days = 0` is the deliberate, greppable opt-out.
+- The version's publication timestamp must come from the registry index / package index metadata, not from the artifact itself (an attacker controls the artifact's contents, including any self-declared dates).
+- A security-fix exception is legitimate (a fresh version may *fix* a vulnerability); the warning text should acknowledge this and direct the user to verify the release before overriding.
+
 ## Links
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin discovery, loading, and security boundary
+- Related: [ADR-0024](0024-plugin-extensions.md) — `PLUGIN_PACKAGES` and the pinned package catalog; the age gate constrains install-time dependency resolution
 - Related: [ADR-0025](0025-plugin-host-process-matrix.md) — host-process matrix; trust tiers are the future path to relaxing it
 - Related: [specs/security.md](../security.md) — plugin security boundary
