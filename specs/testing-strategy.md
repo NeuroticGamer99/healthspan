@@ -56,6 +56,8 @@ Tests that exercise a real database and/or the REST API. Each test gets its own 
 - Database migration runner: forward migration from empty database, idempotency of individual migrations, schema version tracking
 - Event bus: event publishing, SSE delivery to subscribers, event schema validation
 - Job system: submission, status transitions, progress events, cancellation
+- Audit trail (ADR-0027): **mutation-matrix test** — every repository mutation path against every data table writes exactly one `audit_log` row in the same transaction, with correct operation, row images, and provenance (actor, batch, job); a rolled-back mutation leaves no audit row; `audit_log` immutability triggers reject UPDATE and DELETE
+- Corrections (ADR-0027): value correction inserts the new row, sets `superseded_by`, and emits `data.corrected`; correction chains resolve correctly through `*_current` views; supersession-chain rows are not deletable; hard delete preserves the full row image in `audit_log` and emits `data.deleted`
 - Health and metrics endpoints
 
 ### Plugin tests
@@ -148,3 +150,4 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 - Related: [ADR-0009](adr/0009-database-migration.md) — migration runner behavior to test
 - Related: [ADR-0010](adr/0010-cli-plugin-model.md) — plugin loader behavior to test
 - Related: [ADR-0013](adr/0013-encryption-at-rest.md) — encryption round-trip to test
+- Related: [ADR-0027](adr/0027-audit-trail-and-corrections.md) — audit trail and correction behavior to test

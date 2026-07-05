@@ -225,3 +225,4 @@ The Core Service has no knowledge of Qt. The conversion is entirely inside the G
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugin type system; PluginContext events API
 - Related: [ADR-0012](0012-job-abstraction.md) — job events flow through this bus
 - Related: [ADR-0014](0014-websocket.md) — bidirectional extension to this architecture
+- Related: [ADR-0027](0027-audit-trail-and-corrections.md) — `data.imported`/`data.corrected`/`data.deleted` are emitted by Core on validated mutations and drive aggregate invalidation

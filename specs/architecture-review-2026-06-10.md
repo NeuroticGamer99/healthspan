@@ -140,7 +140,7 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 3.A Resolve the event-sourcing question as "no" — write the ADR now
 
-- [ ] Blocks migration 0001 per [open-questions.md](open-questions.md).
+- [x] Blocks migration 0001 per [open-questions.md](open-questions.md). — *Resolved by [ADR-0027](adr/0027-audit-trail-and-corrections.md) (Proposed): event sourcing rejected; append-only `audit_log` written in the same transaction as every mutation (application-layer capture, trigger-enforced immutability), `superseded_by` supersession for value corrections (in-place updates only for designated metadata repairs like the timezone workflow), hard delete + mandatory audit row with client backup prompt, CQRS-lite with ADR-0021 aggregates as rebuildable read models invalidated by `data.*` events. open-questions.md entries moved to Resolved.*
 
 Full event sourcing is the wrong trade for a single-user analytical store — materialized-view consistency complexity forever, for replay rarely used. The lighter pattern gets 90%:
 

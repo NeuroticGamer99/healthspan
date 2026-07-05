@@ -8,34 +8,13 @@ Architectural and technical decisions that need resolution before or during impl
 
 ~~**Timezone handling**~~ → Resolved — see Resolved section.
 
-**Longitudinal data correction**
-When a result was entered incorrectly and needs correction, overwriting silently loses history. Options: (a) `superseded_by` foreign key — the corrected row points to the replacement, original is kept; (b) a separate `corrections` table recording old value, new value, reason, and timestamp; (c) soft delete + re-entry with an audit trail entry. This affects the schema design for every data table and must be resolved before bulk data entry begins. See also: audit trail below.
+~~**Longitudinal data correction**~~ → Resolved — see Resolved section and [ADR-0027](adr/0027-audit-trail-and-corrections.md).
 
-**Audit trail**
-A `audit_log` table recording every data mutation (insert, update, delete) with: table name, row ID, operation type, old values (JSON), new values (JSON), timestamp, and source (import batch ID, user action, plugin name). Not the same as application logs — this is a user-facing data integrity record. Must be in the schema from migration 0001; adding it later means historical changes have no record.
+~~**Audit trail**~~ → Resolved — see Resolved section and [ADR-0027](adr/0027-audit-trail-and-corrections.md).
 
-**Event sourcing as the audit trail implementation pattern**
-Event sourcing is the formal pattern for solving both the audit trail and longitudinal correction problems simultaneously. Instead of storing mutable current state and bolting on a separate audit log, the authoritative data is the append-only sequence of events (imported, corrected, deleted). Current state is derived by replaying or folding the event stream.
+~~**Event sourcing as the audit trail implementation pattern**~~ → Resolved (rejected) — see Resolved section and [ADR-0027](adr/0027-audit-trail-and-corrections.md).
 
-Implications if adopted:
-- The audit trail is not a separate concern — it *is* the data model. Every mutation is an immutable event.
-- Longitudinal correction becomes natural: a correction is a new event that supersedes a prior event, with both permanently visible.
-- Current-state views (what the user queries) are materialized from the event stream — effectively CQRS (see below).
-- Replay enables time-travel queries: "what did we believe about insulin on 2025-06-01 before the correction on 2025-09-15?"
-- Adds complexity: every read path queries a materialized view, not the source events directly. Materialized views must be kept consistent.
-
-The alternative is the traditional mutable-row + audit-log approach, which is simpler but makes the audit log a second-class citizen that can drift from reality.
-
-This is a foundational schema decision. Resolve before migration 0001.
-
-**CQRS (Command Query Responsibility Segregation)**
-If event sourcing is adopted, CQRS follows naturally. Write operations append events; read operations query materialized views optimized for each access pattern (biomarker history, panel-by-date, trend analysis, CGM aggregates). ADR-0021 (time-series aggregation) is already moving in this direction — aggregate tables are a read model derived from raw data.
-
-Even without full event sourcing, a lighter CQRS pattern may be useful: the Core Service write path (import, correct, delete) goes through validation and audit logging, while the read path queries denormalized views or summary tables for performance. The MCP server tools and GUI dashboards are natural read-model consumers.
-
-Decide the degree of separation between write and read models before designing the schema.
-
-**Decision sequencing note:** The event sourcing / audit trail / CQRS decisions must be resolved before ADR-0021 (time-series aggregation) and before the first migration is written. Materialized aggregates and audit logs are both natural consequences of the event sourcing choice — designing them independently risks inconsistency.
+~~**CQRS (Command Query Responsibility Segregation)**~~ → Resolved (CQRS-lite) — see Resolved section and [ADR-0027](adr/0027-audit-trail-and-corrections.md).
 
 ---
 
@@ -121,6 +100,14 @@ What export options exist for each body composition device (currently InBody 120
 ---
 
 ## Resolved
+
+- **Event sourcing** → Rejected. Everything it would buy this platform (audit, corrections, time-travel) the lighter pattern also delivers, without permanent materialized-view machinery; the one unique capability (replay-as-recovery) duplicates encrypted backups. See [ADR-0027](adr/0027-audit-trail-and-corrections.md).
+
+- **Audit trail** → `audit_log` table in migration 0001: append-only (immutability enforced by schema triggers), written by the Core Service data-access layer in the *same transaction* as every mutation so it cannot drift. Records table, row, operation, old/new row images (JSON), UTC timestamp, actor (token name per ADR-0026), import batch, job, and reason. Distinct from ADR-0026's `auth_audit` (security record) and application logs (operational record). See [ADR-0027](adr/0027-audit-trail-and-corrections.md).
+
+- **Longitudinal data correction** → `superseded_by` self-FK on every data table (option a). Value corrections insert the corrected row and point the original at it — never mutate in place; current state is `WHERE superseded_by IS NULL` via per-table `*_current` views. Carve-out: designated metadata repairs (the timezone correction workflow) update in place, fully audited. Deletes are hard deletes with a mandatory audit row preserving the full row image; clients flag the request and offer a backup first; supersession-chain rows are not deletable. See [ADR-0027](adr/0027-audit-trail-and-corrections.md).
+
+- **CQRS** → CQRS-lite only. Writes exclusively via the validated Core REST path (mutation + audit row in one transaction, Core-emitted `data.*` event); reads hit current-state tables/views or ADR-0021 aggregates, which are rebuildable caches — never authoritative — invalidated by `data.imported`/`data.corrected`/`data.deleted` events. No formal command/query split. See [ADR-0027](adr/0027-audit-trail-and-corrections.md).
 
 - **Timezone storage convention** → UTC as ground truth (ISO 8601). Every timestamp table carries four columns: `*_utc` (UTC, ground truth), `*_local_recorded` (original value from source, immutable), `*_local_tz` (IANA timezone name, best guess), `*_tz_inferred` (boolean — 1 if timezone was assumed not known). Correction workflow: update `local_tz`, recompute `*_utc` from `local_recorded`, clear `tz_inferred`. See [design-rationale.md](design-rationale.md) for the full convention.
 

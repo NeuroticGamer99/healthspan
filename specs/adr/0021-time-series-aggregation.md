@@ -22,7 +22,7 @@ TBD — design after the database schema (ADR-0003, ADR-0009) and at least one h
 ## Open Questions
 - What aggregation windows are needed? (hourly, daily, weekly, monthly?)
 - Should aggregates be materialized views, summary tables, or computed on demand with caching?
-- How are aggregates invalidated when source data is corrected (see longitudinal correction pattern in open-questions.md)?
+- ~~How are aggregates invalidated when source data is corrected?~~ — Answered by [ADR-0027](0027-audit-trail-and-corrections.md): aggregates are rebuildable caches, never authoritative; they derive from current-state data (`*_current` views) and are invalidated/recomputed in response to the Core-emitted `data.imported`, `data.corrected`, and `data.deleted` events
 - Should aggregation run as a background job (ADR-0012) triggered by import events (ADR-0011)?
 - What CGM-specific derived metrics are needed? (time-in-range, GMI, coefficient of variation, daily overlay)
 
@@ -36,4 +36,5 @@ TBD — design after the database schema (ADR-0003, ADR-0009) and at least one h
 - Related: [ADR-0009](0009-database-migration.md) — aggregate tables require migrations
 - Related: [ADR-0011](0011-event-bus.md) — import events could trigger aggregation jobs
 - Related: [ADR-0012](0012-job-abstraction.md) — aggregation as a background job
-- Related: [open-questions.md](../open-questions.md) — CGM indexing strategy, longitudinal data correction
+- Related: [ADR-0027](0027-audit-trail-and-corrections.md) — aggregates are rebuildable read models; correction/deletion invalidation contract
+- Related: [open-questions.md](../open-questions.md) — CGM indexing strategy

@@ -78,3 +78,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0024](0024-plugin-extensions.md) | Plugin System Extensions — pip Dependencies and Versioning | Accepted |
 | [ADR-0025](0025-plugin-host-process-matrix.md) | Plugin Host-Process Matrix and Core Service Isolation | Proposed |
 | [ADR-0026](0026-named-scoped-tokens.md) | Named Scoped Bearer Tokens | Proposed |
+| [ADR-0027](0027-audit-trail-and-corrections.md) | Audit Trail and Data Corrections — Event Sourcing Rejected | Proposed |
