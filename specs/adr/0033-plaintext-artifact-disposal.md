@@ -98,5 +98,6 @@ The *printed* kit remains governed by ADR-0013's existing physical-custody warni
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — kit regeneration on secret-key rotation; the verify-before-destructive-step pattern
 - Related: [ADR-0019](0019-multi-device-sync.md) — sync version history as one of the disposal defeats
 - Related: [ADR-0015](0015-data-export.md) — deliberate plaintext exports are user custody, out of scope here
+- Related: [ADR-0034](0034-clinical-document-storage.md) — applies this policy to import-source files and document renders
 - Related: [specs/security.md](../security.md) — Temporary Files and Encryption at Rest sections carry the policy
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 2.4, 2.5, 2.6

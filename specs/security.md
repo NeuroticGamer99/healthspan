@@ -119,6 +119,8 @@ The database file contains sensitive personal health data and must be encrypted.
 
 **Migration path:** For users with an existing unencrypted database, `healthspan db encrypt` migrates using SQLCipher's `sqlcipher_export()`, verifies the encrypted copy (opens with the derived key, `PRAGMA integrity_check`, row-count comparison), and then requires an explicit decision about the plaintext original: user-confirmed best-effort disposal (the default), or deliberate retention via `--keep-plaintext` with a prominent warning. A plaintext health database is never silently left on disk. See [ADR-0033](adr/0033-plaintext-artifact-disposal.md).
 
+**Clinical document originals:** Imported source documents (lab PDFs, CCDA exports, FHIR document payloads) are stored as content-addressed BLOBs inside the encrypted database — there is no plaintext document directory. After a verified import, the importer offers ADR-0033 disposal of the source file, so the only durable copy can be the encrypted one. See [ADR-0034](adr/0034-clinical-document-storage.md).
+
 ---
 
 ## Temporary Files

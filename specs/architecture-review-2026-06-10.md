@@ -127,7 +127,7 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.9 Imported clinical documents' original files have no specified home
 
-- [ ] [data-model.md](data-model.md) stores `source_file_hash`, implying the original PDF lives somewhere — if a plain directory, that's plaintext PHI outside the encryption boundary. Specify: BLOBs inside SQLCipher, or an explicitly-encrypted document store.
+- [x] [data-model.md](data-model.md) stores `source_file_hash`, implying the original PDF lives somewhere — if a plain directory, that's plaintext PHI outside the encryption boundary. Specify: BLOBs inside SQLCipher, or an explicitly-encrypted document store. — *Resolved by [ADR-0034](adr/0034-clinical-document-storage.md): originals stored as content-addressed BLOBs (`sha256` UNIQUE) inside the main SQLCipher database — one encryption boundary, transactional delete/audit with the document row, dedup enforced by the schema. Size guardrail (warn 25 MB / refuse 100 MB, configurable; DICOM out of scope). Import offers ADR-0033 disposal of the source file after verification; GUI prefers in-memory rendering. Accepted tradeoff: backup size and rekey time scale with the archive; a per-file encrypted cold store is documented as the future escape hatch (extension ADR, API unchanged — documents are fetched by hash).*
 
 ### 2.10 Smaller items
 

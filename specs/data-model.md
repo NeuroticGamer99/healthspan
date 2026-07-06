@@ -119,12 +119,13 @@ Discrete architectural decisions that emerge from this document should be captur
   - `document_type` enum: `visit_note`, `lab_interpretation`, `referral`, `discharge_summary`, `care_plan`, `imaging_report`, `other`
   - `body` — full free-text content; the primary queryable surface
   - `source_format` — how it arrived: `manual_entry`, `pdf_extracted`, `fhir_document`, `ccda`
-  - `source_file_hash` — SHA-256 of original file if imported from a document; enables deduplication
+  - `source_file_hash` — SHA-256 of original file if imported from a document; enables deduplication and keys the stored original ([ADR-0034](adr/0034-clinical-document-storage.md))
+  - Original files (PDFs, CCDA, FHIR document payloads) are retained as content-addressed BLOBs inside the encrypted database — never in a plaintext directory. Size guardrail and future cold-store escape hatch in [ADR-0034](adr/0034-clinical-document-storage.md).
   - `author_type` enum: `clinician` (formal note from provider), `patient` (your own notes taken during/after the visit) — allows AI clients to weight or filter by source perspective
   - Links to related data: optional FK arrays to `lab_results` draw IDs, `clinical_events`, `interventions` that the document references
   - Timestamp quadruple on `encounter_date` (same UTC + local + tz convention as all other tables)
 - **AI/MCP value:** This is one of the highest-value data types for AI client interactions. Clinician narrative captures reasoning, differential diagnoses, and interpretation context that structured lab values cannot express. MCP tools can surface relevant visit notes alongside lab trends, enabling an AI client to answer questions like "what did my cardiologist say about my LDL trajectory?" or "summarize all provider guidance on my insulin resistance" by full-text search across the `body` column.
-- **Status:** Not yet designed — prioritized
+- **Status:** Not yet designed — prioritized; original-file storage boundary decided ([ADR-0034](adr/0034-clinical-document-storage.md))
 
 ---
 
