@@ -117,20 +117,21 @@ The database file contains sensitive personal health data and must be encrypted.
 - Committed to version control
 - Logged
 
-**Migration path:** For users with an existing unencrypted database, `healthspan db encrypt` migrates in place using SQLCipher's `sqlcipher_export()`, verifies integrity, and retains the original as a backup.
+**Migration path:** For users with an existing unencrypted database, `healthspan db encrypt` migrates using SQLCipher's `sqlcipher_export()`, verifies the encrypted copy (opens with the derived key, `PRAGMA integrity_check`, row-count comparison), and then requires an explicit decision about the plaintext original: user-confirmed best-effort disposal (the default), or deliberate retention via `--keep-plaintext` with a prominent warning. A plaintext health database is never silently left on disk. See [ADR-0033](adr/0033-plaintext-artifact-disposal.md).
 
 ---
 
 ## Temporary Files
 
-Any temporary files created during import, export, migration, or processing that contain health data must be handled with the same care as the database itself:
+Any temporary files created during import, export, migration, or processing that contain health data must be handled with the same care as the database itself. The full disposal policy — avoidance first, best-effort disposal, full-disk encryption as the backstop — is [ADR-0033](adr/0033-plaintext-artifact-disposal.md); in summary:
 
+- **Avoidance first.** The primary control is never writing plaintext health data to disk at all. Prefer in-memory processing and streaming; create a plaintext file only when a platform pathway genuinely requires one, for the shortest workable lifetime.
 - **Restricted permissions.** Temporary files must be written to a directory with owner-read-write-only permissions (`chmod 600` equivalent on the file, `chmod 700` on the directory). Never write to `/tmp`, `%TEMP%`, or any world-readable location.
-- **Secure deletion.** Temporary files must be overwritten with zeroes (or equivalent) before deletion — not merely unlinked. Unlinking a file on most filesystems does not erase its contents from disk; the data remains recoverable until the blocks are reallocated.
+- **Best-effort disposal.** When a plaintext file is disposed of, it is overwritten with zeroes and then unlinked — as defense-in-depth, not as guaranteed erasure. SSD wear leveling, copy-on-write and journaling filesystems, filesystem snapshots, and cloud-sync version history can all preserve the original blocks beyond the platform's reach. OS full-disk encryption (BitLocker, FileVault, LUKS) is the real backstop for residual plaintext; it is recommended prominently in user documentation and printed by every command that creates a plaintext artifact.
 - **No shared directories.** Temporary files must not be written to a directory that any other user or process can read, including shared system temp directories.
-- **Failure cleanup.** If a process exits abnormally while a temporary file exists, the startup sequence must detect and securely delete any orphaned temporary files before proceeding.
+- **Failure cleanup.** If a process exits abnormally while a temporary file exists, the startup sequence must detect and dispose of any orphaned temporary files — including Recovery Kit renders — before proceeding.
 
-This applies to: import staging files, export staging files, database migration intermediaries, SQLCipher `sqlcipher_export()` output files, and any in-process buffer written to disk.
+This applies to: import staging files, export staging files, database migration intermediaries, SQLCipher `sqlcipher_export()` output files, Recovery Kit renders (secret-key material — same discipline as health data), and any in-process buffer written to disk. The plaintext original left aside by `healthspan db encrypt` is not a temporary file but follows the same disposal policy ([ADR-0033](adr/0033-plaintext-artifact-disposal.md)).
 
 ---
 

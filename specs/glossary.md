@@ -152,13 +152,16 @@ A user-chosen passphrase that is the second component of the two-factor hybrid k
 The key management approach where the database encryption key is derived via Argon2id from two independent components: the secret key (stored in the OS keychain, serving as the Argon2id salt) and the master passphrase (known only to the user). Neither component alone is sufficient to decrypt the database. See [ADR-0013](adr/0013-encryption-at-rest.md); precise construction and rotation in [ADR-0028](adr/0028-key-derivation-and-rotation.md).
 
 **Recovery Kit**
-A printable document generated at `healthspan init` containing the secret key as a QR code and Base32 string, with a blank line to handwrite the master passphrase. Enables cross-device database recovery. Useless without the passphrase. See [ADR-0013](adr/0013-encryption-at-rest.md).
+A printable document generated at `healthspan init` containing the secret key as a QR code and Base32 string, with a blank line to handwrite the master passphrase. Enables cross-device database recovery. Useless without the passphrase. Digital renders of the kit are transient artifacts that must not outlive the generating command except by explicit `--output` choice. See [ADR-0013](adr/0013-encryption-at-rest.md) and [ADR-0033](adr/0033-plaintext-artifact-disposal.md).
 
 **Passphrase-only mode**
 An alternative key management mode where the encryption key is derived solely from the passphrase via Argon2id, with a random non-secret salt stored in the `.keyparams` sidecar. No secret key, no OS keychain dependency. Single-factor protection. Fully portable without a Recovery Kit. See [ADR-0013](adr/0013-encryption-at-rest.md) and [ADR-0028](adr/0028-key-derivation-and-rotation.md).
 
 **`.keyparams` sidecar**
 A small non-secret plaintext file stored next to the database recording what key re-derivation needs but must not guess: KDF name and version, Argon2id parameters in force for this database, key mode, and (passphrase-only mode) the salt. Created at init, rewritten only by rotation, and copied alongside every backup. See [ADR-0028](adr/0028-key-derivation-and-rotation.md).
+
+**Best-effort disposal**
+The platform's honest framing of plaintext file deletion: overwrite with zeroes, then unlink — useful defense-in-depth, but not guaranteed erasure on SSDs (wear leveling), copy-on-write and journaling filesystems, snapshots, or cloud-synced folders. The primary control is never writing plaintext to disk; the backstop is OS full-disk encryption. See [ADR-0033](adr/0033-plaintext-artifact-disposal.md).
 
 **Trust layer**
 The security model defines three trust layers: **storage** (the encrypted file — zero-knowledge for the provider), **processing** (the machine running Core Service — must be trusted), **transport** (communication between processes — requires HTTPS if crossing a machine boundary). See [security.md](security.md).

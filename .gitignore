@@ -9,6 +9,10 @@ data/
 # Export output (plaintext health data — see ADR-0015)
 exports/
 export/
+
+# Recovery Kit renders (contain the secret key — see ADR-0033)
+*recovery-kit*.pdf
+*recovery-kit*.png
 .claude/settings.local.json
 
 # Python

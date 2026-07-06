@@ -106,15 +106,15 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.4 `healthspan db encrypt` retains a plaintext backup
 
-- [ ] [security.md](security.md) says the migration "retains the original as a backup" — a plaintext health database deliberately left on disk, contradicting the temp-file secure-deletion policy. Require explicit user-confirmed secure disposal after verification.
+- [x] [security.md](security.md) says the migration "retains the original as a backup" — a plaintext health database deliberately left on disk, contradicting the temp-file secure-deletion policy. Require explicit user-confirmed secure disposal after verification. — *Resolved by [ADR-0033](adr/0033-plaintext-artifact-disposal.md): `db encrypt` verifies the encrypted copy (key open, `integrity_check`, row counts), then requires an explicit decision — user-confirmed best-effort disposal (default) or deliberate `--keep-plaintext` retention with a prominent warning; non-interactive runs must pass exactly one of `--dispose-plaintext`/`--keep-plaintext`. security.md migration path rewritten.*
 
 ### 2.5 The secure-deletion requirement overpromises
 
-- [ ] Restate honestly: overwriting with zeroes is ineffective on SSDs (wear leveling) and CoW/journaling filesystems. Primary control is *never writing plaintext health data to disk*; overwrite-before-unlink is best-effort defense-in-depth; recommend OS full-disk encryption as the real backstop.
+- [x] Restate honestly: overwriting with zeroes is ineffective on SSDs (wear leveling) and CoW/journaling filesystems. Primary control is *never writing plaintext health data to disk*; overwrite-before-unlink is best-effort defense-in-depth; recommend OS full-disk encryption as the real backstop. — *Resolved by [ADR-0033](adr/0033-plaintext-artifact-disposal.md): three-layer policy — avoidance primary, overwrite-before-unlink explicitly best-effort (SSD wear leveling, CoW/journaling, snapshots, sync version history enumerated), OS full-disk encryption recommended as the backstop (no runtime FDE detection — honesty over false comfort). security.md Temporary Files section restated; "Best-effort disposal" added to the glossary.*
 
 ### 2.6 Recovery Kit digital artifact handling is unaddressed
 
-- [ ] `healthspan keys recovery-kit` presumably renders a file (PDF/PNG with the secret key QR). Specify: render to memory or temp file under the same handling rules, prompt to delete after printing, add kit-file patterns to `.gitignore`.
+- [x] `healthspan keys recovery-kit` presumably renders a file (PDF/PNG with the secret key QR). Specify: render to memory or temp file under the same handling rules, prompt to delete after printing, add kit-file patterns to `.gitignore`. — *Resolved by [ADR-0033](adr/0033-plaintext-artifact-disposal.md): render in memory where the print pathway allows (`lp`/`lpr` stdin), owner-only temp file in the private data dir only where required (Windows), prompt-confirmed disposal after printing; deliberate digital copies only via `--output` with an encrypted-storage warning; `*recovery-kit*` patterns added to `.gitignore`; orphaned renders caught by the startup temp-file sweep. Covers all three kit pathways (`init`, `keys recovery-kit`, `keys rotate-secret-key`).*
 
 ### 2.7 Runtime pip installs need hash pinning
 
