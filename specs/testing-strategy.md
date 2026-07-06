@@ -140,7 +140,7 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 - **OS keychain**: `keyring` backend differs per platform (DPAPI, macOS Keychain, libsecret). Tests that exercise key storage must run on each platform or mock the keyring backend with `keyring.testing`.
 - **File permissions**: `chmod 600` behavior differs on Windows. Tests that validate config file or database file permissions must account for platform differences.
 - **Path handling**: forward vs backslash; tests should use `pathlib.Path` consistently.
-- **SQLCipher build**: `sqlcipher3` has platform-specific build requirements. CI must verify the build succeeds on each target.
+- **SQLCipher and PySide6 wheel availability**: both are compiled dependencies (see [ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0001](adr/0001-mcp-server-language.md)); the platform's `>=3.14` requirement (`pyproject.toml`) only works uncompiled if prebuilt wheels exist for Python 3.14 on Windows, macOS, and Linux. Verified 2026-07 on PyPI: `sqlcipher3` 0.6.2 and `sqlcipher3-wheels` 0.5.7 both ship `cp314`/`cp314t` wheels for `win_amd64`/`win_arm64`/`win32`, `manylinux_2_28`, and `macosx` across all three targets; `PySide6` 6.11.1 and `shiboken6` 6.11.1 ship stable-ABI (`cp310-abi3`) wheels with `requires-python = "<3.15,>=3.10"`, covering 3.14 by construction. No forced compromise (older Python pin, source build, or compiler toolchain in CI) is needed today. CI should still pin exact versions and re-verify wheel availability before bumping the Python floor in the future, since this is external package-maintainer state, not a platform guarantee.
 
 ---
 
