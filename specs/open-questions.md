@@ -26,8 +26,7 @@ One ADR has a TBD decision that should be resolved as design progresses:
 
 ~~**AI client interface ([ADR-0002](adr/0002-ai-provider-interface.md))**~~ → Resolved (MCP-based pluggability) — see Resolved section and [ADR-0002](adr/0002-ai-provider-interface.md).
 
-**Reference range frameworks ([ADR-0005](adr/0005-reference-range-frameworks.md))**
-Schema approach for named reference range frameworks. Affects how "is this result optimal?" queries work for the MCP server and GUI. The schema sketch exists in the ADR but no decision is recorded.
+~~**Reference range frameworks ([ADR-0005](adr/0005-reference-range-frameworks.md))**~~ → Resolved (option 2, with a mandatory UCUM unit and unit-normalized comparison) — see Resolved section and [ADR-0005](adr/0005-reference-range-frameworks.md).
 
 ---
 
@@ -36,6 +35,7 @@ Schema approach for named reference range frameworks. Affects how "is this resul
 **Biomarker alias table**
 Add a `biomarker_aliases` table now, or handle lab-to-canonical name normalization at import time?
 Adding it now keeps the schema self-contained and makes aliases a first-class concept. Handling it at import time defers complexity but risks inconsistency as data entry scales.
+Narrowed by [ADR-0030](adr/0030-biomarker-identity.md): incoming LOINC codes resolve directly to a biomarker, so electronic feeds largely bypass name-based aliasing; the open question is now specifically the name-based *fallback* for PDF-extracted and manually entered results. Related: one biomarker concept can map to several LOINC codes ([ADR-0032](adr/0032-biomarker-loinc-cardinality.md)).
 
 ~~**Intervention dose history**~~ → Resolved — see Resolved section.
 
@@ -122,3 +122,4 @@ What export options exist for each body composition device (currently InBody 120
 - **Database migration** → Custom runner as `healthspan db migrate` CLI subcommand. See [ADR-0009](adr/0009-database-migration.md).
 - **Ingestion strategy** → Structured pipeline; all writes via Core REST API bulk import endpoint with validation and atomic transactions. See [ADR-0004](adr/0004-data-ingestion-strategy.md).
 - **CLI extensibility** → Directory-scanning plugin model; users drop `.py` files into plugins directory. See [ADR-0010](adr/0010-cli-plugin-model.md).
+- **Reference range frameworks** → Named framework table with per-biomarker range rows (option 2). Frameworks are first-class, queryable, and extensible as data additions; `effective_date` provides point-in-time lookup (option 3) for free without committing every framework to dated maintenance. Every range row carries a mandatory UCUM `unit`, and comparison unit-normalizes to the biomarker's canonical unit — closing the mg/dL-vs-g/L silent mis-flag. See [ADR-0005](adr/0005-reference-range-frameworks.md), [ADR-0030](adr/0030-biomarker-identity.md), [ADR-0031](adr/0031-units-and-ucum.md).

@@ -29,7 +29,16 @@ A single versioned TOML configuration file read by all processes. Contains: serv
 ## Data Model
 
 **Canonical biomarker name**
-The normalized, human-readable name assigned to each biomarker in the `biomarkers` table. Different labs name the same biomarker differently (e.g. "Glucose, Serum" and "Fasting Glucose"); the canonical name resolves these to a single identifier used in all queries and analysis. See [design-rationale.md](design-rationale.md).
+The normalized, human-readable *display* label assigned to each biomarker in the `biomarkers` table. Different labs name the same biomarker differently (e.g. "Glucose, Serum" and "Fasting Glucose"); the canonical name gives humans one consistent handle. The machine identifier is the internal `biomarker_id` surrogate key, with `loinc_code` as the standard interoperability identifier — the canonical name is not itself the key ([ADR-0030](adr/0030-biomarker-identity.md)). See [design-rationale.md](design-rationale.md).
+
+**LOINC code**
+Logical Observation Identifiers Names and Codes — the healthcare-standard identifier for a laboratory observation. Stored as a nullable `loinc_code` attribute on each biomarker (NULL for biomarkers with no LOINC, e.g. body-composition device metrics and proprietary scores), not as the primary key. Anchors interoperability (FHIR `Observation.code`) and reduces the name-based alias problem. One biomarker concept can map to several LOINC codes (method variants); that cardinality is handled by [ADR-0032](adr/0032-biomarker-loinc-cardinality.md). See [ADR-0030](adr/0030-biomarker-identity.md).
+
+**UCUM**
+Unified Code for Units of Measure — the healthcare-standard, machine-parseable encoding for units (e.g. `mg/dL`, `nmol/L`). All units in the platform are stored as UCUM strings; every biomarker has a canonical UCUM unit, and comparisons unit-normalize to it. It is also FHIR's `Quantity.code` system. See [ADR-0031](adr/0031-units-and-ucum.md).
+
+**Value comparator**
+The column on a result row (following FHIR's `valueQuantity.comparator`) that marks a censored value: `<`, `<=`, `>=`, or `>`, with NULL meaning an exact value. A below-detection `<0.1` is stored as `value_num = 0.1, comparator = '<'` so it is never conflated with a measured `0.1`; qualitative results use `value_text` instead. See [ADR-0030](adr/0030-biomarker-identity.md).
 
 **Draw context**
 The ordering context that explains why a particular set of biomarkers were tested together (e.g. "annual physical", "comprehensive metabolic panel", "Function Health quarterly"). Captured as a field on lab result records. See [design-rationale.md](design-rationale.md).

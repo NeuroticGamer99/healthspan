@@ -25,13 +25,20 @@ The current schema answers "was this result flagged by the lab?" but cannot answ
 - Named framework table with versioning (effective date per range entry)
 
 ## Decision Outcome
-Chosen option: **[TBD]**
+Chosen option: **Named framework table with per-biomarker range rows (option 2)**, with a mandatory unit on every range row.
+
+Option 2 makes frameworks first-class, queryable, and extensible as data additions rather than schema changes — the analytical requirement that motivated this ADR. Full versioning (option 3) is not adopted as a distinct model because the `effective_date` column below already provides it for free the moment a framework's targets are dated: a `NULL` `effective_date` means "always current," and a populated one enables point-in-time lookup, without committing every framework to dated maintenance up front.
+
+**Safety correction (review item 3.D):** the original sketch stored `range_low`/`range_high` with no unit. That is unsafe — an Attia ApoB target in mg/dL compared against a result in g/L silently produces garbage flags (a factor-of-100 error). Every range row therefore carries a **mandatory `unit`** as a UCUM string ([ADR-0031](0031-units-and-ucum.md)), and comparison must **unit-normalize** both the result and the range to the biomarker's `canonical_unit` ([ADR-0030](0030-biomarker-identity.md)) before flagging. A comparison whose units cannot be reconciled must fail loudly, never silently flag. Comparison must also respect the result value model — a censored (`comparator` non-NULL) or qualitative (`value_num IS NULL`) result is not a plain number (see [ADR-0030](0030-biomarker-identity.md)).
 
 ### Positive Consequences
--
+- Frameworks are first-class, queryable entities; new practitioners/guidelines are data additions, not schema changes
+- Point-in-time framework lookups are available via `effective_date` without a separate versioning model
+- Unit-normalized comparison closes the mg/dL-vs-g/L class of silent mis-flagging
 
 ### Negative Consequences / Tradeoffs
--
+- Comparison requires a join to the framework range and a unit normalization step rather than a bare numeric comparison
+- Framework range data must be curated and entered, including a correct UCUM unit per row
 
 ## Pros and Cons of the Options
 
@@ -55,7 +62,7 @@ Chosen option: **[TBD]**
 - Con: Adds complexity to range lookup — must find the range effective at the result's draw date
 - Con: Most framework updates are not precisely dated; versioning may be premature
 
-## Proposed Schema Sketch (Option 2 or 3)
+## Schema (Option 2)
 
 ```sql
 CREATE TABLE range_frameworks (
@@ -71,14 +78,20 @@ CREATE TABLE framework_ranges (
     biomarker_id    INTEGER NOT NULL REFERENCES biomarkers(id),
     range_low       REAL,
     range_high      REAL,
-    range_text      TEXT,   -- for non-numeric targets or notes
-    effective_date  DATE,   -- NULL if not versioned / always current
+    unit            TEXT NOT NULL,  -- UCUM string; mandatory (ADR-0031) — see safety correction above
+    range_text      TEXT,           -- for non-numeric targets or notes
+    effective_date  DATE,           -- NULL = always current; populated = point-in-time (option 3 for free)
     notes           TEXT
 );
 ```
 
-Note: the lab range on each `results` row remains — it is a historical fact about what the lab reported, not a framework comparison.
+Notes:
+- The lab range on each `results` row remains — it is a historical fact about what the lab reported, not a framework comparison.
+- `unit` is `NOT NULL` by design: a numeric range with no unit is the safety bug this ADR corrects. Comparison normalizes the range and the result to the biomarker's `canonical_unit` ([ADR-0030](0030-biomarker-identity.md)) via the mechanism in [ADR-0031](0031-units-and-ucum.md).
 
 ## Links
 - Related: [design-rationale.md](../design-rationale.md) — original per-result reference range decision
 - Related: [data-model.md](../data-model.md)
+- Depends on: [ADR-0030](0030-biomarker-identity.md) — biomarker `canonical_unit` and the result value model comparison must respect
+- Depends on: [ADR-0031](0031-units-and-ucum.md) — UCUM unit strings and unit-normalized comparison
+- Resolves review item 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)

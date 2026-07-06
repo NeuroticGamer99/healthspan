@@ -82,3 +82,6 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0027](0027-audit-trail-and-corrections.md) | Audit Trail and Data Corrections — Event Sourcing Rejected | Proposed |
 | [ADR-0028](0028-key-derivation-and-rotation.md) | Key Derivation, Rotation, and Key Lifetime | Proposed |
 | [ADR-0029](0029-mcp-streamable-http.md) | MCP Transport Refresh — Streamable HTTP | Proposed |
+| [ADR-0030](0030-biomarker-identity.md) | Biomarker Identity and Value Representation | Proposed |
+| [ADR-0031](0031-units-and-ucum.md) | Units and UCUM | Proposed |
+| [ADR-0032](0032-biomarker-loinc-cardinality.md) | Biomarker–LOINC Cardinality | Proposed — stub |

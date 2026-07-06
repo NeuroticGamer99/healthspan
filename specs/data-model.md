@@ -12,7 +12,7 @@ Discrete architectural decisions that emerge from this document should be captur
 - **Sources:** Primary care (Corewell/Beaumont → Quest), Function Health (Quest)
 - **Cadence:** Periodic (annual physical, targeted panels)
 - **Volume:** Low-to-medium (tens of biomarkers per draw, multiple draws per year)
-- **Schema considerations:** Lab source as first-class attribute; canonical biomarker names; reference ranges stored per result row; draw context (what ordered this panel)
+- **Schema considerations:** Lab source as first-class attribute; canonical biomarker names for display with LOINC as the standard identifier ([ADR-0030](adr/0030-biomarker-identity.md)); UCUM units with unit-normalized comparison ([ADR-0031](adr/0031-units-and-ucum.md)); result values as numeric + comparator + text (below-detection and qualitative results); reference ranges stored per result row; draw context (what ordered this panel)
 - **Status:** Partially designed — see [design-rationale.md](design-rationale.md)
 
 ### Body Composition
@@ -174,8 +174,9 @@ The following are candidate data types that may be worth modeling. Each needs re
 
 Topics that affect multiple data types and need consistent treatment:
 
-- **Units and unit normalization** — how are units stored, validated, and converted at query time?
-- **Biomarker alias resolution** — where does lab-name → canonical-name mapping live? (see [open-questions.md](open-questions.md))
+- **Units and unit normalization** — decided ([ADR-0031](adr/0031-units-and-ucum.md)): units stored as UCUM strings, a canonical unit per biomarker, all comparisons normalized to it; the conversion engine (ucumvert vs. a curated table) is an open sub-decision recorded in that ADR
+- **Biomarker identity** — decided ([ADR-0030](adr/0030-biomarker-identity.md)): internal surrogate `biomarker_id` key, canonical name as display, `loinc_code` as the standard interoperability attribute; result values as numeric + comparator + text
+- **Biomarker alias resolution** — where does lab-name → canonical-name mapping live? LOINC ([ADR-0030](adr/0030-biomarker-identity.md)) resolves electronic feeds directly and reduces this, but a name-based fallback is still needed for PDF/manual data; one concept can carry several LOINC codes ([ADR-0032](adr/0032-biomarker-loinc-cardinality.md)). (see [open-questions.md](open-questions.md))
 - **Timezone handling** — resolved: UTC ground truth + `local_recorded` + `local_tz` (IANA) + `tz_inferred` flag on every timestamp. See [design-rationale.md](design-rationale.md) for the full convention.
 - **Source provenance** — every row should carry an import batch reference; the `audit_log` table (see below) provides the full trail
 - **Longitudinal data correction** — decided ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): `superseded_by` self-FK on every data table; value corrections supersede (never mutate in place), designated metadata repairs (timezone workflow) update in place with full audit; current state via per-table `*_current` views

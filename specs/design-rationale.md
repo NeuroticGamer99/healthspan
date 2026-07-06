@@ -137,11 +137,15 @@ CGM glucose patterns are only clinically interpretable relative to local time �
 
 ---
 
-## Canonical Biomarker Names
+## Canonical Biomarker Names and Identity
 
 Different labs name the same biomarker differently. Normalizing at the schema level — rather than at query time — keeps analysis clean.
 
-The `biomarkers` table holds one canonical name per biomarker. A `biomarker_aliases` table can be added as data entry reveals naming inconsistencies. The canonical name is the human-readable standard you choose; it doesn't need to match any lab's specific naming.
+The `biomarkers` table holds one canonical *name* per biomarker as a human display label. Identity, however, is not the name: the machine identifier is an internal `biomarker_id` surrogate key (the target of every result and framework-range foreign key), and the standard interoperability identifier is a nullable `loinc_code` attribute. LOINC anchors alias resolution and makes FHIR export nearly free, while staying decoupled from the physical key so that LOINC-less biomarkers (body-composition metrics, proprietary scores) and LOINC's external release cycle impose no cost. See [ADR-0030](adr/0030-biomarker-identity.md) for the full identity decision, including why LOINC is an attribute rather than the key, and [ADR-0032](adr/0032-biomarker-loinc-cardinality.md) for the one-concept-many-codes case (e.g. direct vs. calculated LDL-C).
+
+A `biomarker_aliases` table can still be added as data entry reveals naming inconsistencies — LOINC reduces but does not eliminate name-based aliasing, since PDF-extracted and manually entered results often carry only a name.
+
+Units are stored as UCUM strings with a canonical unit per biomarker; all comparisons unit-normalize to it, so an mg/dL result and a g/L target can never be mis-flagged against each other ([ADR-0031](adr/0031-units-and-ucum.md)). Result values are represented as a numeric value plus an optional comparator (for below/above-detection results like `<0.1`) plus an optional text value (for qualitative results), following FHIR's model — a bare numeric column would corrupt censored results and cannot hold qualitative ones ([ADR-0030](adr/0030-biomarker-identity.md)).
 
 Categories (lipids, metabolic, thyroid, hormones, inflammation, etc.) on the `biomarkers` table enable panel-level queries without hardcoding biomarker lists.
 

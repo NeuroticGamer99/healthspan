@@ -24,3 +24,5 @@ TBD — deferred until core functionality is stable. FHIR support will be delive
 ## Links
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — FHIR inbound as an import adapter
 - Related: [ADR-0015](0015-data-export.md) — FHIR as an export format
+- Related: [ADR-0030](0030-biomarker-identity.md) — biomarkers carry a LOINC code (`Observation.code`) and the value model follows FHIR's `valueQuantity.comparator`, making export mapping nearly free
+- Related: [ADR-0031](0031-units-and-ucum.md) — units are stored as UCUM, which is FHIR's `Quantity.code` system
