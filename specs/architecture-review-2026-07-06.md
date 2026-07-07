@@ -12,7 +12,7 @@ Full review of README, all design documents (security, design-rationale, data-mo
 
 ### A. The watch-folder importer cannot run under the default token set ⚠️ most important finding
 
-- [ ] Reconcile ADR-0026's default `automation-host` scopes with ADR-0012/ADR-0025's watch-folder import flow.
+- [x] Reconcile ADR-0026's default `automation-host` scopes with ADR-0012/ADR-0025's watch-folder import flow. — *Resolved 2026-07-07 per the recommendation: `automation-host` is not widened. A seventh default token `watch-import` (`jobs import`) is minted at init, held only by the first-party watch-folder importer (keyring entry `token:watch-import`), added to [ADR-0026](adr/0026-named-scoped-tokens.md)'s default table with holder description and to [ADR-0025](adr/0025-plugin-host-process-matrix.md)'s Automation Host contract. `import` thereby never enters the credential handed to directory-loaded automation plugins (INV-3). No `read`, no `events` — job submission and status reads are both under `jobs`.*
 
 The contradiction:
 
@@ -50,7 +50,7 @@ INV-1: "The derived database key exists only in Core Service memory." But `healt
 
 ### F. The job child process is a plugin host with no entry in the enforcement matrix
 
-- [ ] Add the job child to [ADR-0025](adr/0025-plugin-host-process-matrix.md)'s `HOST_LOADABLE_TYPES` (and to security.md's host-matrix summary table).
+- [x] Add the job child to [ADR-0025](adr/0025-plugin-host-process-matrix.md)'s `HOST_LOADABLE_TYPES` (and to security.md's host-matrix summary table). — *Resolved 2026-07-07: `Host.JOB_CHILD: frozenset({IMPORT_ADAPTER, ANALYSIS, QUERY, PROVIDER})` added to the enforcement sketch, with a paragraph specifying single-plugin load (exactly the executing job type's handler, never a directory scan), the deliberate absence of `automation`/`notification_channel` (Automation Host residency concerns, not batch execution), and that the child's credential remains the ephemeral single-job token. Row mirrored in security.md's host-matrix table; testing-strategy.md gains an explicit host-allowlist assertion (CORE_SERVICE empty, JOB_CHILD exact set).*
 
 ADR-0025's prose matrix row for `import_adapter` says "job child process (heavyweight execution)", and ADR-0012 says heavyweight children load plugin handler code. But the `Host` enumeration/allowlist sketch defines only CLI, MCP_SERVER, AUTOMATION_HOST, and CORE_SERVICE. The process that runs the most third-party code at the highest data-mutation privilege (import jobs) is the one host with no declared allowlist. Suggested: `Host.JOB_CHILD: frozenset({IMPORT_ADAPTER, ANALYSIS, QUERY, PROVIDER})`. security.md's summary table should gain the same row so the two matrices can't drift.
 

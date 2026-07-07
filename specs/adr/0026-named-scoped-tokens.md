@@ -43,7 +43,7 @@ Option 3 is disproportionate: OAuth2's machinery (flows, refresh tokens, an IdP)
 - Token names (never values) make audit logging meaningful
 
 ### Negative Consequences / Tradeoffs
-- Six default credentials to issue, store, and document instead of one
+- Seven default credentials to issue, store, and document instead of one
 - The CLI carries two credentials (admin and plugin-tier), and the loader must assign them by plugin provenance — a deliberate refinement of ADR-0010's parity principle (see below)
 - Scope enforcement adds a required-scope declaration to every REST route (mechanical, one-time)
 - Legitimate admin-extension plugins need a documented escape hatch (deliberate named-token issuance) and will 403 by default
@@ -89,10 +89,12 @@ Issued at first run (extends ADR-0008's first-run sequence):
 | `gui` | GUI | `read write import jobs monitor` |
 | `mcp` | MCP Server → Core | **`read`** |
 | `automation-host` | Automation Host | `read events jobs` (`write` opt-in) |
+| `watch-import` | Automation Host (first-party watch-folder importer only) | `jobs import` |
 | `webhook` | Inbound webhook callers | `events` |
 
 - **MCP is read-only by default.** Granting the AI client write capability is a deliberate act: the user issues a second named token (e.g. `mcp-write`) and configures the MCP server to use it. It is never a config flag that silently upgrades the existing token.
 - **Automation Host** automations that flag or annotate results need `write`; the default omits it so a fresh install's automation surface is read-and-react only.
+- **`watch-import`** is held by the first-party watch-folder importer resident in the Automation Host ([ADR-0025](0025-plugin-host-process-matrix.md)) — the one default flow that must submit import jobs, which requires `jobs` *plus* `import` under the no-laundering rule. It is deliberately not folded into `automation-host`: `import` is the mass-mutation scope, and the Automation Host process credential is exactly what directory-loaded automation plugins are handed (INV-3), so a compromised automation plugin still cannot reach bulk import. The importer reads its token from its own keyring entry (service `healthspan`, username `token:watch-import`, per the client-side storage convention above) — the same shape as the admin-extension escape hatch below, minted at init rather than by the user. It carries no `events` scope (hence no publish-namespace allowlist) and no `read`: job submission and job-status reads are both under `jobs`, and the importer never queries health data.
 - **`monitor` holders:** `cli-admin` and `gui` carry `monitor` for CLI diagnostics and the GUI status page; `mcp` deliberately does not — giving the AI client ops detail (version, `schema_version`, usage metrics) is a deliberate token issuance, not a default ([ADR-0040](0040-health-endpoint-authentication.md)).
 - **Event namespaces:** tokens carrying `events` also carry a publish-namespace allowlist — `webhook`: `external.*`; `automation-host`: `alert.*`, `sync.*`, `external.*` (see the event-laundering rules above). `cli-admin` holds `events` with the non-reserved namespaces for scripting.
 - **Job children** do not appear in this table — they receive ephemeral tokens (below).
@@ -120,7 +122,7 @@ What this buys, stated honestly: the `cli-plugins` token still carries `write` a
 
 **Escape hatch for legitimate admin-extension plugins:** the 403 error names the token (`cli-plugins`), the missing scope, and the remedy — the user runs `healthspan token create <name> --scopes …` and configures the plugin to use that token explicitly (a keyring entry named in the plugin's TOML section). Elevation is thereby a visible, deliberate, audited act.
 
-The same provenance rule applies in the MCP Server and Automation Host for uniformity, though it is only load-bearing in the CLI (the other hosts' process credentials carry no `admin`).
+The same provenance rule applies in the MCP Server and Automation Host for uniformity, though it is only load-bearing in the CLI (the other hosts' process credentials carry no `admin`). One first-party component deviates from it deliberately: the Automation Host's watch-folder importer holds its own dedicated `watch-import` token rather than the process credential (see the default table) — a *narrower* deviation, made so that `import` never enters the credential the host hands to directory-loaded plugins.
 
 ## Ephemeral Job Tokens
 
@@ -190,7 +192,7 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 
 ### Named scoped tokens (chosen)
 - Pro: blast-radius bounding at every trust seam the platform actually has; per-client lifecycle; meaningful audit identity
-- Con: six credentials, dual-token CLI, per-route scope declarations — all mechanical, one-time costs
+- Con: seven credentials, dual-token CLI, per-route scope declarations — all mechanical, one-time costs
 
 ### OAuth2/OIDC local IdP
 - Pro: standard flows, standard libraries, delegation and expiry built in

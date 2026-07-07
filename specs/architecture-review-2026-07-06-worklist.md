@@ -51,8 +51,8 @@ Real design content, but the review already narrowed the option space. Each is a
 
 ### T2.1 — Complete the scope/host matrices (reviews 1.A + 1.F, one pass)
 
-- [ ] Add the `watch-import` token (`jobs import`) to ADR-0026's default table and describe its holder; do **not** widen `automation-host`.
-- [ ] Add `Host.JOB_CHILD: frozenset({IMPORT_ADAPTER, ANALYSIS, QUERY, PROVIDER})` to ADR-0025's enforcement sketch; mirror the row in security.md's summary table.
+- [x] Add the `watch-import` token (`jobs import`) to ADR-0026's default table and describe its holder; do **not** widen `automation-host`. — *Done 2026-07-07: table row + holder bullet added (default credential count 6 → 7); keyring entry confirmed as `token:watch-import` per the existing convention; no `read`/`events`; provenance-rule deviation noted in the CLI Credential Tiers section as deliberately narrower.*
+- [x] Add `Host.JOB_CHILD: frozenset({IMPORT_ADAPTER, ANALYSIS, QUERY, PROVIDER})` to ADR-0025's enforcement sketch; mirror the row in security.md's summary table. — *Done 2026-07-07: added, with a single-plugin-load paragraph (only the executing job type's handler; `automation`/`notification_channel` deliberately absent — delivery is Automation Host residency; credential stays the ephemeral job token); security.md row mirrored; explicit host-allowlist assertion added to testing-strategy.md's plugin tests. See review 1.A + 1.F resolution notes.*
 
 Both ADRs still Proposed — direct edits. The remaining thought: confirm the watch-folder component's token storage (keyring entry name) and that the job-child allowlist shouldn't also carry `notification_channel` (it shouldn't — delivery is Automation Host residency).
 

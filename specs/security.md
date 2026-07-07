@@ -185,6 +185,7 @@ Plugin code executes in a host process determined by the plugin's type — **nev
 | CLI | `cli`, `import_adapter`, `reference_ranges`, `analysis`, `query`, `provider` |
 | MCP Server | `mcp_tool`, `analysis`, `query`, `provider` |
 | Automation Host | `automation`, `notification_channel`, `analysis`, `query`, `provider` |
+| Job child process | `import_adapter`, `analysis`, `query`, `provider` (single-plugin load — only the executing job type's handler) |
 | Core Service | **None — the Core Service never loads plugin code** (INV-2) |
 
 The security boundary must be clearly communicated:

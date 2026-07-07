@@ -146,6 +146,10 @@ HOST_LOADABLE_TYPES: dict[Host, frozenset[PluginType]] = {
         PluginType.AUTOMATION, PluginType.NOTIFICATION_CHANNEL,
         PluginType.ANALYSIS, PluginType.QUERY, PluginType.PROVIDER,
     }),
+    Host.JOB_CHILD: frozenset({
+        PluginType.IMPORT_ADAPTER, PluginType.ANALYSIS,
+        PluginType.QUERY, PluginType.PROVIDER,
+    }),
     Host.CORE_SERVICE: frozenset(),   # explicitly empty — see ADR-0025
 }
 ```
@@ -156,6 +160,8 @@ Enforcement rules:
 2. The loader loads a plugin only if `PLUGIN_TYPES ∩ LOADABLE_TYPES` for the current host is non-empty, and registers only the intersecting interfaces.
 3. `Host.CORE_SERVICE` maps to `frozenset()` — an explicit, greppable, testable empty set. It exists precisely so that "Core Service loads nothing" is a stated fact in code rather than an omission.
 4. Defense in depth: Core Service **does not import the plugin loader module at all**. The empty allowlist is a declaration; the absent import is the mechanism. A CI test asserts both — that `HOST_LOADABLE_TYPES[Host.CORE_SERVICE]` is empty, and that the Core Service package has no import path to the loader.
+
+The job child (ADR-0012's heavyweight execution process) embeds the loader in **single-plugin mode**: it loads exactly the plugin that registered the executing job type's handler — never a directory scan — and the `Host.JOB_CHILD` allowlist bounds which plugin *types* may ever execute there. `automation` and `notification_channel` are deliberately absent: both are Automation Host residency concerns (a long-lived SSE subscriber and a delivery channel respectively), not batch job execution. The allowlist governs what code may load; the child's credential is unchanged — the ephemeral single-job token of ADR-0026, never a standing credential.
 
 ---
 
@@ -168,9 +174,9 @@ The fourth launcher-supervised process (extending ADR-0008's Core Service + MCP 
 - **Loads:** `automation`, `notification_channel`, `analysis`, `query`, `provider` plugins from the plugins directory
 - **Also hosts (first-party, shipped in the `healthspan` package):**
   - the declarative rule engine — interprets trigger/condition/action rules (ADR-0016); rules are data, the engine is code, and the code runs here, not in Core Service
-  - the watch-folder importer — the one import concern that genuinely needs residency (see review item 1.D); a watch-folder import *is* an automation: trigger = file appears, action = submit import job
+  - the watch-folder importer — the one import concern that genuinely needs residency (see review item 1.D); a watch-folder import *is* an automation: trigger = file appears, action = submit import job. It holds the dedicated `watch-import` token (`jobs import`) rather than the process credential ([ADR-0026](0026-named-scoped-tokens.md))
 - **Subscribes:** `GET /v1/events` (SSE). On reconnect it sends the standard SSE `Last-Event-ID` header; Core Service replays events after that ID from a retained window (requirement levied on ADR-0011, below). The host persists its last-processed event ID locally (the cursor file contains only the event ID — no health data).
-- **Acts:** exclusively via the Core REST API with its own bearer token, carrying `read`, `events`, and `jobs` scopes — never `admin` (ADR-0026).
+- **Acts:** exclusively via the Core REST API with its own bearer token, carrying `read`, `events`, and `jobs` scopes — never `admin` (ADR-0026). The sole exception to the shared process credential is the first-party watch-folder importer's dedicated `watch-import` token (`jobs import`), which keeps the mass-mutation `import` scope out of the credential handed to directory-loaded plugins.
 - **Never:** opens the database, touches the encryption key, or loads code on behalf of Core Service.
 
 ### Lifecycle

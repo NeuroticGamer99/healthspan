@@ -103,6 +103,7 @@ Tests for the plugin loader and the plugin interface contract.
 - Validation-before-install ([ADR-0036](adr/0036-plugin-package-installation-integrity.md)): a plugin that fails API-version, cycle, or conflict validation installs **zero** packages — the reorder's observable property
 - Error handling: missing dependencies, incompatible versions, malformed plugins
 - First-party plugin loading: built-in plugins load before user plugins; user overrides work
+- Host allowlist enforcement ([ADR-0025](adr/0025-plugin-host-process-matrix.md)): a host loads only plugins whose `PLUGIN_TYPES` intersect its `HOST_LOADABLE_TYPES` entry; `HOST_LOADABLE_TYPES[Host.CORE_SERVICE]` is asserted empty and the Core Service package has no import path to the loader; `HOST_LOADABLE_TYPES[Host.JOB_CHILD]` is asserted to be exactly `{import_adapter, analysis, query, provider}` — no `automation`, no `notification_channel` — and a job child loads only the single plugin that registered the executing job type's handler
 
 A test plugin fixture set should include: a minimal single-file plugin, a package plugin, a provider plugin, a consumer plugin with declared dependencies, and intentionally broken plugins (bad version range, missing dependency, syntax error).
 
