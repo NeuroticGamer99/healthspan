@@ -70,7 +70,7 @@ CREATE TABLE range_frameworks (
     name        TEXT NOT NULL UNIQUE,  -- e.g. 'Lab Standard', 'Function Health', 'Attia', 'Brewer', 'Hyman'
     description TEXT,
     source_url  TEXT
-);
+) STRICT;
 
 CREATE TABLE framework_ranges (
     id              INTEGER PRIMARY KEY,
@@ -80,14 +80,25 @@ CREATE TABLE framework_ranges (
     range_high      REAL,
     unit            TEXT NOT NULL,  -- UCUM string; mandatory (ADR-0031) — see safety correction above
     range_text      TEXT,           -- for non-numeric targets or notes
-    effective_date  DATE,           -- NULL = always current; populated = point-in-time (option 3 for free)
-    notes           TEXT
-);
+    effective_date  TEXT,           -- ISO-8601 date; NULL = always current, populated = point-in-time (option 3 for free)
+    notes           TEXT,
+    UNIQUE (framework_id, biomarker_id, effective_date)
+) STRICT;
+
+-- The UNIQUE constraint above does not constrain the dateless default: SQLite treats NULLs
+-- as distinct in a UNIQUE index, so it would permit two effective_date IS NULL rows for the
+-- same (framework, biomarker). A partial unique index closes that gap, making the "always
+-- current" default provably singular per (framework, biomarker):
+CREATE UNIQUE INDEX ux_framework_ranges_default
+    ON framework_ranges (framework_id, biomarker_id)
+    WHERE effective_date IS NULL;
 ```
 
 Notes:
 - The lab range on each `results` row remains — it is a historical fact about what the lab reported, not a framework comparison.
 - `unit` is `NOT NULL` by design: a numeric range with no unit is the safety bug this ADR corrects. Comparison normalizes the range and the result to the biomarker's `canonical_unit` ([ADR-0030](0030-biomarker-identity.md)) via the mechanism in [ADR-0031](0031-units-and-ucum.md).
+- **Point-in-time lookup rule (deterministic).** For a result drawn on date *D*, the applicable range for a `(framework_id, biomarker_id)` pair is the row with the greatest `effective_date ≤ D`; if no dated row qualifies, the `effective_date IS NULL` row is the dateless default. The `UNIQUE` constraint and the partial index above guarantee this resolves to at most one row — dated rows are unique per date, the dateless default is unique per pair — so point-in-time resolution is never ambiguous.
+- **STRICT tables and column types.** These tables are declared `STRICT` (real per-column type enforcement — see [ADR-0035](0035-migration-execution-semantics.md)), which is why `effective_date` is `TEXT` (ISO-8601) rather than a `DATE` affinity name: STRICT permits only `INT`/`INTEGER`/`REAL`/`TEXT`/`BLOB`/`ANY` as column types.
 
 ## Links
 - Related: [design-rationale.md](../design-rationale.md) — original per-result reference range decision
@@ -95,3 +106,4 @@ Notes:
 - Depends on: [ADR-0030](0030-biomarker-identity.md) — biomarker `canonical_unit` and the result value model comparison must respect
 - Depends on: [ADR-0031](0031-units-and-ucum.md) — UCUM unit strings and unit-normalized comparison
 - Resolves review item 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
+- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B (framework portion) — `UNIQUE(framework_id, biomarker_id, effective_date)` + partial default index + deterministic point-in-time lookup rule; STRICT-legal `effective_date TEXT`

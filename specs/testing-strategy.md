@@ -151,6 +151,7 @@ Tests that validate the database migration system.
 - **Mid-file atomicity ([ADR-0035](adr/0035-migration-execution-semantics.md))**: a multi-statement migration that fails partway leaves *none* of its statements applied and no `schema_version` row — this is the test that catches the driver's implicit-commit-around-DDL behavior
 - Foreign-key integrity: a migration that introduces an FK violation is rejected by the pre-commit `foreign_key_check` and rolls back entirely
 - Schema integrity: after all migrations, the database schema matches the expected table/column/index set
+- Data-integrity constraints (migration 0001): a `STRICT` table rejects a wrong-typed value (e.g. a non-numeric string into a `REAL` column); the result value-model `CHECK` constraints reject their forbidden shapes — a row with neither `value_num` nor `value_text`, a `comparator` set while `value_num` is NULL, and an out-of-domain `comparator` ([ADR-0030](adr/0030-biomarker-identity.md)); `framework_ranges` uniqueness holds, including the partial index that forbids two `effective_date IS NULL` rows for the same `(framework_id, biomarker_id)` ([ADR-0005](adr/0005-reference-range-frameworks.md))
 
 ---
 

@@ -70,11 +70,11 @@ The 2026-06-10 review (item 1.H) fixed this claim in open-questions.md and ADR-0
 
 ### I. data-model.md specifies "FK arrays," which SQLite does not have
 
-- [ ] Clinical Documents: "optional FK arrays to `lab_results` draw IDs, `clinical_events`, `interventions`" — there is no array type and no enforceable FK-in-JSON. Specify junction tables (`document_lab_draws`, `document_events`, `document_interventions`) so the links are real foreign keys that participate in `foreign_key_check` (ADR-0035) and the audit model (ADR-0027).
+- [x] Clinical Documents: "optional FK arrays to `lab_results` draw IDs, `clinical_events`, `interventions`" — there is no array type and no enforceable FK-in-JSON. Specify junction tables (`document_lab_draws`, `document_events`, `document_interventions`) so the links are real foreign keys that participate in `foreign_key_check` (ADR-0035) and the audit model (ADR-0027). — *Resolved 2026-07-07: data-model.md's FK-arrays bullet replaced with the three named junction tables (each a two-column `document_id` + target-FK link), noting FK-check + audit participation and that link rows are audited as insert/delete, not supersession-chained.*
 
 ### J. The denormalized "current dose" column conflicts with the correction model
 
-- [ ] data-model.md: interventions' "current dose is a denormalized convenience column derived from the latest `intervention_dose_history` row." Under [ADR-0027](adr/0027-audit-trail-and-corrections.md), every in-place update must be either a supersession or a *designated metadata repair* — a derived cache column is neither, and updating it on every dose change generates audit rows for data that is not source data. Recommend replacing the stored column with a view (or computing it in the repository layer): dose history is the truth; "current dose" is a query. If a stored column is kept for query ergonomics, ADR-0027 needs a third category ("derived denormalizations — excluded from audit/supersession"), which is more machinery than a view costs.
+- [ ] data-model.md: interventions' "current dose is a denormalized convenience column derived from the latest `intervention_dose_history` row." Under [ADR-0027](adr/0027-audit-trail-and-corrections.md), every in-place update must be either a supersession or a *designated metadata repair* — a derived cache column is neither, and updating it on every dose change generates audit rows for data that is not source data. Recommend replacing the stored column with a view (or computing it in the repository layer): dose history is the truth; "current dose" is a query. If a stored column is kept for query ergonomics, ADR-0027 needs a third category ("derived denormalizations — excluded from audit/supersession"), which is more machinery than a view costs. — *Resolved 2026-07-07: data-model.md now specifies current dose as a view/repository-computed read over the latest `intervention_dose_history` row, not a stored column. ADR-0027's carve-out section gained a "Not a third category — derived denormalizations are computed, not stored" paragraph so the two-category rule stands intact (the review's "argue against" recorded where the taxonomy lives).*
 
 ### K. Minor staleness and drift
 
@@ -150,12 +150,12 @@ ADR-0019 prescribes "a scheduled `healthspan db backup`" as the sync-safe artifa
 
 ### 3.B Use SQLite STRICT tables and CHECK constraints — ADR-0003 explicitly paid for them
 
-- [ ] ADR-0003's "SQLite-specific features freely usable" should be cashed in where it matters most for clinical data integrity:
+- [x] ADR-0003's "SQLite-specific features freely usable" should be cashed in where it matters most for clinical data integrity:
   - `CREATE TABLE … STRICT` on every data table — real type enforcement, so a `'95'` string can never sit in a REAL column (SQLite's default flexible typing is exactly wrong for lab values).
   - CHECK constraints encoding [ADR-0030](adr/0030-biomarker-identity.md)'s value model: `CHECK (value_num IS NOT NULL OR value_text IS NOT NULL)`, `CHECK (comparator IS NULL OR value_num IS NOT NULL)`, `CHECK (comparator IN ('<','<=','>=','>'))`.
   - `PRAGMA application_id` set at init so the file self-identifies.
   - A `UNIQUE(framework_id, biomarker_id, effective_date)` constraint on `framework_ranges` (ADR-0005), plus a documented lookup rule (latest `effective_date` ≤ draw date; NULL rows as the dateless default) so point-in-time resolution is deterministic.
-- [ ] Record these in the migration-0001 design notes or a short data-integrity section of an existing Proposed schema ADR — they are the database-level analog of the validation boundary.
+- [x] Record these in the migration-0001 design notes or a short data-integrity section of an existing Proposed schema ADR — they are the database-level analog of the validation boundary. — *Resolved 2026-07-07: recorded in the Proposed ADRs that own each constraint. STRICT tables + `application_id` → ADR-0035 (new "Schema-authoring: STRICT tables" subsection + pragma-table row); value-model CHECKs → ADR-0030 ("Database-level enforcement" subsection); `framework_ranges` `UNIQUE(framework_id, biomarker_id, effective_date)` + partial default index + deterministic lookup rule → ADR-0005 (schema block + notes). STRICT forced a companion fix — the affinity name `DATE` is illegal under STRICT, so ADR-0005's `effective_date` is now `TEXT` (ISO-8601) and the type-mapping rule is stated in ADR-0035. A partial unique index `WHERE effective_date IS NULL` was added because a plain UNIQUE does not stop duplicate NULL-dated defaults in SQLite. testing-strategy.md gained a data-integrity migration test.*
 
 ### 3.C Decide the sync/async bridging model for the Core Service — the classic FastAPI + SQLite pitfall
 

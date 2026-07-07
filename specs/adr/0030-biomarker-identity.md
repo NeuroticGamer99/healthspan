@@ -61,6 +61,16 @@ value_text  TEXT,   -- qualitative/textual result ('Reactive', 'Not Detected'); 
 
 Comparison logic (reference-range flagging, trend analysis) must treat a non-NULL `comparator` as a censored bound, and must ignore or specially handle rows where `value_num IS NULL`.
 
+### Database-level enforcement (migration 0001)
+
+The value model is enforced by `CHECK` constraints on the results table, not left to application code — the database-level analog of the validation boundary, so a malformed value cannot exist even if written through a future code path that bypasses validation:
+
+- `CHECK (value_num IS NOT NULL OR value_text IS NOT NULL)` — every result carries a numeric magnitude, a text value, or both; a row with neither is meaningless and is rejected.
+- `CHECK (comparator IS NULL OR value_num IS NOT NULL)` — a censoring comparator has nothing to bound without a magnitude, so `comparator` may be set only when `value_num` is.
+- `CHECK (comparator IN ('<', '<=', '>=', '>'))` — the comparator domain is closed to the four FHIR `valueQuantity.comparator` values. An exact value (`comparator IS NULL`) satisfies this: SQLite evaluates the `IN` to `NULL` there, and a `CHECK` fails only on a `FALSE` result, so no separate `comparator IS NULL OR` guard is needed.
+
+These constraints compose unchanged with the `STRICT` table declaration recorded in [ADR-0035](0035-migration-execution-semantics.md); the three value columns above are all STRICT-legal (`REAL`, `TEXT`, `TEXT`).
+
 ### Positive Consequences
 - One machine-stable, standard identifier per biomarker where it exists, with the display name preserved for humans
 - FHIR export gets its `Observation.code` from a single column with no extra machinery ([ADR-0018](0018-fhir-interoperability.md) becomes nearly free for LOINC-bearing biomarkers)
@@ -106,3 +116,4 @@ Comparison logic (reference-range flagging, trend analysis) must treat a non-NUL
 - Related: [open-questions.md](../open-questions.md) — biomarker alias table (reduced, not replaced, by LOINC)
 - Related: [design-rationale.md](../design-rationale.md) — canonical biomarker names and the multi-source lab data rationale
 - Resolves review item 3.E (biomarker identity portion) from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
+- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B (value-model portion) — `CHECK` constraints enforcing the numeric/comparator/text model in the schema

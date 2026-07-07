@@ -128,6 +128,8 @@ superseded_by INTEGER NULL REFERENCES <same_table>(id)
 
 **Carve-out — designated metadata corrections.** The timezone correction workflow ([design-rationale.md](../design-rationale.md)) intentionally updates `*_local_tz`, recomputes `*_utc`, and clears `*_tz_inferred` **in place**: the clinical observation is unchanged, only its recorded time context is repaired, and `*_local_recorded` remains immutable as the record of what the source said. Such updates use `operation = 'update'` and are fully audited (old/new images), but do not create supersession rows. The rule: **value corrections supersede; designated metadata repairs update.** Which columns qualify as designated metadata is declared per table in the schema documentation — the default for any column is supersession.
 
+**Not a third category — derived denormalizations are computed, not stored.** A value derived from other rows — e.g. an intervention's "current dose", which is just the latest `intervention_dose_history` entry ([data-model.md](../data-model.md)) — is neither a value correction nor a metadata repair. Rather than admit a third mutation category to exempt such a cache from audit and supersession, the platform does not store it at all: derived values are exposed as views or repository-layer queries over their source rows, so there is no in-place update to categorize. The two-category rule stands intact.
+
 ## Delete Semantics: Hard Delete + Mandatory Audit
 
 With supersession covering corrections, true deletion is rare — the canonical case is an erroneous duplicate import. The decision is **hard delete**, not a `deleted_at` soft-delete flag that every query in the system would have to filter around forever:

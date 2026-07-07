@@ -78,7 +78,7 @@ Discrete architectural decisions that emerge from this document should be captur
 - **Sources:** Manual entry
 - **Cadence:** Duration-based (start date, end date or ongoing)
 - **Examples:** TRT, medications, supplements, therapies
-- **Schema considerations:** Dose, route, frequency; current dose is a denormalized convenience column derived from the latest `intervention_dose_history` row
+- **Schema considerations:** Dose, route, frequency; **current dose is a computed read, not a stored column** — a view (or repository-layer query) over the latest `intervention_dose_history` row. Dose history is the source of truth; "current dose" is a query against it. A stored denormalized column would fit no [ADR-0027](adr/0027-audit-trail-and-corrections.md) mutation category (neither a value supersession nor a designated metadata repair) and would generate audit rows on every dose change for data that is not itself source data
 - **Status:** Table defined; no data entered yet
 
 ### Intervention Dose History
@@ -122,7 +122,7 @@ Discrete architectural decisions that emerge from this document should be captur
   - `source_file_hash` — SHA-256 of original file if imported from a document; enables deduplication and keys the stored original ([ADR-0034](adr/0034-clinical-document-storage.md))
   - Original files (PDFs, CCDA, FHIR document payloads) are retained as content-addressed BLOBs inside the encrypted database — never in a plaintext directory. Size guardrail and future cold-store escape hatch in [ADR-0034](adr/0034-clinical-document-storage.md).
   - `author_type` enum: `clinician` (formal note from provider), `patient` (your own notes taken during/after the visit) — allows AI clients to weight or filter by source perspective
-  - Links to related data: optional FK arrays to `lab_results` draw IDs, `clinical_events`, `interventions` that the document references
+  - Links to related data: junction tables — `document_lab_draws`, `document_events`, `document_interventions` — each a two-column link (`document_id` + the target row's FK) rather than an in-row array (SQLite has no array type and cannot enforce a foreign key inside JSON). As real foreign keys they participate in `foreign_key_check` ([ADR-0035](adr/0035-migration-execution-semantics.md)) and the audit model ([ADR-0027](adr/0027-audit-trail-and-corrections.md)); link rows are audited as `insert`/`delete` and are not supersession-chained — a link exists or it does not, so correcting one is a delete plus an insert, not a value supersession
   - Timestamp quadruple on `encounter_date` (same UTC + local + tz convention as all other tables)
 - **AI/MCP value:** This is one of the highest-value data types for AI client interactions. Clinician narrative captures reasoning, differential diagnoses, and interpretation context that structured lab values cannot express. MCP tools can surface relevant visit notes alongside lab trends, enabling an AI client to answer questions like "what did my cardiologist say about my LDL trajectory?" or "summarize all provider guidance on my insulin resistance" by full-text search across the `body` column.
 - **Status:** Not yet designed — prioritized; original-file storage boundary decided ([ADR-0034](adr/0034-clinical-document-storage.md))

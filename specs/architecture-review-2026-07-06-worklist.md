@@ -77,11 +77,13 @@ The research half is why this is Tier 2: the conclusion isn't known in advance.
 
 ### T2.5 — Schema-shape decisions for migration 0001 (reviews 3.B + 1.I + 1.J, one pass)
 
-- [ ] STRICT tables, ADR-0030 value-model CHECK constraints, `application_id`, `framework_ranges` UNIQUE + effective-date lookup rule.
-- [ ] Replace data-model.md's "FK arrays" with junction tables (`document_lab_draws`, `document_events`, `document_interventions`).
-- [ ] Resolve "current dose": recommend view/computed read over stored column; if a column survives, ADR-0027 needs a third mutation category (argue against).
+- [x] STRICT tables, ADR-0030 value-model CHECK constraints, `application_id`, `framework_ranges` UNIQUE + effective-date lookup rule.
+- [x] Replace data-model.md's "FK arrays" with junction tables (`document_lab_draws`, `document_events`, `document_interventions`).
+- [x] Resolve "current dose": recommend view/computed read over stored column; if a column survives, ADR-0027 needs a third mutation category (argue against).
 
 Mostly settled recommendations, but the CHECK design and the current-dose call want one careful pass by someone holding the whole schema in their head.
+
+*Done 2026-07-07: each constraint recorded in the Proposed ADR that owns it — value-model CHECKs → ADR-0030, `framework_ranges` UNIQUE + partial default index + deterministic lookup rule → ADR-0005, STRICT tables + `application_id` → ADR-0035. The careful pass surfaced two things the review didn't spell out: (1) STRICT forbids the `DATE` affinity name, so ADR-0005's `effective_date` became `TEXT` (ISO-8601) and ADR-0035 states the date/bool type-mapping rule; (2) a plain `UNIQUE` does not stop duplicate NULL-dated defaults in SQLite (NULLs are distinct in a unique index), so a partial unique index `WHERE effective_date IS NULL` enforces one dateless default per pair. Items I/J: data-model.md's FK-arrays bullet replaced with three junction tables, and current dose respecified as a view/computed read; ADR-0027 gained a "derived denormalizations are computed, not stored — not a third category" paragraph. testing-strategy.md gained a data-integrity migration test. Edits Proposed ADRs 0005/0030/0035/0027 — all feed the T3.4 flip gate.*
 
 ### T2.6 — Clinical-document search: FTS5 decision (review 3.D)
 
