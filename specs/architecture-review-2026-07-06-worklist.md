@@ -2,7 +2,7 @@
 
 Execution ordering for [architecture-review-2026-07-06.md](architecture-review-2026-07-06.md), sorted by reasoning difficulty: open architecture decisions first (work these with a high-reasoning model — Fable, high thinking), bounded design work second (Fable/Opus, normal effort), mechanical edits last (Sonnet-level). Item numbers refer to the review document.
 
-**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0036, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
+**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0037, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
 
 ---
 
@@ -19,7 +19,7 @@ Interacts with: T1.5's CGM question (whether CGM rows are supersession-exempt ch
 
 ### T1.2 — Core Service concurrency model: sync driver under async FastAPI (review 3.C)
 
-- [ ] Decide the sync/async bridge (recommend: synchronous repository layer on threadpool via `def` endpoints; thread-affine connection pool; `check_same_thread` discipline). Record as a short new ADR or an implementation-semantics section extending the ADR-0028/0035 cluster.
+- [x] Decide the sync/async bridge (recommend: synchronous repository layer on threadpool via `def` endpoints; thread-affine connection pool; `check_same_thread` discipline). Record as a short new ADR or an implementation-semantics section extending the ADR-0028/0035 cluster. — *Done 2026-07-07: new [ADR-0037](adr/0037-core-service-concurrency-and-driver.md) (sync repository, `def` endpoints, thread-affine pool of 8, `BEGIN IMMEDIATE` + `busy_timeout`); also re-affirmed DB-API `sqlcipher3` over apsw/`apsw-sqlite3mc` with the research on record and named revisit triggers; see review 3.C resolution note. ADR-0037 joins the T3.4 flip list.*
 
 Why hard: it's a structural decision every endpoint, the SSE stream, blob streaming (ADR-0034), and the backup job inherit. Requires reasoning about SQLite connection/thread affinity, pool sizing under WAL, and where Argon2id and `sqlite3_backup` block. Nothing else in Tier 1 should assume an answer before this is written down.
 
@@ -130,10 +130,10 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.4 — Governance close-out (deliberately last)
 
-- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
+- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
 - [ ] 4.B docs-consistency CI test note (generate/verify matrix tables against `HOST_LOADABLE_TYPES` and the default-token fixture) — record as a testing-strategy line item; implementation comes with the code.
 
-**Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).
+**Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).
 
 ---
 
@@ -150,5 +150,5 @@ T1.4 (startup flow) ──→ T3.2 observability fixes
 T1.1 (audit granularity) ──→ parked 3.F (CGM)
 T2.3 (tool contract) ──→ T3.3 ADR-0034 note
 T2.8 (supervision) ──→ T3.4 ADR-0019 status decision
-All Proposed-ADR edits (T1.1, T1.3–T1.5, T2.1, T2.2, T2.4, T2.7) ──→ T3.4 (acceptance flip)
+All Proposed-ADR edits (T1.1–T1.5, T2.1, T2.2, T2.4, T2.7) ──→ T3.4 (acceptance flip)
 ```

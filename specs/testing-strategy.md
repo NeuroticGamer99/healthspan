@@ -85,6 +85,7 @@ Tests that exercise a real database and/or the REST API. Each test gets its own 
 - Import audit reconciliation (ADR-0027): property-based case — for a generated batch mixing new, identical, differing, and skipped rows under each conflict policy, the batch audit row's summary counts (`rows_inserted`, `rows_corrected`, `rows_skipped`, `rows_unchanged`) reconcile exactly against the actual table deltas and supersession-chain additions
 - Corrections (ADR-0027): value correction inserts the new row, sets `superseded_by`, and emits `data.corrected`; correction chains resolve correctly through `*_current` views; supersession-chain rows are not deletable; hard delete preserves the full row image in `audit_log` and emits `data.deleted`
 - Health and metrics endpoints
+- Concurrency model (ADR-0037): **event-loop liveness contract** — the SSE heartbeat keeps flowing while a deliberately slow query occupies a worker thread (proves the driver is never called on the event loop); **thread affinity** — repository connections are thread-local and `check_same_thread=True` rejects cross-thread use; a write colliding with a held write lock waits out `busy_timeout` and surfaces as 503 rather than an immediate failure
 
 ### Plugin tests
 

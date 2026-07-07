@@ -49,6 +49,7 @@ Steps 3–5 succeed or disappear together. The `schema_version` row is inside th
 | `foreign_keys` | `ON` | Every runtime connection, in the **single shared connection factory** used by the Core Service pool and CLI direct-DB commands | Off by default and per-connection; call-site discipline will eventually miss one, so there is exactly one place that opens connections. The migration runner is the sole documented exception (off + check, above). |
 | `journal_mode` | `WAL` | Once, at `healthspan init` (persistent in the database file) | Concurrent readers with a single writer — how SQLite serves FastAPI reads well; assumed by ADR-0028's connection pool. The `-wal`/`-shm` sidecars are why the live database must never be cloud-synced (ADR-0019). |
 | `synchronous` | `NORMAL` | Connection factory | The standard WAL pairing. Full corruption safety; on power loss the last transaction(s) may roll back rather than being durably committed. `FULL` buys per-commit durability at a per-write fsync cost — the wrong trade for a single-user platform whose ingest is re-runnable imports. Recorded so the tradeoff is a decision, not a driver default. |
+| `busy_timeout` | `5000` ms | Connection factory | Added by [ADR-0037](0037-core-service-concurrency-and-driver.md): runtime write transactions use `BEGIN IMMEDIATE`, so a briefly busy database waits instead of failing instantly; timeout exhaustion surfaces as HTTP 503. The migration runner's fail-fast behavior is unchanged — it runs with exclusive access before the Core Service starts. |
 
 ### File-authoring rules (corrects ADR-0009's convention)
 - **The per-file idempotency requirement is dropped.** Runner-level idempotency — applied files are skipped via `schema_version` — is the real mechanism and the only one needed.
@@ -79,6 +80,7 @@ Steps 3–5 succeed or disappear together. The `schema_version` row is inside th
 ## Links
 - Extends: [ADR-0009](0009-database-migration.md) — replaces the runner's execution semantics (steps 3a–3e) and the file convention's idempotency rule; runner choice, numbering, `schema_version`, and rollback convention unchanged
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — connection pool assumes WAL; pragma discipline deferred to this ADR from there
+- Extended by: [ADR-0037](0037-core-service-concurrency-and-driver.md) — adds `busy_timeout` to the pragma set and gives the connection factory its thread-affine pool structure
 - Related: [ADR-0008](0008-process-lifecycle.md) — launcher runs migrations before the Core Service starts (why exclusive access holds)
 - Related: [ADR-0019](0019-multi-device-sync.md) — WAL sidecar files and live-file sync unsafety
 - Related: [specs/testing-strategy.md](../testing-strategy.md) — migration test targets updated to match (mid-file atomicity, foreign_key_check, pragma verification)
