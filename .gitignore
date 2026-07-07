@@ -19,3 +19,4 @@ export/
 .venv/
 __pycache__/
 *.py[cod]
+.claude/settings.json
