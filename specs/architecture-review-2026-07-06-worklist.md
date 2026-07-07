@@ -115,12 +115,14 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.1 — Precision rewrites with provided wording
 
-- [ ] INV-1 reword in security.md + ADR-0025 (review 1.D — suggested text is in the review).
-- [ ] Trust-model sync qualifier, one clause (review 1.H).
-- [ ] security.md CLI direct-DB command enumeration → "explicitly invoked `db`/`keys` maintenance subcommands" (review 1.K).
-- [ ] Derive-time Argon2id floor enforcement paragraph in ADR-0028 (review 2.7).
-- [ ] Off-catalog-vs-platform-lockfile conflict refusal paragraph in ADR-0036 (review 2.8).
-- [ ] `bytearray` key-buffer note in ADR-0028 implementation notes (review 3.H).
+- [x] INV-1 reword in security.md + ADR-0025 (review 1.D — suggested text is in the review).
+- [x] Trust-model sync qualifier, one clause (review 1.H).
+- [x] security.md CLI direct-DB command enumeration → "explicitly invoked `db`/`keys` maintenance subcommands" (review 1.K).
+- [x] Derive-time Argon2id floor enforcement paragraph in ADR-0028 (review 2.7).
+- [x] Off-catalog-vs-platform-lockfile conflict refusal paragraph in ADR-0036 (review 2.8).
+- [x] `bytearray` key-buffer note in ADR-0028 implementation notes (review 3.H).
+
+*Done 2026-07-07:* all six precision rewrites transcribed. INV-1 reworded identically in security.md and ADR-0025 (process-holding-the-database framing, covering the CLI's maintenance-command exception). Trust-model paragraph got the ADR-0019 backup-only clause; the deployment table's three "safe" cells were tagged "(backups only)" and row 2's ambiguous "Encrypted file on cloud storage" label renamed to "Backup file on cloud storage" (an extra fix beyond the review's literal instruction, since that label was the real source of the ambiguity). security.md's CLI-connection sentence now enumerates all five `db`/`keys` maintenance subcommands, closing the `db encrypt` gap the review flagged. ADR-0028 gained a derive-time floor-enforcement bullet (mirroring the existing write-time check) and reconciled its `bytearray`-vs-`SecretStr` contradiction across both key-lifetime bullets. ADR-0036 gained a lockfile-conflict paragraph in §3 that hard-refuses (not just warns on) an off-catalog package colliding with Healthspan's own pinned versions. ADR-0028 and ADR-0036 each gained a `Resolves` Links line for the 2026-07-06 review items they now address, alongside their existing 2026-06-10 resolutions.
 
 ### T3.2 — Doc-example and staleness fixes
 

@@ -38,7 +38,7 @@ These describe two different designs. ADR-0035's `BEGIN IMMEDIATE`/exclusive-acc
 
 ### D. INV-1 as worded is falsified by the platform's own CLI maintenance commands
 
-- [ ] Reword INV-1 in [security.md](security.md) (and its statement in [ADR-0025](adr/0025-plugin-host-process-matrix.md)) to be precisely true.
+- [x] Reword INV-1 in [security.md](security.md) (and its statement in [ADR-0025](adr/0025-plugin-host-process-matrix.md)) to be precisely true. — *Resolved 2026-07-07: both invariants tables now read "The derived key exists only in the memory of the single process currently holding the database open — the Core Service at runtime, or the CLI during an explicitly invoked `db`/`keys` maintenance command run while Core Service is stopped," matching the suggested wording.*
 
 INV-1: "The derived database key exists only in Core Service memory." But `healthspan db migrate`, `db backup`, `db encrypt` (ADR-0033), and `keys change-passphrase` / `keys rotate-secret-key` (ADR-0028) all derive and hold the key **in the CLI process** — that is the documented direct-database exception (ADR-0006), and ADR-0028 even requires exclusive access *because* the CLI opens the database. An invariant that is testably false in five supported flows will erode trust in the whole invariants table. Suggested wording: "The derived key exists only in the memory of the single process currently holding the database open — the Core Service at runtime, or the CLI during an explicitly invoked `db`/`keys` maintenance command run while Core Service is stopped. It is never transmitted, logged, or inherited by child processes (spawn, never fork)."
 
@@ -64,7 +64,7 @@ design-rationale.md is a living document, so these are ordinary edits.
 
 ### H. Trust model still says "cloud backup and sync of the encrypted file is explicitly safe" without the backup-only qualifier
 
-- [ ] Add the ADR-0019 qualifier to [security.md](security.md)'s Trust Model (storage-layer paragraph and the deployment table's "Cloud sync safe" cells).
+- [x] Add the ADR-0019 qualifier to [security.md](security.md)'s Trust Model (storage-layer paragraph and the deployment table's "Cloud sync safe" cells). — *Resolved 2026-07-07: storage-layer paragraph gained the suggested clause; deployment table's three "safe" storage-trust cells tagged "(backups only)," and row 2's deployment label renamed "Encrypted file on cloud storage" → "Backup file on cloud storage" since the untagged label was itself ambiguous about live-vs-backup.*
 
 The 2026-06-10 review (item 1.H) fixed this claim in open-questions.md and ADR-0019 and judged security.md's wording acceptable as a confidentiality statement. On re-read it is still the sentence a user will quote to justify putting the live WAL-mode database in Dropbox. One clause fixes it: "…is explicitly safe *for the output of `healthspan db backup`; the live database file must never be synced (ADR-0019)*."
 
@@ -79,7 +79,7 @@ The 2026-06-10 review (item 1.H) fixed this claim in open-questions.md and ADR-0
 ### K. Minor staleness and drift
 
 - [ ] [specs/README.md](README.md) arc42 table: "9. Architecture Decisions | adr/ (24 ADRs)" — there are 36. Consider dropping the count entirely so it can't drift.
-- [ ] [security.md](security.md) Database Security: "The CLI holds a connection only for migrations and backup" — now also `db encrypt` (ADR-0033) and the two `keys` rotation commands (ADR-0028). Say "explicitly invoked `db`/`keys` maintenance subcommands."
+- [x] [security.md](security.md) Database Security: "The CLI holds a connection only for migrations and backup" — now also `db encrypt` (ADR-0033) and the two `keys` rotation commands (ADR-0028). Say "explicitly invoked `db`/`keys` maintenance subcommands." — *Resolved 2026-07-07: sentence now enumerates all five subcommands (`db migrate`, `db backup`, `db encrypt`, `keys change-passphrase`, `keys rotate-secret-key`) under the "explicitly invoked `db`/`keys` maintenance subcommand" phrasing, matching INV-1's reworded language.*
 - [ ] [.gitignore](../.gitignore): recovery-kit patterns are `*recovery-kit*.pdf` / `*recovery-kit*.png`; ADR-0033 says "`*recovery-kit*` patterns" and doesn't fix the render format. Broaden to bare `*recovery-kit*`.
 - [ ] [ADR-0019](adr/0019-multi-device-sync.md) is statused "Proposed — stub" but contains a full near-term decision (single-writer + backup-only sync) that other documents cite as settled (open-questions.md Resolved, ADR-0035, security.md). Restatus to Proposed (or Accepted, see 4.A) so the index reflects reality.
 - [ ] [ADR-0008](adr/0008-process-lifecycle.md) Option Details still describe first-run generating "a new random bearer token" and printing it — superseded by ADR-0026's token set. The `Extended by` link exists; fine under governance, but the launcher section of any future user-facing doc should be written from ADR-0026, not ADR-0008.
@@ -118,11 +118,11 @@ ADR-0019 prescribes "a scheduled `healthspan db backup`" as the sync-safe artifa
 
 ### 2.7 Enforce the Argon2id parameter floor at derive time, not only at write time
 
-- [ ] ADR-0028: init and rotation refuse to *write* below-floor parameters into `.keyparams`, but nothing refuses to *derive* with a below-floor sidecar (tampered, corrupted, or hand-edited). Cheap hardening: the reader validates parameters against the recorded OWASP floor before deriving and refuses (with the documented recovery guidance) below it. The sidecar is integrity-sensitive even though it is not secret; this is the one check that makes tampering with it unprofitable.
+- [x] ADR-0028: init and rotation refuse to *write* below-floor parameters into `.keyparams`, but nothing refuses to *derive* with a below-floor sidecar (tampered, corrupted, or hand-edited). Cheap hardening: the reader validates parameters against the recorded OWASP floor before deriving and refuses (with the documented recovery guidance) below it. The sidecar is integrity-sensitive even though it is not secret; this is the one check that makes tampering with it unprofitable. — *Resolved 2026-07-07: new "Derive-time floor enforcement" bullet in ADR-0028's Key Derivation Construction section, mirroring the existing write-time floor check.*
 
 ### 2.8 Off-catalog `PLUGIN_PACKAGES` can displace Healthspan's own pinned dependencies
 
-- [ ] All plugin packages install into the single `uv tool` environment (ADR-0023/0024). An off-catalog pin like `cryptography==41.0.0` or `pandas==2.2.3` doesn't just conflict with other plugins — it can downgrade or displace a version Healthspan's own lockfile pinned, including security-relevant transitive deps of the Core Service. ADR-0024 assigns off-catalog conflicts to the user, but the platform should at minimum detect and refuse (or loudly warn on) an off-catalog requirement that conflicts with the platform's own locked versions — the loader has the catalog (now the full transitive closure per ADR-0036) to check against. One paragraph in ADR-0036's scope.
+- [x] All plugin packages install into the single `uv tool` environment (ADR-0023/0024). An off-catalog pin like `cryptography==41.0.0` or `pandas==2.2.3` doesn't just conflict with other plugins — it can downgrade or displace a version Healthspan's own lockfile pinned, including security-relevant transitive deps of the Core Service. ADR-0024 assigns off-catalog conflicts to the user, but the platform should at minimum detect and refuse (or loudly warn on) an off-catalog requirement that conflicts with the platform's own locked versions — the loader has the catalog (now the full transitive closure per ADR-0036) to check against. One paragraph in ADR-0036's scope. — *Resolved 2026-07-07: new "Conflict with the platform's own lockfile" paragraph in ADR-0036 §3 — the loader diffs off-catalog requirements against Healthspan's own release lockfile and hard-refuses a conflict (chosen over a warning, for consistency with §2's hash-mismatch stance).*
 
 ### 2.9 Mechanize two more review-convention requirements as CI gates
 
@@ -186,7 +186,7 @@ ADR-0019 prescribes "a scheduled `healthspan db backup`" as the sync-safe artifa
 
 ### 3.H Honest zeroization: hold the key in a mutable buffer
 
-- [ ] ADR-0028's best-effort shutdown zeroization cannot work on an immutable `bytes` object (CPython will have copied it, and `SecretStr` wraps `str`). If zeroization is to be more than a comment, hold the 32-byte key in a `bytearray` (mutable, zeroable in place) inside the pool/keying component, produce the transient hex only at connection-open, and keep `SecretStr` semantics for repr/log protection via a tiny wrapper. Still best-effort (the hex string and SQLCipher's own copy exist transiently), but it makes the shutdown overwrite real rather than symbolic. One paragraph in ADR-0028's implementation notes.
+- [x] ADR-0028's best-effort shutdown zeroization cannot work on an immutable `bytes` object (CPython will have copied it, and `SecretStr` wraps `str`). If zeroization is to be more than a comment, hold the 32-byte key in a `bytearray` (mutable, zeroable in place) inside the pool/keying component, produce the transient hex only at connection-open, and keep `SecretStr` semantics for repr/log protection via a tiny wrapper. Still best-effort (the hex string and SQLCipher's own copy exist transiently), but it makes the shutdown overwrite real rather than symbolic. One paragraph in ADR-0028's implementation notes. — *Resolved 2026-07-07: the key-lifetime bullets in ADR-0028's Key and Connection Lifetime section now specify a `bytearray` held via a thin `SecretStr`-semantics wrapper, transient hex produced only at connection-open, and an in-place shutdown overwrite — reconciling the prior contradiction between "wrapped in SecretStr" and "buffer is overwritten."*
 
 ### 3.I Frameworks: no changes recommended
 

@@ -207,7 +207,7 @@ These four invariants summarize this ADR's contract together with ADR-0013's. Th
 
 | # | Invariant | Why |
 |---|---|---|
-| INV-1 | The derived database key exists only in Core Service memory. It is never transmitted, logged, or inherited by child processes (spawn, not fork). | The key is the single secret the entire encryption-at-rest story rests on (ADR-0013). |
+| INV-1 | The derived key exists only in the memory of the single process currently holding the database open — the Core Service at runtime, or the CLI during an explicitly invoked `db`/`keys` maintenance command run while Core Service is stopped. It is never transmitted, logged, or inherited by child processes (spawn, not fork). | The key is the single secret the entire encryption-at-rest story rests on (ADR-0013). |
 | INV-2 | Core Service never executes code from the plugins directory. First-party in-core components ship inside the `healthspan` package and are imported explicitly. | The plugins directory is the platform's invited-code channel; keeping it out of the key-holding process makes ADR-0013's plugin isolation true by architecture. |
 | INV-3 | A plugin's maximum capability is its host process's credentials. | Bounds the blast radius of any malicious or compromised plugin to a knowable, revocable token scope (refined by ADR-0026's credential tiers: directory-loaded plugins are handed the plugin-tier token). |
 | INV-4 | Plugins alter Core Service behavior only via data submitted through the validated REST API. | Data is inert and validated at the boundary (security.md); code is not. This is Principle 1 in enforceable form. |

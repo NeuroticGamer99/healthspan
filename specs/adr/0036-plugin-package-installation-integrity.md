@@ -44,6 +44,8 @@ A hash-bearing off-catalog declaration installs in require-hashes mode (which ex
 
 Hashes are recommended rather than required off-catalog because requiring them would mostly train users to paste hashes from the same page they downloaded the package from — verification theater. The honest control set for off-catalog is: the confirmation gate (informed consent), the publication age gate (ADR-0020, see below), and optional hashes for authors who maintain them.
 
+**Conflict with the platform's own lockfile.** All plugin packages — catalog and off-catalog alike — install into the single `uv tool` environment Healthspan itself runs in (ADR-0023/0024). An off-catalog pin (`cryptography==41.0.0`, `pandas==2.2.3`) can therefore collide with a version Healthspan's own release lockfile pinned, including a security-relevant transitive dependency of the Core Service — silently downgrading or displacing it for every plugin and for Healthspan itself, not just the plugin that declared it. Before installing an off-catalog package, the loader diffs its resolved name and version against Healthspan's own release lockfile (already available — it is what generates the catalog in §1); a conflicting version is refused outright, with an error naming the package, the version the plugin requested, and the version the platform requires. This is a hard fail, not the warn-and-confirm gate above: an off-catalog author may decide to risk their own plugin; they may not decide to weaken Healthspan's own dependency set.
+
 ### 4. The loader validates before it installs
 
 ADR-0024's loader sequence is reordered — package installation moves after all validation:
@@ -97,3 +99,4 @@ The age gate ([ADR-0020](0020-plugin-registry.md)) and the hash lock are complem
 - Related: [specs/security.md](../security.md) — plugin supply-chain paragraph
 - Related: [specs/testing-strategy.md](../testing-strategy.md) — hash-mismatch rejection, validation-installs-nothing, and static-extraction test targets
 - Resolves review item 2.7 from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
+- Resolves review item 2.8 from [architecture-review-2026-07-06.md](../architecture-review-2026-07-06.md)

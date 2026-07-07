@@ -11,7 +11,7 @@ This document covers the platform's own security posture. It does not cover the 
 The platform operates across three distinct trust layers, each with different properties. Understanding these layers is essential for reasoning about what is and is not protected.
 
 **Storage layer — zero-knowledge for the provider**
-The SQLCipher-encrypted database file is opaque ciphertext. Any party that holds the file — a cloud backup provider, a sync service, a drive — never sees plaintext. The decryption key never leaves the user's control (OS keychain + Recovery Kit). Cloud backup and sync of the encrypted file is explicitly safe. The storage provider is in the "do not trust" tier and the encryption model handles this correctly.
+The SQLCipher-encrypted database file is opaque ciphertext. Any party that holds the file — a cloud backup provider, a sync service, a drive — never sees plaintext. The decryption key never leaves the user's control (OS keychain + Recovery Kit). Cloud backup and sync of the encrypted file is explicitly safe for the output of `healthspan db backup`; the live database file must never be synced ([ADR-0019](adr/0019-multi-device-sync.md)). The storage provider is in the "do not trust" tier and the encryption model handles this correctly.
 
 **Processing layer — must trust the Core Service machine**
 Decryption happens inside the Core Service process. The machine running Core Service must be trusted — its operator has potential access to decrypted health data. This is inherent: querying data requires decrypting it. The Core Service cannot be delegated to an untrusted host without accepting that the host operator can read the data. There is no software-only solution to this constraint.
@@ -23,10 +23,10 @@ Communication between processes on the same trusted machine (localhost HTTP) is 
 
 | Deployment | Storage trust | Processing trust | Transport requirement |
 |---|---|---|---|
-| Single local machine (default) | Cloud sync safe | User's own machine | None (localhost) |
-| Encrypted file on cloud storage | Cloud provider untrusted — safe | Core Service machine | HTTPS if Core Service remote |
-| Core Service on a home server | File sync safe | Home server operator | HTTPS between devices |
-| Core Service on a cloud VM | File sync safe | Cloud VM provider can see plaintext | HTTPS required |
+| Single local machine (default) | Cloud sync safe (backups only) | User's own machine | None (localhost) |
+| Backup file on cloud storage | Cloud provider untrusted — safe | Core Service machine | HTTPS if Core Service remote |
+| Core Service on a home server | File sync safe (backups only) | Home server operator | HTTPS between devices |
+| Core Service on a cloud VM | File sync safe (backups only) | Cloud VM provider can see plaintext | HTTPS required |
 
 **The local-first default is not primarily a data protection decision.** ADR-0013 makes the encrypted database file safe for cloud storage regardless. Local-first is the right default for simplicity and zero infrastructure dependency — not because remote storage is inherently dangerous for an encrypted file.
 
@@ -50,7 +50,7 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 | # | Invariant | Why | Established by |
 |---|---|---|---|
-| INV-1 | The derived database key exists only in Core Service memory. It is never transmitted, logged, or inherited by child processes (jobs use `spawn`, never `fork`). | The key is the single secret the entire encryption-at-rest story rests on. | [ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
+| INV-1 | The derived key exists only in the memory of the single process currently holding the database open — the Core Service at runtime, or the CLI during an explicitly invoked `db`/`keys` maintenance command run while Core Service is stopped. It is never transmitted, logged, or inherited by child processes (jobs use `spawn`, never `fork`). | The key is the single secret the entire encryption-at-rest story rests on. | [ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
 | INV-2 | The Core Service never executes code from the plugins directory. First-party in-core components ship inside the `healthspan` package and are imported explicitly. | The plugins directory is the platform's invited-code channel; keeping it out of the key-holding process makes plugin isolation true by architecture, not by audit. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
 | INV-3 | A plugin's maximum handed capability is its host process's plugin-tier credential; escalation requires deliberate, named token issuance by the user. | The host assignment bounds *where* plugin code runs; the credential tier bounds *what it is given*. | [ADR-0025](adr/0025-plugin-host-process-matrix.md), [ADR-0026](adr/0026-named-scoped-tokens.md) |
 | INV-4 | Plugins alter Core Service behavior only via data submitted through the validated REST API. | Data is inert and validated at the boundary; code is not. | [ADR-0025](adr/0025-plugin-host-process-matrix.md) |
@@ -148,7 +148,7 @@ This applies to: import staging files, export staging files, database migration 
 
 **Parameterized queries only.** No SQL statement in the codebase may be constructed by string interpolation or concatenation of user-supplied values. All user input reaches the database exclusively through parameterized query placeholders. This is enforced by code review convention and, where possible, by linting.
 
-**Single database owner.** Only the Core Service process holds a runtime database connection. The CLI holds a connection only for migrations, backup, and key rotation — only when those subcommands are explicitly invoked, and never while Core Service is running (the `db backup` and `keys` commands refuse to start against a live service — [ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0028](adr/0028-key-derivation-and-rotation.md)). No other process accesses the database directly, and no two processes hold connections to the live file at the same time.
+**Single database owner.** Only the Core Service process holds a runtime database connection. The CLI holds a connection only for an explicitly invoked `db`/`keys` maintenance subcommand — `db migrate`, `db backup`, `db encrypt` ([ADR-0033](adr/0033-plaintext-artifact-disposal.md)), `keys change-passphrase`, `keys rotate-secret-key` — and never while Core Service is running (each of these refuses to start against a live service — [ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0028](adr/0028-key-derivation-and-rotation.md), [ADR-0033](adr/0033-plaintext-artifact-disposal.md)). No other process accesses the database directly, and no two processes hold connections to the live file at the same time.
 
 **Database file permissions.** The SQLite file must be created with owner-read-write-only permissions (`chmod 600` equivalent). The platform should warn on startup if the database file has broader permissions.
 
