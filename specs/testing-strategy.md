@@ -121,6 +121,7 @@ Tests that specifically validate security properties.
 - **Authorization**: requests authenticated with a token lacking a required scope are rejected with 403; every route declares its required scope (no accidental scope-free endpoints); job submission enforces the job type's declared scopes (ADR-0026)
 - **Event forgery**: `/v1/events/inbound` rejects reserved namespaces (`data.*`, `job.*`, `schedule.*`, `schema.*`, `system.*`, `plugin.*`) for every token; rejects payloads supplying `source`; rejects publication outside the token's namespace allowlist; a job-child token cannot report progress for a different job ID (ADR-0026)
 - **SQL injection**: parameterized queries only — test with known injection payloads against all user-input-accepting endpoints
+- **Path traversal ([ADR-0012](adr/0012-job-abstraction.md))**: job submissions with file-typed params are rejected for `../` escapes, absolute paths, and symlinks inside an import directory that resolve outside it; the rejection error is identical whether the out-of-bounds target exists or not (no existence oracle)
 - **Host header validation**: requests with unexpected Host headers are rejected
 - **CORS**: cross-origin requests from non-allowlisted origins are rejected; preflight requests are denied
 - **Input validation**: malformed import payloads are rejected with full error details; oversized payloads are handled gracefully

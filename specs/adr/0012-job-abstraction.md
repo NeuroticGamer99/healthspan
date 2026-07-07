@@ -59,10 +59,12 @@ DELETE /v1/jobs/{id}               Cancel a job (if cancellable)
 ```json
 {
   "type": "import.quest_labs",
-  "params": { "file": "export_2026.csv", "conflict_policy": "reject" },
+  "params": { "file": "quest/export_2026.csv", "conflict_policy": "reject" },
   "priority": "normal"
 }
 ```
+
+`file` is a **relative path resolved inside a configured import directory** — see File Path Validation below. Absolute paths and paths escaping the configured directories are rejected.
 
 ### Job status response
 ```json
@@ -107,6 +109,40 @@ context.register_service("jobs.import.quest_labs", QuestLabsImportJob(),
 
 For plugin-registered handlers, `execution="heavyweight"` is mandatory — the loader rejects a plugin-provided handler declaring lightweight execution. Handler *registrations* reach the Core Service as data (job type name, execution declaration, owning plugin); the handler code itself is loaded only by the spawned child process at execution time, subject to ADR-0025's host allowlists. The Core Service orchestrates job metadata; it never imports handler code.
 
+## File Path Validation
+
+A caller-supplied filesystem path in a job payload is a path-traversal primitive: any token holding a job-submission scope — including a prompt-injected MCP client — could point an import job at `~/.ssh/id_rsa`, the `.keyparams` sidecar, or the database file itself, and leak content through parse-error echoes or by making it queryable as imported "data." A job type taking an *output* path (export jobs, ADR-0015) would be an arbitrary-file-**write** primitive, which is worse. The rules below therefore apply to every file-typed job parameter, read side and write side.
+
+### Containment against configured roots
+
+The config declares the only directories job file params may reach:
+
+```toml
+[jobs.files]
+import_dirs = ["~/Healthspan/imports"]   # read side
+export_dir  = "~/Healthspan/exports"     # write side
+```
+
+- File params are **relative paths only**. Absolute paths are rejected at validation, before any filesystem access.
+- The server resolves the param against each allowed root with `Path.resolve()` — which collapses `..` *and* follows symlinks, so a symlink inside an import directory pointing outside it fails containment on the resolved real path — and requires `resolved.is_relative_to(resolved_root)`.
+- Regular files only; special files are rejected.
+
+### Validation is a framework concern
+
+A job type's params schema declares a field as file-typed (`import_file`, `export_file`). The job framework performs containment validation centrally and hands the handler a **validated absolute path** — handler code never sees the raw caller string. This keeps the control structural: a plugin-provided handler cannot reintroduce the vulnerability, because raw paths never reach it.
+
+Two hardenings ride along:
+
+- **Re-validation at open time.** The heavyweight child re-runs the containment check when it opens the file — the file can be swapped between submission-time validation and child spawn (TOCTOU narrowing; the framework helper does this, not handler discipline).
+- **No existence oracle.** A rejected path produces the same error — `not within a configured import directory` — whether the out-of-bounds target exists or not. Rejection happens without stat-ing the target.
+
+### Ad-hoc local files: upload content, don't pass paths
+
+`healthspan import ~/Downloads/export_2026.csv` must keep working, but the file is not in an import directory and the CLI cannot be exempted — the server cannot distinguish a CLI token used by the human from one used by injected instructions. The split:
+
+- **Ad-hoc local imports upload content**: the CLI reads the file itself (as the user, under the user's own filesystem authority) and sends the bytes through the bulk import endpoint (ADR-0004). No server-side path involved.
+- **Path-based file params are for automation flows** where the file already lives in a configured import directory — the Automation Host's watch-folder importer being the canonical case. A path crosses the API boundary only when the path is the point.
+
 ## Cancellation
 
 Not all jobs are cancellable. A job handler declares whether it supports cancellation:
@@ -118,4 +154,7 @@ Not all jobs are cancellable. A job handler declares whether it supports cancell
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — ephemeral single-job tokens; job submission requires the job type's declared scopes
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation
 - Related: [ADR-0011](0011-event-bus.md) — job events flow through the event bus
-- Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system
+- Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system; ad-hoc local imports upload content through it rather than passing server-side paths
+- Related: [ADR-0015](0015-data-export.md) — export output paths are file-typed params subject to the containment rules above
+- Related: [specs/security.md](../security.md) — file path validation under Input Validation
+- Resolves review item 2.8 from [../architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)

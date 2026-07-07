@@ -62,6 +62,8 @@ healthspan export --output ./my_export/    # output directory
 healthspan export --encrypt                # passphrase-protected archive (see below)
 ```
 
+The `--output` flag is the CLI writing locally under the user's own filesystem authority. When an export runs as a *job* submitted through the REST API, the output location is a file-typed job parameter subject to [ADR-0012](0012-job-abstraction.md)'s File Path Validation — a relative path contained inside the configured `export_dir`, never a caller-chosen arbitrary path (an unconstrained output path would be an arbitrary-file-write primitive).
+
 ## Export Encryption Option
 
 Exports are decrypted plaintext by default — that is the point of an export, and the default stays that way. But the primary sharing scenario (send a filtered export to a physician) moves health data across email, USB media, or an upload portal, where plaintext is the wrong transport format. `--encrypt` addresses this:

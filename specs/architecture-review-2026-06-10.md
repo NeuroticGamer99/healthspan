@@ -123,7 +123,7 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.8 Job/import file paths are an unvalidated surface
 
-- [ ] ADR-0012's example has the API accepting `"file": "export_2026.csv"` — caller-supplied paths are a path-traversal/arbitrary-file-read primitive (especially from a write-scoped MCP token). Require paths to resolve inside configured import directories.
+- [x] ADR-0012's example has the API accepting `"file": "export_2026.csv"` — caller-supplied paths are a path-traversal/arbitrary-file-read primitive (especially from a write-scoped MCP token). Require paths to resolve inside configured import directories. — *Resolved: [ADR-0012](adr/0012-job-abstraction.md) (Proposed, edited directly) gains a File Path Validation section covering read and write sides — relative paths only, resolved-real-path containment in configured `[jobs.files]` roots (symlink-safe via `Path.resolve()`), validation done centrally by the job framework so handlers never see raw caller strings, open-time re-validation (TOCTOU), no-existence-oracle errors; ad-hoc CLI imports upload content via the bulk import endpoint instead of passing server-side paths. Fan-out: security.md Input Validation, [ADR-0015](adr/0015-data-export.md) export-job output paths, testing-strategy path-traversal target.*
 
 ### 2.9 Imported clinical documents' original files have no specified home
 

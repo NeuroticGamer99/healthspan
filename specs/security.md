@@ -157,6 +157,8 @@ This applies to: import staging files, export staging files, database migration 
 
 **Conflict policy must be explicit.** Bulk import requests must specify a conflict policy (`reject`, `skip`, or `upsert`). There is no default that silently mutates existing data.
 
+**No raw filesystem paths from callers.** A caller-supplied path is a path-traversal primitive (read side) or an arbitrary-file-write primitive (write side). File-typed job parameters are relative paths contained inside configured directories (`[jobs.files]` import/export roots), validated centrally by the job framework — resolved real path (symlinks followed) must sit inside a resolved root; absolute paths rejected; rejection errors reveal nothing about whether the target exists. Ad-hoc local imports upload file *content* via the bulk import endpoint instead of passing a server-side path. See [ADR-0012](adr/0012-job-abstraction.md), File Path Validation.
+
 ---
 
 ## Dependency Security
