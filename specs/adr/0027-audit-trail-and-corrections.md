@@ -13,7 +13,7 @@ The candidate patterns pull in different directions. Full event sourcing makes t
 - Corrections must preserve history: an incorrectly entered lab value that gets fixed must keep both values visible, permanently
 - "What did we believe on date X, before the correction on date Y" must remain answerable (longitudinal analysis over corrected data)
 - The audit record must be structurally unable to drift from the data it describes
-- Write volume is tiny — a few imports per week plus rare manual corrections; read patterns are analytical. Complexity must be proportionate to *this* workload
+- Write volume is bimodal — a few imports per week plus rare manual corrections, but a single bulk import can carry millions of rows (CGM backfill — data-model.md); read patterns are analytical. Complexity and audit storage must be proportionate to *this* workload
 - Recovery already has a story: encrypted backups (ADR-0013, ADR-0019). The storage model does not need to double as the recovery mechanism
 - Must work in SQLite/SQLCipher with plain SQL — no dedicated event store
 
@@ -40,8 +40,8 @@ Option 2 is the drift trap the audit requirement exists to prevent, and is rejec
 
 ### Negative Consequences / Tradeoffs
 - Every current-state query must exclude superseded rows (`WHERE superseded_by IS NULL`) — mitigated by per-table `*_current` views defined in the same migrations (see below)
-- `audit_log` grows without bound by design — negligible at this write volume, and deliberately never pruned
-- Old/new value JSON duplicates data into the audit table — an accepted storage cost for a self-contained integrity record
+- `audit_log` grows without bound by design — but it scales with *mutations*, not data volume (bulk-import inserts audit at batch level, below), and is deliberately never pruned
+- Old/new value JSON duplicates mutated data into the audit table — an accepted storage cost for the mutation record; bulk-import inserts are deliberately *not* duplicated (see batch-level audit below)
 - No stream replay: rebuilding a damaged database means restoring a backup, not refolding events
 
 ---
@@ -53,8 +53,8 @@ Created in **migration 0001**, before any data table receives a row.
 | Column | Content |
 |---|---|
 | `id` | Monotonic primary key |
-| `table_name`, `row_id` | What was touched |
-| `operation` | `insert`, `update`, `correct`, `delete` (see semantics below) |
+| `table_name`, `row_id` | What was touched (`row_id` is `NULL` for batch-level `import` rows) |
+| `operation` | `insert`, `update`, `correct`, `delete`, `import` (see semantics below) |
 | `old_values`, `new_values` | Full row images as JSON (`NULL` where inapplicable: no `old_values` on insert, no `new_values` on delete) |
 | `occurred_at_utc` | System timestamp, UTC only — the timestamp quadruple is for clinically meaningful times; audit rows are system events |
 | `actor` | Token name from the authenticated request (ADR-0026); job tokens (`job:<uuid>`) identify job children |
@@ -80,7 +80,38 @@ Audit rows are written by the Core Service's data-access layer, inside the mutat
 2. **The drift risk is already architecturally bounded.** The Core Service is the *only* process that can open the database (ADR-0025, INV-1), and every write funnels through the REST API (ADR-0004) into one first-party repository layer. "Some code path forgot to audit" reduces to a bug in a single module — testable, reviewable, first-party.
 3. **Trigger bodies enumerating every column as JSON** would need regeneration with every migration — a standing maintenance tax.
 
-The residual risk is closed mechanically: the test suite includes a **mutation-matrix test** — every repository mutation path, against every table, asserts exactly one `audit_log` row in the same transaction, and that a rolled-back mutation leaves no audit row (see testing-strategy.md).
+The residual risk is closed mechanically: the test suite includes a **mutation-matrix test** with two contracted shapes — every per-row mutation path (`insert`, `update`, `correct`, `delete`), against every table, asserts exactly one `audit_log` row *per mutated row* in the same transaction; the bulk-import path asserts exactly one `import` row per (batch, table) whose summary counts reconcile against the actual table deltas, and **zero** per-row insert audit rows. A rolled-back mutation of either shape leaves no audit row (see testing-strategy.md).
+
+## Bulk-Import Audit: Batch-Level for Inserts
+
+Audit granularity is keyed on **which write path a mutation takes** — never on row count or a volume threshold. The workload is bimodal: manual mutations arrive a few rows at a time, but data-model.md forecasts CGM backfills of millions of rows in a single import batch. Per-row insert audit at that scale would roughly triple the batch's write volume and permanently store a JSON duplicate of every reading in a table that is never pruned. So bulk-import *inserts* are audited at batch level, while every mutation of *existing* data keeps per-row image audit — there, the old/new images are the whole point.
+
+| Write path | Operation | Audit granularity |
+|---|---|---|
+| `/v1/import` — rows inserted | `import` | One `audit_log` row per (batch × table touched) |
+| `/v1/import` — existing rows changed under `upsert` | `correct` | Per-row, with images (below) |
+| Regular POST endpoints (manual entry) | `insert` | Per-row, unchanged |
+| Corrections, metadata repairs, deletes | `correct` / `update` / `delete` | Per-row with images, unchanged |
+
+**The batch audit row** — one per (import batch × table touched), so `table_name` stays meaningful when a lab-panel import writes both `lab_draws` and `lab_results`:
+
+- `operation = 'import'`, `row_id = NULL`
+- `new_values` holds a summary JSON: `{rows_inserted, rows_corrected, rows_skipped, rows_unchanged, conflict_policy, source, adapter_id, adapter_version}`
+- `import_batch_id`, `actor`, `job_id`, `occurred_at_utc` populated as normal
+- Written inside the batch's single atomic transaction (ADR-0004): rollback leaves no audit row; dry-run writes nothing
+
+"Where did this row come from" is answered by the `import_batch_id` column every imported row already carries, joined to the batch audit row and the import-batch provenance record.
+
+**Conflict-policy semantics** (policies per ADR-0004):
+
+- `upsert`, incoming row identical to the existing row on the compared columns: **no-op** — no mutation, no audit row; counted as `rows_unchanged` in the summary. This identity short-circuit is what keeps whole-file re-imports cheap.
+- `upsert`, incoming row genuinely differs: the **supersession path** — insert the corrected row, set the existing row's `superseded_by`, write one per-row `correct` audit row with both images and `import_batch_id`, `reason` auto-populated (e.g. `upsert re-import, batch <id>`); Core emits `data.corrected`. Treating overwrite as an in-place `update` instead would make bulk import the only path in the system where a clinical value can vanish from a data table — exactly the exception this ADR forbids. Only rows that actually changed at the source supersede, so chain volume stays proportional to real revisions, not to re-import size.
+- `skip`: no mutation, no per-row audit; counted in the summary.
+- `reject`: the batch fails; nothing is written.
+
+**What batch-level insert audit preserves and loses.** "What changed, when, by what" for inserts is answered by the batch audit row (when, who, how many) plus the data rows themselves (what — each carries `import_batch_id`). Every *subsequent* mutation of an imported row still captures full images: corrections supersede, deletes record `old_values`. No value can ever be lost — a row's content is always in the live table, a supersession chain, or a delete audit image. What is given up: `audit_log` alone is no longer a self-contained replica of inserted content; reconstructing exactly what a batch inserted, for rows never since mutated, requires the data tables.
+
+*Seam for ADR-0021 (deferred):* if CGM rows are later made supersession-exempt (re-import replaces rather than supersedes), that exemption is declared per table — exactly like designated-metadata columns — and changes only the differing-row `upsert` rule above for that table. The batch-audit shape is unaffected.
 
 ## Correction Model: `superseded_by` Supersession
 
@@ -117,10 +148,10 @@ The full command/query split is rejected along with event sourcing. What remains
 ## Consequences for Other Documents
 
 - **open-questions.md**: longitudinal correction, audit trail, event sourcing, and CQRS entries move to Resolved
-- **data-model.md**: cross-cutting concerns updated to cite this ADR as the decision
+- **data-model.md**: cross-cutting concerns updated to cite this ADR as the decision, including the batch-level audit rule for bulk-import inserts
 - **ADR-0021** (Proposed — stub): invalidation open question answered — aggregates are rebuildable read models invalidated by `data.*` events
 - **ADR-0011** (Proposed): no content change — `data.imported` / `data.corrected` / `data.deleted` are already cataloged as reserved Core-emitted events; navigation link added
-- **testing-strategy.md**: audit-trail coverage targets added (mutation matrix, rollback, immutability triggers, supersession chains)
+- **testing-strategy.md**: audit-trail coverage targets added (mutation matrix with the two-shape per-row/batch contract, rollback, immutability triggers, supersession chains)
 
 ## Pros and Cons of the Options
 
@@ -143,6 +174,7 @@ The full command/query split is rejected along with event sourcing. What remains
 ## Links
 - Resolves: [open-questions.md](../open-questions.md) — longitudinal data correction, audit trail, event sourcing, CQRS
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 3.A
+- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.A — bulk-import audit granularity (batch-level for inserts)
 - Related: [ADR-0021](0021-time-series-aggregation.md) — aggregates as rebuildable read models; invalidation via `data.*` events
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — `actor` from token identity; `auth_audit` as the distinct security record
 - Related: [ADR-0011](0011-event-bus.md) — reserved `data.*` events emitted by Core on validated mutations

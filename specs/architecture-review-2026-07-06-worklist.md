@@ -12,7 +12,7 @@ These have real tradeoffs, cross-document blast radius, and (for the first three
 
 ### T1.1 — Bulk-import audit granularity (review 3.A) ⚠️ hardest, most consequential
 
-- [ ] Decide batch-level vs per-row audit for bulk-import inserts; edit [ADR-0027](adr/0027-audit-trail-and-corrections.md) directly (still Proposed — no extension ADR needed yet).
+- [x] Decide batch-level vs per-row audit for bulk-import inserts; edit [ADR-0027](adr/0027-audit-trail-and-corrections.md) directly (still Proposed — no extension ADR needed yet). — *Done 2026-07-07: batch-level `import` audit rows per (batch × table); upserts resolve as no-op or supersession (`correct`, per-row images); see review 3.A resolution note.*
 
 Why hard: it reopens a decided ADR's core contract. Must reason through what batch-level insert audit preserves and loses ("what changed, when, by what" for inserts vs. corrections), how the mutation-matrix test contract changes, whether `upsert`-conflict-policy imports count as inserts or updates (they mutate existing rows — probably per-row), and how the batch audit row composes with `import_batch_id` provenance. Fan-out: testing-strategy.md mutation-matrix wording, data-model.md source-provenance note.
 Interacts with: T1.5's CGM question (whether CGM rows are supersession-exempt changes the volume math).
