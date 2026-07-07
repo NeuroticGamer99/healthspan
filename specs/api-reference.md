@@ -63,7 +63,21 @@ Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoint
 
 The MCP server translates AI client tool calls into Core REST API requests ([ADR-0006](adr/0006-application-architecture.md), [ADR-0007](adr/0007-mcp-transport.md)). The intended tool set is sketched in [design-rationale.md](design-rationale.md). The exact tool definitions will be finalized during implementation and are extensible via plugins ([ADR-0010](adr/0010-cli-plugin-model.md)).
 
-*Tool definitions TBD during implementation.*
+*Tool definitions TBD during implementation. Every definition, first-party or plugin-provided, must satisfy the output contract below.*
+
+### Tool output contract
+
+The contract is the AI-facing half of the [ADR-0030](adr/0030-biomarker-identity.md) value model: the schema represents censored and qualitative results faithfully, and the tool surface must not lose that fidelity in serialization — otherwise the AI client re-introduces the bugs the schema fixed (architecture review 2026-07-06, item 3.G). Written against the current MCP spec (2025-11-25 revision at time of writing); the tool-annotation and structured-output surfaces it relies on are unchanged in the 2026-07-28 release candidate.
+
+1. **Value fidelity ([ADR-0030](adr/0030-biomarker-identity.md)).** Every lab value renders as a display string that preserves the comparator (`"<0.1"`, never the bare numeric `0.1`); qualitative results render their `value_text`. The UCUM unit ([ADR-0031](adr/0031-units-and-ucum.md)) and the applicable reference range with its framework ([ADR-0005](adr/0005-reference-range-frameworks.md)) accompany every value — the AI client never guesses units or ranges. Tools declare an `outputSchema` and return `structuredContent` carrying the explicit triple (`value_num`, `comparator`, `value_text`) alongside the display string, so a client consuming structured output cannot lose the censoring either. The failure this prevents: a below-detection ApoB read as a measured `0.1` is exactly the wrong number ADR-0030 exists to make unrepresentable.
+
+2. **Tool annotations.** Every tool in the default set declares `readOnlyHint: true`. Any future write-capable tool declares `readOnlyHint: false` plus honest `destructiveHint` and `idempotentHint` values. Annotations are display and gating hints for the client, never a security boundary — the MCP spec itself says clients must not trust them — so a tool's actual capability is bounded by the MCP server's token scopes ([ADR-0026](adr/0026-named-scoped-tokens.md)) regardless of what the annotation claims.
+
+3. **Pagination and row caps on every tool.** Every tool that returns rows takes a cursor and is subject to a server-enforced page cap (default 100 rows, configurable), enforced at the Core REST API — the single enforcement point, so the GUI and CLI inherit the same bound — with the MCP server passing it through. The rationale is dual: context-window hygiene, and exfiltration friction — a prompt-injected client needs many visible, auditable tool calls to dump years of data, never one.
+
+4. **Untrusted free text is shielded.** User-authored or imported free text (clinical-note `body`, intervention notes, event descriptions) is returned inside a clearly delimited data block with an instruction-shielding preamble stating that the block is data from the user's records, not instructions. The delimiter is a per-response random boundary token: a note whose text contains the closing delimiter cannot break out of the block, which a fixed delimiter cannot guarantee against exactly the adversary this rule exists for. This makes [security.md](security.md)'s "must not amplify injected instructions" requirement concrete and testable.
+
+5. **Document originals stay unexposed.** Restating [ADR-0034](adr/0034-clinical-document-storage.md): binary originals are not exposed through MCP tools by default; the queryable surface is the extracted `body` text, which is subject to rules 3 and 4 like any other tool output.
 
 ---
 
@@ -75,6 +89,8 @@ The MCP server translates AI client tool calls into Core REST API requests ([ADR
 - Related: [ADR-0012](adr/0012-job-abstraction.md) — job management endpoints
 - Related: [ADR-0015](adr/0015-data-export.md) — export endpoints
 - Related: [observability.md](observability.md) — health and metrics endpoints
+- Related: [ADR-0030](adr/0030-biomarker-identity.md) — the value model the tool output contract preserves
+- Related: [ADR-0034](adr/0034-clinical-document-storage.md) — document originals unexposed by default
 - Related: [ADR-0040](adr/0040-health-endpoint-authentication.md) — liveness exemption and the `monitor` scope
 - Related: [security.md](security.md) — authentication and input validation requirements
 - Related: [design-rationale.md](design-rationale.md) — MCP tool definitions and versioning surfaces

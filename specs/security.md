@@ -213,7 +213,7 @@ The security boundary must be clearly communicated:
 
 **The MCP server does not trust the AI client.** Tool call inputs from the AI client are validated by the Core REST API identically to any other client. The AI client is not granted elevated trust.
 
-**Prompt injection awareness.** Data retrieved from the database and returned to the AI client may contain user-authored text (clinical notes, intervention descriptions). This text could contain prompt injection attempts if the database has been compromised or if data from untrusted sources has been imported. The MCP server should not construct tool responses in ways that amplify injected instructions. The MCP server's default read-only token (ADR-0026) bounds the impact of any injected instructions to data exfiltration — they cannot mutate or delete data.
+**Prompt injection awareness.** Data retrieved from the database and returned to the AI client may contain user-authored text (clinical notes, intervention descriptions). This text could contain prompt injection attempts if the database has been compromised or if data from untrusted sources has been imported. The MCP server should not construct tool responses in ways that amplify injected instructions. This requirement is made concrete and testable by the MCP tool output contract in [api-reference.md](api-reference.md): untrusted free text is returned inside delimited, instruction-shielded data blocks with per-response random boundaries, and every tool is row-capped and paginated. The MCP server's default read-only token (ADR-0026) bounds the impact of any injected instructions to data exfiltration — they cannot mutate or delete data — and the row caps mean exfiltration requires many visible, auditable tool calls rather than one.
 
 ---
 

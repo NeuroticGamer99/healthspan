@@ -65,7 +65,7 @@ Moderate subtlety (evasion reasoning, window-capacity reasoning) but the shapes 
 
 ### T2.3 — MCP tool output contract (review 3.G)
 
-- [ ] Specify: censored values as strings with units and ranges, qualitative as text, tool annotations (`readOnlyHint`), pagination/row caps on every tool, delimited untrusted free text with instruction-shielding. Lands in api-reference.md's MCP section (+ a note in security.md's prompt-injection paragraph).
+- [x] Specify: censored values as strings with units and ranges, qualitative as text, tool annotations (`readOnlyHint`), pagination/row caps on every tool, delimited untrusted free text with instruction-shielding. Lands in api-reference.md's MCP section (+ a note in security.md's prompt-injection paragraph). — *Done 2026-07-07: five-rule output contract in api-reference.md, verified against the current MCP spec (2025-11-25 published; annotation and structured-output surfaces unchanged in the 2026-07-28 RC). Additions over the review's letter, all deliberate: `outputSchema`/`structuredContent` dual channel (structured consumers must not lose the comparator either); annotations declared UX-only with scopes as the real boundary; caps enforced Core-side (GUI/CLI inherit); per-response random delimiters. security.md and testing-strategy.md updated. ADR-0034's own body-pagination note remains T3.3 (review 2.10) and will cross-reference this contract.*
 
 Needs current MCP-spec knowledge and care about the ADR-0030 value model surviving serialization — genuine design writing, not transcription.
 
