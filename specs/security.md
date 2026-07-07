@@ -70,6 +70,8 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 **Token storage.** Each client stores only its own token, in the OS keychain via `keyring` (per-client config file fallback with owner-read-only permissions for headless deployments). **No token is stored in the shared TOML config file** — a shared file is how a single token becomes every client's token.
 
+**MCP Server's two credentials.** The MCP Server holds its own read-only `mcp` token to Core *and* verifies a separate client-facing bearer that AI clients present *to it* (`hsp_mcpclient_…`). Because the MCP Server owns no database, that client-facing secret is stored hashed (`SHA-256`, verified with `compare_digest`) in the MCP Server's own keyring rather than in the `tokens` table, and is rotated with `healthspan mcp rotate-client-secret`. It is a static bearer: the MCP Server does not advertise OAuth discovery and returns a plain `401` on a missing or invalid credential ([ADR-0029](adr/0029-mcp-streamable-http.md)). See ADR-0026.
+
 **Credential tiers for plugins.** Directory-loaded plugins receive their host process's plugin-tier token via `context.api` — never a credential carrying `admin`. Package-shipped first-party plugins receive the process credential. See ADR-0026 and INV-3.
 
 **Lifecycle.** `healthspan token create | list | revoke | rotate` (admin scope; `list` shows names and scopes, never values). Revocation is immediate; there is no grace overlap.

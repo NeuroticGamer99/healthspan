@@ -71,7 +71,7 @@ Needs current MCP-spec knowledge and care about the ADR-0030 value model survivi
 
 ### T2.4 — MCP client-facing credential spec + ecosystem check (review 2.6)
 
-- [ ] Specify storage (keyring), hashing at rest, rotation command, `hsp_` format; **research** whether the target MCP clients can present static bearer headers to Streamable HTTP servers or whether OAuth pressure forces an ADR-0029 extension.
+- [x] Specify storage (keyring), hashing at rest, rotation command, `hsp_` format; **research** whether the target MCP clients can present static bearer headers to Streamable HTTP servers or whether OAuth pressure forces an ADR-0029 extension. — *Done 2026-07-07: ADR-0026 client-facing credential section fully specified — `hsp_mcpclient_<secret>` format, `SHA-256`-hashed in the MCP Server's keyring (no DB, so not the `tokens` table), `compare_digest` verify, `healthspan mcp rotate-client-secret`. Research conclusion: static bearer viable end-to-end, no ADR-0029 extension forced; the discovered risk runs the other way — advertising OAuth makes clients drop a configured static header (Claude Code #59467), so ADR-0029 now requires no-OAuth-advertisement + plain `401`. security.md and testing-strategy.md updated. Edits a Proposed ADR (0026) that feeds the T3.4 flip gate.*
 
 The research half is why this is Tier 2: the conclusion isn't known in advance.
 

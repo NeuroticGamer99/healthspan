@@ -135,7 +135,15 @@ Heavyweight job children (ADR-0012) never receive a standing credential:
 
 ## MCP Server Client-Facing Credential
 
-The MCP Server has two credential relationships: its own token to Core (`mcp`, read-only), and the credential AI clients present *to it* (per security.md, every HTTP endpoint requires auth). The client-facing credential is a separate local secret generated at init and printed once for AI-client configuration; it is not a Core token and grants nothing beyond what the MCP server itself can do — which is bounded by the `mcp` Core token. Rotating either is independent of the other.
+The MCP Server has two credential relationships: its own token to Core (`mcp`, read-only), and the credential AI clients present *to it* (per security.md, every HTTP endpoint requires auth). The second is a separate local secret; it is **not a Core token** — it appears in no `tokens` table, grants nothing on Core directly, and its capability ceiling is whatever the read-only `mcp` Core token permits. Rotating either is independent of the other.
+
+**Format:** `hsp_mcpclient_<secret>` — the `hsp_` prefix so secret scanners recognize it (parity with Core tokens), a reserved `mcpclient` name segment, and a 32-byte cryptographically random secret (base64url). It deliberately reuses the Core-token *shape* for scanner coverage while the `mcpclient` segment — never a Core token name — keeps it from being mistaken for one.
+
+**Storage — hashed at rest, in the keyring:** the MCP Server owns no database (it is a thin translator over the Core REST API, [ADR-0029](0029-mcp-streamable-http.md)), so the verifier-side record cannot live in the `tokens` table as Core tokens do. It lives in the OS keyring via `keyring` (service `healthspan`, username `mcp-client-secret`), storing **only `SHA-256(secret)`** — the same discipline as everything else. Verification hashes the presented bearer and compares with `secrets.compare_digest`. The plaintext exists only where a Core token's does: printed once at init, held thereafter solely in the AI client's own configuration. The MCP Server never stores or needs the plaintext, because it only ever verifies — the roles are inverted from a Core token (there the client keyring holds plaintext and the Core DB holds the hash; here the MCP Server is the verifier, so its keyring holds the hash and the AI-client config holds the plaintext).
+
+**Bootstrap:** `healthspan init` mints it into the MCP Server's keyring as a hash and prints the plaintext once, with paste-in guidance for the AI-client configuration (a static `Authorization: Bearer` header; see [ADR-0029](0029-mcp-streamable-http.md) for why static bearer is sufficient and OAuth is not advertised).
+
+**Rotation:** `healthspan token rotate` operates on the Core `tokens` table and cannot touch this secret. It rotates via its own command, `healthspan mcp rotate-client-secret` (below): regenerate, replace the keyring hash, print the new plaintext once, restart the MCP Server to take effect. No grace overlap, consistent with Core-token rotation.
 
 ## Lifecycle Commands
 
@@ -144,9 +152,12 @@ healthspan token create <name> --scopes read,write   Mint a named token; print o
 healthspan token list                                Names, scopes, created, last-used, status — never values
 healthspan token revoke <name>                       Immediate revocation
 healthspan token rotate <name>                       Revoke + reissue same name/scopes; update keyring if local
+healthspan mcp rotate-client-secret                  Rotate the MCP client-facing secret; print once, restart MCP Server
 ```
 
 All require `admin`. Rotation of a locally-held token (e.g. `gui`) updates the keyring entry in place; rotating `mcp` requires restarting the MCP Server to pick up the new value. There is no grace overlap — revocation is immediate; the platform is local-first and clients are restartable.
+
+`healthspan mcp rotate-client-secret` is a separate command from `token rotate` precisely because the client-facing secret is **not** a Core token (it is not in the `tokens` table); it regenerates the secret, replaces the MCP Server's keyring hash, and prints the new plaintext once, and likewise requires an MCP-Server restart.
 
 ## Auth Failure Rate Limiting and Audit Logging
 
@@ -219,3 +230,4 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - Related: [specs/security.md](../security.md) — Authentication requirements; Security Invariants
 - Extended by: [ADR-0040](0040-health-endpoint-authentication.md) — adds the `monitor` scope, the liveness-endpoint `public` exemption, and `monitor` in the `cli-admin`/`gui` defaults
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10
+- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.6 — MCP client-facing credential spec (format, hashed keyring storage, rotation command)
