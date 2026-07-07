@@ -53,7 +53,7 @@ Tests that exercise a real database and/or the REST API. Each test gets its own 
 **Coverage targets:**
 - Core REST API endpoint behavior: CRUD operations, authentication enforcement, input validation, error responses
 - Bulk import endpoint: full-batch validation, atomic transactions, dry-run mode, conflict policies (reject, skip, upsert)
-- Database migration runner: forward migration from empty database, idempotency of individual migrations, schema version tracking
+- Database migration runner: forward migration from empty database, runner-level idempotency (applied files skipped via `schema_version`), schema version tracking, connection pragma verification (`foreign_keys` off + `foreign_key_check` during migration, on at runtime — [ADR-0035](adr/0035-migration-execution-semantics.md))
 - Event bus: event publishing, SSE delivery to subscribers, event schema validation
 - Job system: submission, status transitions, progress events, cancellation
 - Audit trail (ADR-0027): **mutation-matrix test** — every repository mutation path against every data table writes exactly one `audit_log` row in the same transaction, with correct operation, row images, and provenance (actor, batch, job); a rolled-back mutation leaves no audit row; `audit_log` immutability triggers reject UPDATE and DELETE
@@ -108,9 +108,11 @@ Tests that validate the database migration system.
 
 **Coverage targets:**
 - Fresh database: all migrations apply in sequence from empty
-- Incremental: each migration applies cleanly to a database at the previous version
-- Idempotency: running `healthspan db migrate` twice produces no errors and no duplicate rows in `schema_version`
+- Incremental: each migration applies cleanly to a database at the previous version (migrations assume exact predecessor state — [ADR-0035](adr/0035-migration-execution-semantics.md))
+- Runner idempotency: running `healthspan db migrate` twice produces no errors and no duplicate rows in `schema_version` (per-file idempotent SQL is prohibited, not tested for)
 - Failure recovery: a deliberately broken migration rolls back cleanly; subsequent valid migrations still apply
+- **Mid-file atomicity ([ADR-0035](adr/0035-migration-execution-semantics.md))**: a multi-statement migration that fails partway leaves *none* of its statements applied and no `schema_version` row — this is the test that catches the driver's implicit-commit-around-DDL behavior
+- Foreign-key integrity: a migration that introduces an FK violation is rejected by the pre-commit `foreign_key_check` and rolls back entirely
 - Schema integrity: after all migrations, the database schema matches the expected table/column/index set
 
 ---

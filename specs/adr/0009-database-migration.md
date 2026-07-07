@@ -83,6 +83,7 @@ Rollback is not automated. If a migration must be reversed:
 If the database layer is extended to support PostgreSQL (ADR-0003), evaluate Alembic at that point. Alembic's multi-backend support and auto-diff generation become more valuable when the SQL dialect is no longer a single known target.
 
 ## Links
+- Extended by: [ADR-0035](0035-migration-execution-semantics.md) — replaces the runner's execution semantics (explicit transaction discipline) and the file convention's idempotency rule; corrects the `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` citation (no such SQLite syntax)
 - Related: [ADR-0003](0003-database-backend.md) — database pluggability
 - Related: [ADR-0006](0006-application-architecture.md) — CLI as the entry point for migrations
 - Related: [ADR-0008](0008-process-lifecycle.md) — migration runner invoked on startup

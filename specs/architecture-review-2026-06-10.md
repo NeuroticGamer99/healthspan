@@ -60,10 +60,10 @@ The README diagram and [ADR-0006](adr/0006-application-architecture.md) draw it 
 
 ### G. ADR-0009 cites SQLite syntax that doesn't exist
 
-- [ ] Correct: SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
-- [ ] Drop the per-file idempotency requirement — it's redundant with the runner's own `schema_version` tracking (applied files are skipped).
+- [x] Correct: SQLite has no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. — *Resolved by [ADR-0035](adr/0035-migration-execution-semantics.md): citation corrected — column additions are plain `ALTER TABLE ... ADD COLUMN`, correct precisely because each file runs exactly once against a known predecessor state.*
+- [x] Drop the per-file idempotency requirement — it's redundant with the runner's own `schema_version` tracking (applied files are skipped). — *Resolved by [ADR-0035](adr/0035-migration-execution-semantics.md): requirement dropped and inverted — defensive `IF NOT EXISTS` guards are now prohibited in migrations (sole exception: the `schema_version` bootstrap DDL), because they mask schema drift; migrations assume exact predecessor state and fail loudly.*
 
-*Deferred into item 3.F's migration ADR: dropping the idempotency requirement changes decision content in an Accepted ADR, so it needs an extending ADR — which 3.F (migration transaction discipline, pragmas) will create anyway. One ADR will extend ADR-0009 once, covering both.*
+*Deferred into item 3.F's migration ADR: dropping the idempotency requirement changes decision content in an Accepted ADR, so it needs an extending ADR — which 3.F (migration transaction discipline, pragmas) will create anyway. One ADR will extend ADR-0009 once, covering both. — Done: [ADR-0035](adr/0035-migration-execution-semantics.md).*
 
 ### H. "Cloud sync of the live file is safe" is overstated
 
@@ -180,8 +180,8 @@ Full event sourcing is the wrong trade for a single-user analytical store — ma
 ### 3.F Python specifics
 
 - [x] Verify before implementation that `sqlcipher3`/`sqlcipher3-wheels` and PySide6 publish Python 3.14 wheels on all three OSes — both are compiled, and ADR-0013/0001 depend on them; most likely forced compromise — *Verified 2026-07 (checked PyPI directly, not assumed): no compromise needed. `sqlcipher3` 0.6.2 and `sqlcipher3-wheels` 0.5.7 both ship full `cp314`/`cp314t` wheels for Windows (amd64/arm64/win32), Linux (`manylinux_2_28`), and macOS across all target architectures. `PySide6` 6.11.1 and `shiboken6` 6.11.1 ship stable-ABI (`cp310-abi3`) wheels with `requires-python = "<3.15,>=3.10"`, so 3.14 is covered by the stable ABI rather than a version-specific build. The review's "most likely forced compromise" framing does not hold as of this check. Recorded in [testing-strategy.md](testing-strategy.md)'s Cross-Platform Testing section, with a note that this is external package-maintainer state to re-verify before any future Python floor bump — not a standing platform guarantee.*
-- [ ] ADR-0009 runner: specify driver transaction discipline explicitly (`isolation_level=None`/autocommit + explicit `BEGIN IMMEDIATE`…`COMMIT`) — the stdlib-style driver's implicit transaction handling otherwise silently auto-commits between DDL statements and breaks "atomic per migration"
-- [ ] Require `PRAGMA foreign_keys=ON` per connection (off by default) and `journal_mode=WAL` as recorded decisions
+- [x] ADR-0009 runner: specify driver transaction discipline explicitly (`isolation_level=None`/autocommit + explicit `BEGIN IMMEDIATE`…`COMMIT`) — the stdlib-style driver's implicit transaction handling otherwise silently auto-commits between DDL statements and breaks "atomic per migration" — *Resolved by [ADR-0035](adr/0035-migration-execution-semantics.md): driver transaction management disabled (`isolation_level=None`, or PEP 249 `autocommit` on 3.12+ if `sqlcipher3` exposes it); runner issues explicit `BEGIN IMMEDIATE` → file SQL → `schema_version` insert → `foreign_key_check` → `COMMIT`, rollback on any failure — DDL and ledger row succeed or disappear together. Migration files restricted to transactional SQL (`VACUUM`/`journal_mode` prohibited). testing-strategy.md gains a mid-file-atomicity target that catches exactly this driver behavior.*
+- [x] Require `PRAGMA foreign_keys=ON` per connection (off by default) and `journal_mode=WAL` as recorded decisions — *Resolved by [ADR-0035](adr/0035-migration-execution-semantics.md): `foreign_keys=ON` on every runtime connection via a single shared connection factory (the migration runner is the sole documented exception — off + mandatory pre-commit `foreign_key_check`, enabling SQLite's table-rebuild procedure without weakening enforcement); `journal_mode=WAL` set once at init (persistent); `synchronous=NORMAL` also recorded as the WAL pairing with its durability tradeoff stated. ADR-0028's deferred pragma parenthetical now points at ADR-0035.*
 
 ### 3.G Testing strategy additions
 
