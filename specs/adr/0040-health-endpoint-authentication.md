@@ -51,7 +51,7 @@ Option 3 fails the same drivers from the other side: Docker and orchestrator con
 - **`200` means ready to serve**, not merely alive: for the Core Service, the database is open and queryable. This is what the launcher's startup gating and a Docker healthcheck actually need to know. `503` covers everything else; the *reason* is not disclosed.
 - **No version, no `schema_version`, no uptime, no error detail, no product name in the body.** What the endpoint leaks — a service exists on this port and is up or down — is already observable to anything that can `connect()`, and the default binding is `127.0.0.1`.
 - **O(1) and allocation-free in spirit**: the handler reports a cached readiness flag the service maintains through normal operation — never a per-request database query. An unauthenticated caller must not be able to make the key-holding process do meaningful work.
-- **Exempt from bearer-token verification, not from rate limiting**: the generic per-source-address limits still apply.
+- **Exempt from bearer-token verification, not from abuse limits**: ADR-0026's auth-failure limiter cannot apply here (there is no credential to fail), so the exempt endpoint carries a plain per-source-address request-rate cap instead.
 
 ### The detail endpoint
 

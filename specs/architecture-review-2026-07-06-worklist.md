@@ -58,8 +58,8 @@ Both ADRs still Proposed — direct edits. The remaining thought: confirm the wa
 
 ### T2.2 — Auth/event abuse hardening (reviews 2.4 + 2.5, one pass)
 
-- [ ] Rate limiter: key on (source address, token-name prefix), per-address aggregate cap, bounded max backoff, admin reset. Edit ADR-0026.
-- [ ] Event flood: payload size + per-token rate caps on `/v1/events/inbound`; partition or reserve replay-window capacity for reserved namespaces; make Automation Host `gap` reconciliation a stated requirement. Edit ADR-0011.
+- [x] Rate limiter: key on (source address, token-name prefix), per-address aggregate cap, bounded max backoff, admin reset. Edit ADR-0026. — *Done 2026-07-07: four-rule limiter in ADR-0026, anchored on failures-only throttling (valid credentials are never delayed — this is what makes the aggregate cap safe and the admin reset always reachable); 60 s max backoff default; `healthspan auth reset-limits`. security.md, ADR-0040's liveness-exemption wording, and testing-strategy.md updated to match.*
+- [x] Event flood: payload size + per-token rate caps on `/v1/events/inbound`; partition or reserve replay-window capacity for reserved namespaces; make Automation Host `gap` reconciliation a stated requirement. Edit ADR-0011. — *Done 2026-07-07: 64 KiB / 60-per-min-burst-120 caps (configurable, audited); window partitioned by origin (reserved 7,500 / inbound 2,500), chosen over reserve-a-fraction for the cleaner invariant: a flood can only ever evict other inbound events; `gap` names the lossy partition(s); reconciliation stated as a requirement in ADR-0011 and mirrored in ADR-0025's subscriber bullet; flood tests added to testing-strategy.md.*
 
 Moderate subtlety (evasion reasoning, window-capacity reasoning) but the shapes are given.
 

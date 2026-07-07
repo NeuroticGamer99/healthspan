@@ -74,7 +74,7 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 **Lifecycle.** `healthspan token create | list | revoke | rotate` (admin scope; `list` shows names and scopes, never values). Revocation is immediate; there is no grace overlap.
 
-**Rate limiting and audit.** Failed authentication attempts are rate-limited per source address with exponential backoff, including from localhost. Auth events (token *name*, endpoint, outcome — never token values, never health data) are recorded in an append-only audit log; all `admin`-scoped actions are always audited. See ADR-0026.
+**Rate limiting and audit.** Failed authentication attempts are rate-limited with bounded exponential backoff, including from localhost — keyed on (source address, advisory token-name prefix) with a per-address aggregate cap, and throttling failures only: a valid credential is never delayed, so one misconfigured client cannot lock out the other local clients (ADR-0026). Auth events (token *name*, endpoint, outcome — never token values, never health data) are recorded in an append-only audit log; all `admin`-scoped actions are always audited. See ADR-0026.
 
 **Config file permissions.** The TOML config file must be created with owner-read-only permissions (`chmod 600` equivalent). The platform should warn on startup if the config file has broader permissions.
 

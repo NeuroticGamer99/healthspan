@@ -62,14 +62,18 @@ Internal component    → bus publish            ─┘      │
 
 Adapters are configured in TOML. Inactive adapters consume no resources.
 
+**Inbound publication caps** (review item 2.5): `POST /v1/events/inbound` enforces a per-event payload size cap (default 64 KiB → `413`) and a per-token sustained rate cap (default 60 events/min, burst 120 → `429`), both configurable. Rejections are audited (ADR-0026's `auth_audit` outcomes). The caps apply to every inbound publisher, including the `automation-host` token — first-party residency does not exempt a plugin-driven publish path from flood limits.
+
 ## Delivery Guarantees and Event Replay
 
 In-process subscribers cannot miss events; SSE subscribers can — a dropped connection or a restart creates a gap. For the GUI this is cosmetic. For the Automation Host it is a correctness problem: an automation must not silently miss its trigger (ADR-0025). The SSE adapter therefore provides bounded replay:
 
 - Every event carries a monotonically increasing sequence ID (per Core Service run), sent as the SSE `id:` field
 - The Core Service retains a bounded replay window of recent events (configurable; default 10,000 events or 24 hours, whichever is smaller). The window is held in memory — events are not written to the database
+- The window is **partitioned by origin** (review item 2.5): reserved-namespace events emitted by the Core Service (`data.*`, `job.*`, `schema.*`, `plugin.*`, `system.*`, `schedule.*`) and inbound-published events (`alert.*`, `sync.*`, `external.*`) are retained in separate partitions — default split 7,500 / 2,500 of the window, each also bounded by the age limit, both configurable. Sequence IDs remain globally monotonic; replay merges the partitions in ID order. The consequence is the point: an `events`-scoped caller flooding `external.*` can evict only other inbound events, never `data.*`/`job.*` — a reconnecting Automation Host always receives its retained platform triggers, which is what keeps ADR-0025's "brief outages do not lose triggers" claim true under flood
 - On reconnect, a client sends the standard SSE `Last-Event-ID` header; the adapter replays retained events after that ID, then resumes live streaming
-- If the requested ID has already aged out of the window, the stream begins with an explicit `gap` marker event, so the subscriber knows delivery was lossy and can run reconciliation (e.g. re-query recent data via REST)
+- If the requested ID has already aged out of a partition, the stream begins with an explicit `gap` marker event naming which partition(s) were lossy, so the subscriber knows delivery was lossy and can reconcile
+- **Gap reconciliation is a requirement, not an aside:** on receiving a `gap` marker, the Automation Host must reconcile before resuming normal trigger processing — re-query recent imports and job states via REST — a requirement levied on ADR-0025's subscriber contract
 - The Automation Host persists its last-processed event ID across restarts (ADR-0025)
 
 Events are best-effort beyond the replay window. A persistent event log remains a future option if real usage shows the window is insufficient.
