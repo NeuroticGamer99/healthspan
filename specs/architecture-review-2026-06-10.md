@@ -118,8 +118,8 @@ With WAL mode (implied by `.gitignore`), a sync client snapshotting `db` + `-wal
 
 ### 2.7 Runtime pip installs need hash pinning
 
-- [ ] ADR-0024 catalog should carry sha256 hashes; loader installs with `--require-hashes` (version pins alone don't authenticate content)
-- [ ] Reorder the loader: dependency graph / cycle / conflict validation (steps 5–7) before package installation (step 4), so a plugin that will fail validation never gets its packages installed
+- [x] ADR-0024 catalog should carry sha256 hashes; loader installs with `--require-hashes` (version pins alone don't authenticate content) — *Resolved: [ADR-0036](adr/0036-plugin-package-installation-integrity.md) (Proposed, extends Accepted ADR-0024) — the catalog becomes a fully resolved hash-pinned lockfile (transitive closure included, since `--require-hashes` is all-or-nothing), generated mechanically at release time with the resolution honoring [ADR-0020](adr/0020-plugin-registry.md)'s `min_release_age_days`; hash mismatch is a hard fail; off-catalog hashes recommended (inline pip syntax) but not required, with the warning stating that version pins don't authenticate content.*
+- [x] Reorder the loader: dependency graph / cycle / conflict validation (steps 5–7) before package installation (step 4), so a plugin that will fail validation never gets its packages installed — *Resolved: ADR-0036 reorders installation after all validation and makes metadata extraction explicitly static (AST-level, no import) — a plugin that fails validation neither executes code nor installs packages.*
 
 ### 2.8 Job/import file paths are an unvalidated surface
 

@@ -88,3 +88,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0033](0033-plaintext-artifact-disposal.md) | Plaintext Artifact Disposal | Proposed |
 | [ADR-0034](0034-clinical-document-storage.md) | Clinical Document Original File Storage | Proposed |
 | [ADR-0035](0035-migration-execution-semantics.md) | Migration Execution Semantics and Connection Pragmas | Proposed |
+| [ADR-0036](0036-plugin-package-installation-integrity.md) | Plugin Package Installation Integrity | Proposed |

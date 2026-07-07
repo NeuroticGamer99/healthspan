@@ -119,6 +119,7 @@ The loader steps from ADR-0010 are extended:
 ---
 
 ## Links
+- Extended by: [ADR-0036](0036-plugin-package-installation-integrity.md) — catalog becomes a hash-pinned lockfile installed with `--require-hashes`; loader reordered to validate before installing; metadata extraction made static
 - Extends: [ADR-0010](0010-cli-plugin-model.md) — plugin architecture; this ADR adds to the interface contract without changing the core decision
 - Related: [ADR-0022](0022-semver.md) — SemVer 2.0.0 policy that `PLUGIN_VERSION` must follow
 - Related: [ADR-0023](0023-distribution-mechanism.md) — `uv tool install` environment into which `PLUGIN_PACKAGES` are installed

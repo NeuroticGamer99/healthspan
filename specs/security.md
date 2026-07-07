@@ -187,6 +187,8 @@ The security boundary must be clearly communicated:
 - Plugin authors must not store or transmit health data outside the local system without explicit user consent and documentation.
 - This boundary must be documented prominently in any user-facing plugin documentation. See ADR-0010 and ADR-0025.
 
+**Plugin package supply chain.** Catalog-governed `PLUGIN_PACKAGES` install from a hash-pinned lockfile in `--require-hashes` mode — a version pin alone does not authenticate content; the sha256 hash does. A hash mismatch is a hard failure, never a warning. The catalog is generated mechanically at release time, and that resolution honors the publication age gate ([ADR-0020](adr/0020-plugin-registry.md)) so freshly published versions cannot be locked in. Off-catalog packages are content-unauthenticated unless the declaration supplies hashes; the confirmation warning says so explicitly. The plugin loader validates every plugin (API version, dependency graph, cycles, conflicts) before installing any package, and reads declaration metadata statically — a plugin that fails validation neither executes code nor installs anything. See [ADR-0036](adr/0036-plugin-package-installation-integrity.md).
+
 ---
 
 ## Logging

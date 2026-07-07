@@ -113,7 +113,7 @@ The version of a specific service registered in the service registry. Independen
 A module-level declaration in a plugin listing pip packages it requires (e.g. `["pandas", "numpy"]`). Packages are resolved from a curated, version-locked catalog maintained by the platform. Explicit version pins or unknown packages are treated as off-catalog and require user confirmation. See [ADR-0024](adr/0024-plugin-extensions.md).
 
 **Catalog-governed package**
-A pip package declared in `PLUGIN_PACKAGES` by name only (no version pin), resolved from the platform's curated catalog at a locked version. All catalog-governed packages resolve to the same version across all plugins. See [ADR-0024](adr/0024-plugin-extensions.md).
+A pip package declared in `PLUGIN_PACKAGES` by name only (no version pin), resolved from the platform's curated catalog at a locked version. All catalog-governed packages resolve to the same version across all plugins. The catalog is a hash-pinned lockfile (full transitive closure, sha256 per artifact) generated at release time; installs run in `--require-hashes` mode. See [ADR-0024](adr/0024-plugin-extensions.md) and [ADR-0036](adr/0036-plugin-package-installation-integrity.md).
 
 ---
 

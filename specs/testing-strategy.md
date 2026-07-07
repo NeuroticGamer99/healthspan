@@ -91,10 +91,12 @@ Tests for the plugin loader and the plugin interface contract.
 
 **Coverage targets:**
 - Plugin discovery: `.py` files and packages in the plugins directory
+- Static metadata extraction ([ADR-0036](adr/0036-plugin-package-installation-integrity.md)): declarations read without importing the module — a plugin whose body raises at import time still yields its metadata during scan, and no plugin code executes before validation passes
 - Compatibility validation: API version range checking, dependency graph resolution, cycle detection
 - Load order: topological sort, providers before consumers
 - Service registry: registration, retrieval, version constraints, namespace queries
-- `PLUGIN_PACKAGES` installation: catalog-governed resolution, off-catalog warning
+- `PLUGIN_PACKAGES` installation ([ADR-0036](adr/0036-plugin-package-installation-integrity.md)): catalog-governed resolution installs the hash-pinned closure in `--require-hashes` mode; a hash mismatch hard-fails with the offending package named; off-catalog warning states that a version pin does not authenticate content
+- Validation-before-install ([ADR-0036](adr/0036-plugin-package-installation-integrity.md)): a plugin that fails API-version, cycle, or conflict validation installs **zero** packages — the reorder's observable property
 - Error handling: missing dependencies, incompatible versions, malformed plugins
 - First-party plugin loading: built-in plugins load before user plugins; user overrides work
 
