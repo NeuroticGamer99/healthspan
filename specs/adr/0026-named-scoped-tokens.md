@@ -130,7 +130,7 @@ Heavyweight job children (ADR-0012) never receive a standing credential:
 
 - At spawn, the Core Service mints a single-job token carrying the job type's declared scopes, bound to the job ID. Progress reporting goes through the dedicated `POST /v1/jobs/{id}/progress` endpoint (validated against the token's job binding); Core emits the corresponding `job.progress` events. Job children hold no generic event publication rights
 - Delivered to the child via stdin at handoff — never via command line or environment (both inspectable)
-- Expires automatically when the job reaches a terminal state (`complete`, `failed`, cancelled); also revocable with the job
+- Expires automatically when the job reaches a terminal state (`complete`, `failed`, cancelled); also revocable with the job. [ADR-0012](0012-job-abstraction.md)'s job-lifetime bounds — liveness heartbeat, wall-clock cap, and startup sweep — guarantee a hung or orphaned child still *reaches* a terminal state, so this expiry cannot be starved
 - Recorded in the `tokens` table like any token (named `job:<uuid>`), so audit logging covers job children uniformly
 
 ## MCP Server Client-Facing Credential

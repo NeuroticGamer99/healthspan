@@ -93,9 +93,11 @@ Mostly settled recommendations, but the CHECK design and the current-dose call w
 
 ### T2.7 — Job lifetime bounds (review 2.3)
 
-- [ ] Per-job-type timeout, heartbeat-or-fail via the progress endpoint, kill on timeout/cancel, startup sweep of orphaned `running` jobs, max concurrent children. Edit ADR-0012 (Proposed).
+- [x] Per-job-type timeout, heartbeat-or-fail via the progress endpoint, kill on timeout/cancel, startup sweep of orphaned `running` jobs, max concurrent children. Edit ADR-0012 (Proposed).
 
 The recommendations are nearly complete; the remaining design is default timeout values and sweep semantics.
+
+*Done 2026-07-07:* Added a **Job Lifetime Bounds** section to ADR-0012. Split the review's single "execution timeout" into a **liveness heartbeat** (15 s beat / 60 s deadline) — the load-bearing bound, fired from a *dedicated daemon thread* in the child so a CPU-bound step can't starve it into a false kill — plus an optional per-job-type **wall-clock cap** (60 min framework fallback) as a backstop against an alive-but-never-finishing job. Forced kill escalates `SIGTERM`→grace→`SIGKILL` on POSIX / forceful terminate on Windows (no graceful signal; acceptable for an already-hung target). **Startup sweep** marks non-terminal jobs (`queued`/`running`) `failed`/`interrupted` *before* accepting new submissions or minting tokens. **Token expiry is the platform-uniform correctness guarantee** — a child orphaned by a Core Service crash is neutralized when its swept job expires the token (next API call → 401); the `psutil` creation-time-guarded PID-kill is best-effort hygiene on top. Defaults per Matthew: **max 2** concurrent heavyweight children; **`psutil` adopted now** (option a) as the cross-platform creation-time guard — defensible on its 15-yr history, shared with T2.8/3.E supervision, and it means we write no Darwin-specific process code (macOS is a CI-runner target, not local — Matthew has only Windows + Linux boxes). Fan-out: review 2.3 ticked; ADR-0026 Ephemeral-Job-Tokens cross-ref (0012 guarantees terminal-state arrival — no decision-content change); one testing-strategy.md integration test; `psutil` recorded in ADR prose, **not** `pyproject.toml` (design-phase manifest is intentionally empty — no deps declared yet). Already on the T3.4 flip list (line 142/159).
 
 ### T2.8 — Launcher supervision + single-instance lock (review 3.E)
 
