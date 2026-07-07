@@ -52,7 +52,7 @@ Option 3 is disproportionate: OAuth2's machinery (flows, refresh tokens, an IdP)
 
 ## Scope Model
 
-Six flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
+Seven flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
 
 | Scope | Grants |
 |---|---|
@@ -61,6 +61,7 @@ Six flat scopes. No hierarchy, no wildcards, no resource-level granularity — s
 | `import` | Bulk import endpoints — separated from `write` because it is the mass-mutation path |
 | `events` | Event publication via `POST /v1/events/inbound`, bounded by the token's publish-namespace allowlist (see "No scope laundering through the event system" below) |
 | `jobs` | Submit and cancel jobs (`POST /v1/jobs`, `DELETE /v1/jobs/{id}`), and read job status |
+| `monitor` | `GET /v1/health/detail` and `GET /v1/metrics` — read-only operational metadata, never health data; separate from `read` so observability tooling can be granted ops visibility without health-data access ([ADR-0040](0040-health-endpoint-authentication.md)) |
 | `admin` | Token management, config mutation, migration triggers |
 
 **No scope laundering through the job system:** submitting a job requires `jobs` *plus* every scope the job type declares. An import job requires `jobs` + `import`. A token holding only `jobs` can submit only jobs whose types declare no additional scopes. The job type's required scopes are part of its registration metadata (ADR-0012).
@@ -75,7 +76,7 @@ Rule 2 also closes a safety hole specific to a health platform: a forged `alert.
 
 **Residual, accepted:** an automation whose rule explicitly triggers on `external.*` events acts with host credentials on external input — by design. The trust decision is visible in the rule definition, the triggering event is source-stamped, and the execution trace (ADR-0016) records it.
 
-Every REST route declares its required scope(s) in the route definition — enforcement is a FastAPI dependency, not per-endpoint hand-rolled checks. An authenticated request lacking a required scope receives `403` with the token *name*, the missing scope, and no echo of request content.
+Every REST route declares its required scope(s) in the route definition — enforcement is a FastAPI dependency, not per-endpoint hand-rolled checks. An authenticated request lacking a required scope receives `403` with the token *name*, the missing scope, and no echo of request content. The single sanctioned exception is the liveness endpoint, which declares an explicit **`public`** marker rather than a scope ([ADR-0040](0040-health-endpoint-authentication.md)) — an absent declaration remains a hard error, so exemption is a visible choice, never an omission.
 
 ## Default Token Set
 
@@ -83,15 +84,16 @@ Issued at first run (extends ADR-0008's first-run sequence):
 
 | Token name | Holder | Scopes |
 |---|---|---|
-| `cli-admin` | CLI (built-in commands) | `read write import events jobs admin` |
+| `cli-admin` | CLI (built-in commands) | `read write import events jobs monitor admin` |
 | `cli-plugins` | CLI (handed to directory-loaded plugins) | `read write import jobs` |
-| `gui` | GUI | `read write import jobs` |
+| `gui` | GUI | `read write import jobs monitor` |
 | `mcp` | MCP Server → Core | **`read`** |
 | `automation-host` | Automation Host | `read events jobs` (`write` opt-in) |
 | `webhook` | Inbound webhook callers | `events` |
 
 - **MCP is read-only by default.** Granting the AI client write capability is a deliberate act: the user issues a second named token (e.g. `mcp-write`) and configures the MCP server to use it. It is never a config flag that silently upgrades the existing token.
 - **Automation Host** automations that flag or annotate results need `write`; the default omits it so a fresh install's automation surface is read-and-react only.
+- **`monitor` holders:** `cli-admin` and `gui` carry `monitor` for CLI diagnostics and the GUI status page; `mcp` deliberately does not — giving the AI client ops detail (version, `schema_version`, usage metrics) is a deliberate token issuance, not a default ([ADR-0040](0040-health-endpoint-authentication.md)).
 - **Event namespaces:** tokens carrying `events` also carry a publish-namespace allowlist — `webhook`: `external.*`; `automation-host`: `alert.*`, `sync.*`, `external.*` (see the event-laundering rules above). `cli-admin` holds `events` with the non-reserved namespaces for scripting.
 - **Job children** do not appear in this table — they receive ephemeral tokens (below).
 
@@ -206,4 +208,5 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - Related: [ADR-0012](0012-job-abstraction.md) — ephemeral job-child tokens
 - Related: [ADR-0013](0013-encryption-at-rest.md) — keyring storage mechanism and platform asymmetries
 - Related: [specs/security.md](../security.md) — Authentication requirements; Security Invariants
+- Extended by: [ADR-0040](0040-health-endpoint-authentication.md) — adds the `monitor` scope, the liveness-endpoint `public` exemption, and `monitor` in the `cli-admin`/`gui` defaults
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10

@@ -2,7 +2,7 @@
 
 Execution ordering for [architecture-review-2026-07-06.md](architecture-review-2026-07-06.md), sorted by reasoning difficulty: open architecture decisions first (work these with a high-reasoning model — Fable, high thinking), bounded design work second (Fable/Opus, normal effort), mechanical edits last (Sonnet-level). Item numbers refer to the review document.
 
-**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0039, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
+**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0040, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
 
 ---
 
@@ -38,7 +38,7 @@ Why hard: these are the same design surface — the sequence between "user types
 
 ### T1.5 — Health endpoint authentication model (review 1.E)
 
-- [ ] Decide: minimal unauthenticated liveness (`200`/`503`, status word only, detail behind auth) vs. launcher/orchestrator credentials. Assign explicit scopes to `/v1/health` and `/v1/metrics` either way.
+- [x] Decide: minimal unauthenticated liveness (`200`/`503`, status word only, detail behind auth) vs. launcher/orchestrator credentials. Assign explicit scopes to `/v1/health` and `/v1/metrics` either way. — *Done 2026-07-07: new [ADR-0040](adr/0040-health-endpoint-authentication.md) — minimal unauthenticated liveness chosen (credentialed checks rejected on the ADR-0039 argv/inspectability argument: `docker inspect` and `systemctl show` would print the token); liveness declares an explicit `public` route marker; detail moves to `/v1/health/detail`; new seventh scope `monitor` gates detail + `/v1/metrics` (`cli-admin`/`gui` defaults, `mcp` excluded). ADR-0026 tables edited directly (still Proposed). See review 1.E resolution note. ADR-0040 joins the T3.4 flip list.*
 
 Why hard: it's a deliberate exception to (or credential extension of) "no endpoint is unauthenticated," and the answer must work for the launcher, Docker healthchecks, and systemd watchdogs simultaneously. Small in lines, but it's a security-posture decision that should be argued, not defaulted.
 Edits: security.md, api-reference.md, observability.md, ADR-0026 (Proposed) if a credential is chosen.
@@ -132,7 +132,7 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.4 — Governance close-out (deliberately last)
 
-- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
+- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
 - [ ] 4.B docs-consistency CI test note (generate/verify matrix tables against `HOST_LOADABLE_TYPES` and the default-token fixture) — record as a testing-strategy line item; implementation comes with the code.
 
 **Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).

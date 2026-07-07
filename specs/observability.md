@@ -6,11 +6,21 @@ Standards for health endpoints, structured logging, and metrics across all platf
 
 ## Health Endpoints
 
-Every HTTP process exposes a health endpoint. The process launcher uses these to verify that a process is ready before starting dependent processes.
+Every HTTP process exposes an **unauthenticated liveness endpoint** — the platform's only unauthenticated route ([ADR-0040](adr/0040-health-endpoint-authentication.md)). The process launcher, Docker healthchecks, and systemd watchdogs poll it without a credential to verify that a process is ready before starting dependent processes.
 
-### Core Service
+### Core Service liveness
 ```
-GET /v1/health
+GET /v1/health            (unauthenticated — declared `public`)
+```
+```
+200 {"status": "ok"}
+503 {"status": "unavailable"}
+```
+`200` means ready to serve (database open and queryable), from a cached readiness flag — never a per-request database query. The body carries a status word and nothing else: no version, no `schema_version`, no uptime, no failure reason. There is no "migration pending" state: migrations run in the launcher before the Core Service starts, and a Core Service that finds an unexpected `schema_version` at startup logs `CRITICAL` and exits rather than serving ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)).
+
+### Core Service health detail
+```
+GET /v1/health/detail     (requires: monitor scope)
 ```
 Response:
 ```json
@@ -22,16 +32,16 @@ Response:
   "uptime_seconds": 3600
 }
 ```
-Returns `200` when healthy, `503` when not ready (e.g. database unreachable). There is no "migration pending" state: migrations run in the launcher before the Core Service starts, and a Core Service that finds an unexpected `schema_version` at startup logs `CRITICAL` and exits rather than serving ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)).
+Version and `schema_version` are fingerprinting material and sit behind authentication ([ADR-0040](adr/0040-health-endpoint-authentication.md)).
 
 ### MCP Server
 ```
-GET /health
+GET /health               (unauthenticated — liveness only)
 ```
-Returns `200` when ready to accept AI client connections.
+Returns `200 {"status": "ok"}` when ready to accept AI client connections, `503` otherwise. Status word only — same rules as the Core Service liveness endpoint.
 
 ### Automation Host, other processes
-Same pattern: `GET /health` returning status and process-specific readiness indicators.
+Same pattern: unauthenticated `GET /health` returning only the status word. Process-specific readiness detail, where a process has any, belongs behind authentication.
 
 ---
 
@@ -78,7 +88,7 @@ Default: structured JSON to stdout. Each process handles its own logging. The la
 Basic request metrics are exposed by the Core Service for debugging and monitoring. Detailed metrics infrastructure is a future concern; the following are available from day one at negligible cost via FastAPI middleware.
 
 ```
-GET /v1/metrics
+GET /v1/metrics           (requires: monitor scope)
 ```
 
 Returns:
@@ -92,7 +102,7 @@ Returns:
 }
 ```
 
-No external metrics infrastructure (Prometheus, Grafana) is required or expected for personal use. The endpoint exists for ad hoc inspection and for future integration.
+No external metrics infrastructure (Prometheus, Grafana) is required or expected for personal use. The endpoint exists for ad hoc inspection and for future integration. A user-installed scraper or uptime monitor gets a dedicated token carrying only `monitor` — ops visibility without health-data access ([ADR-0040](adr/0040-health-endpoint-authentication.md)).
 
 ---
 
@@ -109,7 +119,7 @@ Enables correlating log entries across a request/response lifecycle without a fu
 
 ## Process Startup Sequence and Readiness
 
-The launcher polls each process's health endpoint after starting it, with a configurable timeout and retry count. A process that does not become healthy within the timeout is considered failed; the launcher logs the error and stops.
+The launcher polls each process's liveness endpoint after starting it, with a configurable timeout and retry count — no credential required ([ADR-0040](adr/0040-health-endpoint-authentication.md)). A process that does not become healthy within the timeout is considered failed; the launcher logs the error and stops.
 
 Startup order (enforced by launcher):
 0. Launcher pre-step ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)): collect passphrase, derive key, run any pending migrations with exclusive database access, close the connection and discard the key
@@ -125,5 +135,6 @@ This order is determined by health endpoint readiness, not fixed sleep intervals
 ## Links
 - Related: [ADR-0008](adr/0008-process-lifecycle.md) — process lifecycle and launcher behavior
 - Related: [ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md) — startup sequence: launcher-owned migrations, passphrase handoff, Core Service schema check
+- Related: [ADR-0040](adr/0040-health-endpoint-authentication.md) — unauthenticated liveness exemption; `monitor` scope for health detail and metrics
 - Related: [ADR-0025](adr/0025-plugin-host-process-matrix.md) — the Automation Host, the fourth supervised process; there is no Import Pipeline daemon (imports run as jobs, [ADR-0012](adr/0012-job-abstraction.md))
 - Related: [security.md](security.md) — health data logging prohibition

@@ -8,7 +8,7 @@ Design-time specification of the Core REST API surface. This document consolidat
 
 **Base URL:** All endpoints are prefixed with `/v1/`. The version prefix is applied from the first endpoint (see [design-rationale.md](design-rationale.md), versioning surfaces).
 
-**Authentication:** Every endpoint requires a valid `Authorization: Bearer <token>` header. No endpoint is unauthenticated, including health and metrics endpoints. See [security.md](security.md).
+**Authentication:** Every endpoint requires a valid `Authorization: Bearer <token>` header and declares a required scope ([ADR-0026](adr/0026-named-scoped-tokens.md)), with one exemption: the liveness endpoint `GET /v1/health` is unauthenticated and returns only a status word, so the launcher and container healthchecks can poll readiness without a credential ([ADR-0040](adr/0040-health-endpoint-authentication.md)). Detailed health and metrics are authenticated (`monitor` scope). See [security.md](security.md).
 
 **Content type:** `application/json` for request and response bodies unless otherwise noted.
 
@@ -44,9 +44,13 @@ Defined in [ADR-0011](adr/0011-event-bus.md). SSE event stream for server-push n
 *Endpoints TBD during implementation.*
 
 ### Health and metrics
-Defined in [observability.md](observability.md). Process health checks and basic request metrics.
+Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-endpoint-authentication.md).
 
-*Endpoints TBD during implementation.*
+| Endpoint | Auth |
+|---|---|
+| `GET /v1/health` | none (`public`) — liveness only: `200`/`503` and a status word |
+| `GET /v1/health/detail` | `monitor` — version, `schema_version`, `db_connected`, uptime |
+| `GET /v1/metrics` | `monitor` — request counts, status histogram, job counts |
 
 ### Reference data
 Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.
@@ -71,5 +75,6 @@ The MCP server translates AI client tool calls into Core REST API requests ([ADR
 - Related: [ADR-0012](adr/0012-job-abstraction.md) — job management endpoints
 - Related: [ADR-0015](adr/0015-data-export.md) — export endpoints
 - Related: [observability.md](observability.md) — health and metrics endpoints
+- Related: [ADR-0040](adr/0040-health-endpoint-authentication.md) — liveness exemption and the `monitor` scope
 - Related: [security.md](security.md) — authentication and input validation requirements
 - Related: [design-rationale.md](design-rationale.md) — MCP tool definitions and versioning surfaces
