@@ -93,3 +93,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0038](0038-backup-execution-and-verification.md) | Backup Execution and Verification | Proposed |
 | [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) | Startup Sequence — Migration Ownership and Passphrase Handoff | Proposed |
 | [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — Liveness Exemption and Monitor Scope | Proposed |
+| [ADR-0041](0041-clinical-document-fts.md) | Clinical Document Full-Text Search | Proposed |

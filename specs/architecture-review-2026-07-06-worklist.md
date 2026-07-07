@@ -87,7 +87,9 @@ Mostly settled recommendations, but the CHECK design and the current-dose call w
 
 ### T2.6 — Clinical-document search: FTS5 decision (review 3.D)
 
-- [ ] Resolve the open-questions.md entry as FTS5 external-content over `body`; note encryption inheritance, trigger mechanics, and embeddings as a future plugin layer inside the boundary. Short ADR or a decided open-questions entry.
+- [x] Resolve the open-questions.md entry as FTS5 external-content over `body`; note encryption inheritance, trigger mechanics, and embeddings as a future plugin layer inside the boundary. Short ADR or a decided open-questions entry.
+
+*Done 2026-07-07: chose the short-ADR path — new [ADR-0041](adr/0041-clinical-document-fts.md), FTS5 external-content over `body`, tokenizer `porter unicode61 remove_diacritics 2` (recall-favoring for AI narrative search; rebuild-reversible, so tunable not load-bearing). Encryption inherited (FTS shadow tables are ordinary SQLCipher-encrypted tables); INSERT/UPDATE/DELETE sync triggers ship in migration 0001 with the documents table. The careful pass named the ADR-0027 interaction the review left implicit: a corrected note leaves both bodies in the table, so the index covers all rows and current-state is filtered at query time via a `superseded_by IS NULL` join — triggers stay mechanical instead of learning supersession. Embeddings/semantic search kept as a future additive `analysis`/`query` plugin layer inside the encryption boundary, not a replacement. Fan-out: README index, open-questions.md resolved, data-model.md `body` bullet + AI/MCP-value line, testing-strategy.md FTS-sync test, review 3.D ticked. ADR-0041 (Proposed) added to the T3.4 flip list below.*
 
 ### T2.7 — Job lifetime bounds (review 2.3)
 
@@ -134,7 +136,7 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.4 — Governance close-out (deliberately last)
 
-- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
+- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040, 0041 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
 - [ ] 4.B docs-consistency CI test note (generate/verify matrix tables against `HOST_LOADABLE_TYPES` and the default-token fixture) — record as a testing-strategy line item; implementation comes with the code.
 
 **Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).

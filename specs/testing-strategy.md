@@ -152,6 +152,7 @@ Tests that validate the database migration system.
 - Foreign-key integrity: a migration that introduces an FK violation is rejected by the pre-commit `foreign_key_check` and rolls back entirely
 - Schema integrity: after all migrations, the database schema matches the expected table/column/index set
 - Data-integrity constraints (migration 0001): a `STRICT` table rejects a wrong-typed value (e.g. a non-numeric string into a `REAL` column); the result value-model `CHECK` constraints reject their forbidden shapes — a row with neither `value_num` nor `value_text`, a `comparator` set while `value_num` is NULL, and an out-of-domain `comparator` ([ADR-0030](adr/0030-biomarker-identity.md)); `framework_ranges` uniqueness holds, including the partial index that forbids two `effective_date IS NULL` rows for the same `(framework_id, biomarker_id)` ([ADR-0005](adr/0005-reference-range-frameworks.md))
+- Clinical-document FTS sync (migration 0001, [ADR-0041](adr/0041-clinical-document-fts.md)): inserting, updating, and deleting a `clinical_documents` row keeps `clinical_documents_fts` in step via its triggers (a `MATCH` finds the new/updated body and no longer finds a deleted or pre-update one); a supersession correction leaves both bodies indexed but a current-filtered query (`MATCH … JOIN … WHERE superseded_by IS NULL`) returns only the superseding row; the `'rebuild'` command reproduces the index identically from the content table
 
 ---
 
