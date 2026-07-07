@@ -80,7 +80,7 @@ When the GUI merely *attaches* to a running Core Service — the common case —
 
 The launcher (and a GUI parent) must not retain the passphrase after handoff: the buffer is overwritten and released once the receiving process has read it. This is best-effort by the same honest standard as ADR-0028's `SecretStr` discipline — Python cannot guarantee zeroization (interned copies, allocator behavior), and Qt string widgets carry the same caveat; the threat model already concedes same-user memory access. Holding the passphrase as `bytes`/`bytearray` rather than `str` wherever practical is the implementation norm.
 
-**Constraint on future supervision (T2.8):** dropping the launcher's copy is possible *because* ADR-0008's launcher does not auto-restart crashed children. A future supervisor that restarts Core Service must either re-prompt, direct users to full auto-unlock mode, or explicitly decide to retain the passphrase — that tension belongs to the supervision decision and is named here so it cannot be resolved by accident.
+**Constraint on future supervision (T2.8):** dropping the launcher's copy is possible *because* ADR-0008's launcher does not auto-restart crashed children. A future supervisor that restarts Core Service must either re-prompt, direct users to full auto-unlock mode, or explicitly decide to retain the passphrase — that tension belongs to the supervision decision and is named here so it cannot be resolved by accident. *Resolved by [ADR-0042](0042-process-supervision-and-single-instance-locking.md): the supervisor restarts Core Service unattended only in full-auto-unlock mode (Core re-derives from the keychain); in interactive mode it re-prompts or brings the stack down rather than retaining the passphrase — so the launcher still drops its copy after handoff.*
 
 ### Positive Consequences
 - One coherent startup story: prompt → launcher derives → migrates (exclusive access, ADR-0035's argument now literally true) → discards key → Core derives and serves
@@ -122,5 +122,6 @@ The launcher (and a GUI parent) must not retain the passphrase after handoff: th
 - Related: [ADR-0035](0035-migration-execution-semantics.md) — the exclusive-access premise this ADR makes definitive
 - Related: [ADR-0013](0013-encryption-at-rest.md) — key model, full-auto-unlock mode, Docker secret sketch formalized here
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — the stdin-not-argv/env precedent for job tokens
+- Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — resolves the "Constraint on future supervision (T2.8)" named above; supervision restarts the key-holder unattended only in full-auto-unlock mode, so this ADR's drop-after-handoff decision stands
 - Related: [specs/observability.md](../observability.md) — startup order corrected; "migration pending" 503 removed
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), items 1.C and 2.2

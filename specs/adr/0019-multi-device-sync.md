@@ -28,7 +28,7 @@ The recommended near-term approach for multi-device use:
    - A mechanism to transfer the database between machines: restore from the latest synced backup, never by copying the live file
    - Version history (most sync services retain deleted/overwritten versions)
 
-3. **Single-writer enforcement.** Only one Core Service instance may hold the write connection to the live database file at a time; that file stays local to the machine running Core Service and is never itself a sync target. Core Service writes a lock file alongside the database to detect a second instance attempting to open it. Moving the active database to a new machine is a restore operation — stop Core Service, transfer the latest backup (via sync or manual copy), restore it as the new live file, start Core Service there.
+3. **Single-writer enforcement.** Only one Core Service instance may hold the write connection to the live database file at a time; that file stays local to the machine running Core Service and is never itself a sync target. Core Service enforces this locally by holding an **OS advisory lock** on a sentinel file alongside the database for its entire process lifetime ([ADR-0042](0042-process-supervision-and-single-instance-locking.md)) — a second instance attempting to start fails to acquire the lock and refuses. The kernel releases the lock when the holder exits, so a crash or power loss cannot leave a stale lock that blocks the next legitimate start. Moving the active database to a new machine is a restore operation — stop Core Service, transfer the latest backup (via sync or manual copy), restore it as the new live file, start Core Service there.
 
 4. **Backup is the only sync-safe artifact.** The `backup.database` job — and, offline, `healthspan db backup` — produces a checkpointed, verified, encrypted backup file (ADR-0013, [ADR-0038](0038-backup-execution-and-verification.md)) that is safe to sync continuously. The live database file is never safe to sync while Core Service may be writing to it, regardless of encryption.
 
@@ -49,4 +49,5 @@ TBD — deferred for multi-master. Near-term recommendation is single-writer, wi
 - Related: [ADR-0013](0013-encryption-at-rest.md) — encrypted file is cloud-safe from a confidentiality standpoint; hot backups are the sync-safe artifact
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — persistent connection held for the life of Core Service; the live file is under active write at any time it runs
 - Related: [ADR-0038](0038-backup-execution-and-verification.md) — how the sync-safe artifact is actually produced and verified
+- Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — the OS advisory lock that enforces this ADR's single-writer rule locally, replacing the plain lock file
 - Related: [specs/security.md](../security.md) — Trust Model section; storage layer is zero-knowledge

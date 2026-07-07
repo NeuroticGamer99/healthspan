@@ -253,5 +253,6 @@ Conforming edits required by this ADR (all target documents are Proposed or free
 - Extends: [ADR-0006](0006-application-architecture.md) — process isolation and the micro-kernel principle; replaces the Import Pipeline daemon in the process roster with the Automation Host
 - Related: [ADR-0020](0020-plugin-registry.md) — trust tiers as the future relaxation path
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — named scoped tokens; per-host credentials and credential tiers
+- Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — supplies the restart-with-backoff mechanism that makes this ADR's "supervised resident process" language honest for the Automation Host
 - Related: [specs/security.md](../security.md) — Security Invariants
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.A and 3.H

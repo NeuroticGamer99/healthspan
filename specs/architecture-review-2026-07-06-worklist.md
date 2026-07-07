@@ -101,9 +101,11 @@ The recommendations are nearly complete; the remaining design is default timeout
 
 ### T2.8 — Launcher supervision + single-instance lock (review 3.E)
 
-- [ ] Restart-with-backoff for Core Service and Automation Host (or explicitly demote "supervised" and document systemd as the reliability path); replace ADR-0019's lock file with an OS advisory lock held for process lifetime.
+- [x] Restart-with-backoff for Core Service and Automation Host (or explicitly demote "supervised" and document systemd as the reliability path); replace ADR-0019's lock file with an OS advisory lock held for process lifetime.
 
 Constraint from ADR-0039 (T1.4): the launcher drops its passphrase copy after handoff *because* it never auto-restarts Core Service. Restart-with-backoff must decide re-prompt vs. retain vs. directing users to full auto-unlock — explicitly, not by accident.
+
+*Done 2026-07-07:* New **[ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)** (Proposed), extending Accepted ADR-0008 (precedent: ADR-0039) rather than editing it. The unlocking insight: **only Core Service holds the key (INV-1)** — the Automation Host and MCP Server are keyless REST clients — so supervision splits by key custody, and the review's "restart-with-backoff *or* downgrade the language" becomes *both, where each is honest*. **Keyless processes** get real restart-with-backoff (base 1 s, ×2, cap 30 s), a `system.*` event per restart, and a crash-loop circuit breaker (5 restarts / rolling 60 s → declare failed, emit, stop, degrade) — this makes ADR-0025's "supervised resident process" claim true. **Core Service** auto-restart is **gated on unlock mode**: full-auto-unlock → launcher restarts it (Core re-derives from the keychain, no passphrase in the launcher); interactive mode → **no silent restart and no retained passphrase** (surface loudly + re-prompt if a TTY/GUI is attached, else bring the stack down), with full-auto-unlock/OS service managers documented as the zero-touch path. That chooses ADR-0039's "direct to full-auto-unlock" branch over "retain the passphrase," **resolving its parked T2.8 constraint without reversing the drop-after-handoff decision**. Single-instance: ADR-0019's lock file → **OS advisory lock** (`fcntl`/`msvcrt` on `<db>.lock`) held for process lifetime; kernel-released on death so it **cannot go stale**, no check-then-create race. Matthew's approved calls: (1) new ADR-0042 over editing existing; (2) gate Core restart on unlock mode, no passphrase retention; (3) backoff 1 s/×2/30 s, break at 5/60 s; (4) stdlib `fcntl`/`msvcrt`, no new lock dependency (`psutil`, already adopted in T2.7, only enriches the "already running (PID …)" diagnostic — the kernel lock is the correctness guarantee, mirroring ADR-0012); (5) sentinel at `<db>.lock` alongside the DB. Launcher holds the lock during the sequential migration phase and releases before Core Service acquires it (ADR-0039), so they never contend. Fan-out: ADR-0008 nav link (permitted Accepted-ADR edit); ADR-0025 + ADR-0039 + ADR-0019 pointer edits (0039's parked constraint marked resolved); README index; review 3.E ticked; two testing-strategy integration tests (supervision + advisory lock, the latter asserted on Windows/POSIX runners for stale-free release). **ADR-0042 added to the T3.4 flip list below.**
 
 ---
 
@@ -138,10 +140,10 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.4 — Governance close-out (deliberately last)
 
-- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040, 0041 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
+- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038, 0039, 0040, 0041, 0042 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
 - [ ] 4.B docs-consistency CI test note (generate/verify matrix tables against `HOST_LOADABLE_TYPES` and the default-token fixture) — record as a testing-strategy line item; implementation comes with the code.
 
-**Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).
+**Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7, T2.8).
 
 ---
 
@@ -158,5 +160,5 @@ T1.4 (startup flow) ──→ T3.2 observability fixes
 T1.1 (audit granularity) ──→ parked 3.F (CGM)
 T2.3 (tool contract) ──→ T3.3 ADR-0034 note
 T2.8 (supervision) ──→ T3.4 ADR-0019 status decision
-All Proposed-ADR edits (T1.1–T1.5, T2.1, T2.2, T2.4, T2.7) ──→ T3.4 (acceptance flip)
+All Proposed-ADR edits (T1.1–T1.5, T2.1, T2.2, T2.4, T2.7, T2.8) ──→ T3.4 (acceptance flip)
 ```
