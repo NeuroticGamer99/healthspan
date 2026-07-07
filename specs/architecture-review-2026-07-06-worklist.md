@@ -2,7 +2,7 @@
 
 Execution ordering for [architecture-review-2026-07-06.md](architecture-review-2026-07-06.md), sorted by reasoning difficulty: open architecture decisions first (work these with a high-reasoning model — Fable, high thinking), bounded design work second (Fable/Opus, normal effort), mechanical edits last (Sonnet-level). Item numbers refer to the review document.
 
-**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0037, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
+**Global sequencing rule:** every task that edits a still-**Proposed** ADR (0005, 0011, 0012, 0025, 0026, 0027, 0028, 0030, 0031, 0033–0038, plus 0015/0019) must land **before** the batch acceptance flip (4.A). While Proposed, these are direct edits; after acceptance, the same change costs a full extension ADR under governance. This is why 4.A is deliberately last despite being mechanically trivial.
 
 ---
 
@@ -25,7 +25,7 @@ Why hard: it's a structural decision every endpoint, the SSE stream, blob stream
 
 ### T1.3 — Scheduled backup execution locus + routine verification (review 2.1)
 
-- [ ] Specify where scheduled backups run (recommend: first-party lightweight job inside Core Service on a worker thread, scheduler-triggered, admin endpoint for on-demand; CLI `db backup` stays the offline path) and make verification part of every backup.
+- [x] Specify where scheduled backups run (recommend: first-party lightweight job inside Core Service on a worker thread, scheduler-triggered, admin endpoint for on-demand; CLI `db backup` stays the offline path) and make verification part of every backup. — *Done 2026-07-07: new [ADR-0038](adr/0038-backup-execution-and-verification.md) — `backup.database` first-party lightweight job on a dedicated worker thread, Core-internal scheduler + on-demand via `POST /v1/jobs` (admin scope, no new endpoint), verify-then-publish (full `integrity_check`, atomic rename, sidecar alongside, failed backups never prune), CLI `db backup` refuses while Core Service runs; ADR-0012 lightweight wording corrected per ADR-0037; see review 2.1 resolution notes. ADR-0038 joins the T3.4 flip list.*
 
 Why hard: the current design literally has no process that can run them (children never get the key; Automation Host has no key; CLI needs a human). Must reconcile with INV-1 wording (T3.1), ADR-0019's sync story, and the `.keyparams` sidecar copy requirement. Depends on T1.2 (threading).
 Edits: ADR-0019 (Proposed), ADR-0012 or a new backup section, security.md.
@@ -130,7 +130,7 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.4 — Governance close-out (deliberately last)
 
-- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
+- [ ] 4.A batch acceptance flip: 0005, 0011, 0012, 0025, 0026, 0027, 0028, 0029, 0030, 0033, 0034, 0035, 0036, 0037, 0038 → Accepted (+ index; 0031 stays Proposed pending the conversion-engine sub-decision; 0032 stays stub; 0019 per T2.8 outcome). Update README's "designed, not final" caveats.
 - [ ] 4.B docs-consistency CI test note (generate/verify matrix tables against `HOST_LOADABLE_TYPES` and the default-token fixture) — record as a testing-strategy line item; implementation comes with the code.
 
 **Gate:** T3.4 runs only after every Tier 1/Tier 2 task that edits a Proposed ADR has landed (T1.1, T1.2, T1.3, T1.4, T1.5, T2.1, T2.2, T2.4, T2.7).

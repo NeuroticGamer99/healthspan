@@ -90,3 +90,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0035](0035-migration-execution-semantics.md) | Migration Execution Semantics and Connection Pragmas | Proposed |
 | [ADR-0036](0036-plugin-package-installation-integrity.md) | Plugin Package Installation Integrity | Proposed |
 | [ADR-0037](0037-core-service-concurrency-and-driver.md) | Core Service Concurrency Model and Database Driver Choice | Proposed |
+| [ADR-0038](0038-backup-execution-and-verification.md) | Backup Execution and Verification | Proposed |

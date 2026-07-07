@@ -92,7 +92,7 @@ Jobs older than a configurable retention period are pruned automatically.
 
 ## Execution Model
 
-**Lightweight jobs** (small internal operations) — asyncio tasks within the Core Service process. Low overhead, immediate scheduling. Restricted to **first-party internal handlers** shipped in the `healthspan` package: plugin-provided handler code never executes in the Core Service process (ADR-0025, INV-2).
+**Lightweight jobs** (small internal operations) — run within the Core Service process. Low overhead, immediate scheduling. Restricted to **first-party internal handlers** shipped in the `healthspan` package: plugin-provided handler code never executes in the Core Service process (ADR-0025, INV-2). *Lightweight* means in-process and first-party, **not** on-the-event-loop: the job is coordinated as an asyncio task, but any blocking work — database access above all — goes through [ADR-0037](0037-core-service-concurrency-and-driver.md)'s threadpool bridge (or a dedicated worker thread for minutes-long work that would monopolize a request-pool slot). The canonical example is the `backup.database` job ([ADR-0038](0038-backup-execution-and-verification.md)): in-process because only Core Service holds the key, on a dedicated worker thread because the copy and verification block for minutes.
 
 **Heavyweight jobs** (large backfills, intensive computation, and **all plugin-provided handlers**) — separate processes spawned by the Core Service:
 
@@ -152,6 +152,7 @@ Not all jobs are cancellable. A job handler declares whether it supports cancell
 ## Links
 - Constrained by: [ADR-0025](0025-plugin-host-process-matrix.md) — plugin-provided handlers never execute in the Core Service process; children are spawned, never forked
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — ephemeral single-job tokens; job submission requires the job type's declared scopes
+- Extended by: [ADR-0038](0038-backup-execution-and-verification.md) — corrects the lightweight threading definition post-ADR-0037; adds the `backup.database` first-party lightweight job
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation
 - Related: [ADR-0011](0011-event-bus.md) — job events flow through the event bus
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system; ad-hoc local imports upload content through it rather than passing server-side paths

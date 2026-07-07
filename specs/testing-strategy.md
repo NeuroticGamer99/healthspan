@@ -86,6 +86,7 @@ Tests that exercise a real database and/or the REST API. Each test gets its own 
 - Corrections (ADR-0027): value correction inserts the new row, sets `superseded_by`, and emits `data.corrected`; correction chains resolve correctly through `*_current` views; supersession-chain rows are not deletable; hard delete preserves the full row image in `audit_log` and emits `data.deleted`
 - Health and metrics endpoints
 - Concurrency model (ADR-0037): **event-loop liveness contract** — the SSE heartbeat keeps flowing while a deliberately slow query occupies a worker thread (proves the driver is never called on the event loop); **thread affinity** — repository connections are thread-local and `check_same_thread=True` rejects cross-thread use; a write colliding with a held write lock waits out `busy_timeout` and surfaces as 503 rather than an immediate failure
+- Backup pipeline (ADR-0038): **verification gate** — a backup whose copy is corrupted before verification fails the job, leaves no file under a final name in the destination directory, and triggers no retention pruning; a successful run publishes database + `.keyparams` sidecar atomically and prunes oldest-first to the retention count; **contention** — a write committed mid-backup still yields a backup that passes full verification (restart semantics); single-flight — submitting `backup.database` while one runs returns the running job's ID
 
 ### Plugin tests
 

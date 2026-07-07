@@ -23,14 +23,14 @@ The recommended near-term approach for multi-device use:
 
 1. **One active Core Service at a time.** Only one machine runs the Core Service and holds a write connection to the database. Other devices read via the Core REST API over the LAN/VPN, or wait until the primary machine is accessible.
 
-2. **Sync backup output only, never the live database file.** The live `db` file (plus its WAL-mode `-wal`/`-shm` companions) must not be placed in Dropbox, iCloud Drive, OneDrive, or any similar sync service — a sync client can capture it mid-write and deliver a torn, unrecoverable copy on the receiving machine. Instead, a scheduled `healthspan db backup` writes a checkpointed, self-consistent, encrypted snapshot to a designated backup directory; that directory — and only that directory — is what gets synced. Cloud sync of backup output provides:
+2. **Sync backup output only, never the live database file.** The live `db` file (plus its WAL-mode `-wal`/`-shm` companions) must not be placed in Dropbox, iCloud Drive, OneDrive, or any similar sync service — a sync client can capture it mid-write and deliver a torn, unrecoverable copy on the receiving machine. Instead, the scheduled in-service `backup.database` job ([ADR-0038](0038-backup-execution-and-verification.md)) writes a checkpointed, self-consistent, **verified**, encrypted snapshot to a designated backup directory, published atomically so a sync client never observes a partial or unverified file; that directory — and only that directory — is what gets synced. (`healthspan db backup` is the offline/manual path, for use while Core Service is stopped.) Cloud sync of backup output provides:
    - Continuous off-site backup (the cloud provider cannot read the ciphertext, and each synced file is internally consistent)
    - A mechanism to transfer the database between machines: restore from the latest synced backup, never by copying the live file
    - Version history (most sync services retain deleted/overwritten versions)
 
 3. **Single-writer enforcement.** Only one Core Service instance may hold the write connection to the live database file at a time; that file stays local to the machine running Core Service and is never itself a sync target. Core Service writes a lock file alongside the database to detect a second instance attempting to open it. Moving the active database to a new machine is a restore operation — stop Core Service, transfer the latest backup (via sync or manual copy), restore it as the new live file, start Core Service there.
 
-4. **Backup is the only sync-safe artifact.** `healthspan db backup` produces a checkpointed, encrypted backup file (ADR-0013) that is safe to sync continuously. The live database file is never safe to sync while Core Service may be writing to it, regardless of encryption.
+4. **Backup is the only sync-safe artifact.** The `backup.database` job — and, offline, `healthspan db backup` — produces a checkpointed, verified, encrypted backup file (ADR-0013, [ADR-0038](0038-backup-execution-and-verification.md)) that is safe to sync continuously. The live database file is never safe to sync while Core Service may be writing to it, regardless of encryption.
 
 ## Future Approach: Multi-Master Sync
 
@@ -48,4 +48,5 @@ TBD — deferred for multi-master. Near-term recommendation is single-writer, wi
 - Related: [ADR-0008](0008-process-lifecycle.md) — Docker Compose deployment supports LAN access
 - Related: [ADR-0013](0013-encryption-at-rest.md) — encrypted file is cloud-safe from a confidentiality standpoint; hot backups are the sync-safe artifact
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — persistent connection held for the life of Core Service; the live file is under active write at any time it runs
+- Related: [ADR-0038](0038-backup-execution-and-verification.md) — how the sync-safe artifact is actually produced and verified
 - Related: [specs/security.md](../security.md) — Trust Model section; storage layer is zero-knowledge

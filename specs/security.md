@@ -109,6 +109,8 @@ The database file contains sensitive personal health data and must be encrypted.
 
 **Rotation** ([ADR-0028](adr/0028-key-derivation-and-rotation.md)): `healthspan keys change-passphrase` and `healthspan keys rotate-secret-key` rekey the database in place after taking a mandatory verified backup. Rotation is not retroactive — old backups open only with the credentials in force when they were made. Secret-key rotation invalidates all previously printed Recovery Kits.
 
+**Backups** ([ADR-0038](adr/0038-backup-execution-and-verification.md)): scheduled backups run *inside* Core Service — the only process holding the key (INV-1) — as the first-party `backup.database` job on a dedicated worker thread; on-demand runs require `admin` scope. Every backup is verified (opens with the current key, `PRAGMA integrity_check`, `schema_version` match) and published atomically with its `.keyparams` sidecar before a sync client can see it; a backup that fails verification is deleted and the job fails loudly. `healthspan db backup` is the offline path and refuses to run while Core Service is up — the same exclusive-access discipline as the rotation commands.
+
 **Platform note:** under the `uv tool install` distribution (ADR-0023), the OS keychain client is the Python interpreter — on every platform, including macOS, same-user code can access the stored secret key without a prompt. The passphrase (never stored, standard mode) is what keychain compromise alone does not yield. See ADR-0028 for the correction of ADR-0013's macOS per-app ACL claim.
 
 **The encryption key must never be:**
@@ -141,7 +143,7 @@ This applies to: import staging files, export staging files, database migration 
 
 **Parameterized queries only.** No SQL statement in the codebase may be constructed by string interpolation or concatenation of user-supplied values. All user input reaches the database exclusively through parameterized query placeholders. This is enforced by code review convention and, where possible, by linting.
 
-**Single database owner.** Only the Core Service process holds a runtime database connection. The CLI holds a connection only for migrations and backup, and only when those subcommands are explicitly invoked. No other process accesses the database directly.
+**Single database owner.** Only the Core Service process holds a runtime database connection. The CLI holds a connection only for migrations, backup, and key rotation — only when those subcommands are explicitly invoked, and never while Core Service is running (the `db backup` and `keys` commands refuse to start against a live service — [ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0028](adr/0028-key-derivation-and-rotation.md)). No other process accesses the database directly, and no two processes hold connections to the live file at the same time.
 
 **Database file permissions.** The SQLite file must be created with owner-read-write-only permissions (`chmod 600` equivalent). The platform should warn on startup if the database file has broader permissions.
 
