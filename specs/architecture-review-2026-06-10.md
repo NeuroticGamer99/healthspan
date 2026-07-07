@@ -185,8 +185,8 @@ Full event sourcing is the wrong trade for a single-user analytical store — ma
 
 ### 3.G Testing strategy additions
 
-- [ ] Property-based testing (Hypothesis) for the hardest pure-logic targets: unit conversion, timezone quadruple round-trips, Argon2id determinism
-- [ ] CI secret-scanning/log-grep gate to mechanize the "no health values in logs" requirement that [testing-strategy.md](testing-strategy.md) already sketches
+- [x] Property-based testing (Hypothesis) for the hardest pure-logic targets: unit conversion, timezone quadruple round-trips, Argon2id determinism — *Resolved: [testing-strategy.md](testing-strategy.md) gains a Property-based tests layer (Hypothesis, `dev`/`ci` settings profiles) with named properties for all three targets; the unit-conversion suite is engine-agnostic and doubles as the acceptance harness for [ADR-0031](adr/0031-units-and-ucum.md)'s open conversion-engine sub-decision (cross-referenced there).*
+- [x] CI secret-scanning/log-grep gate to mechanize the "no health values in logs" requirement that [testing-strategy.md](testing-strategy.md) already sketches — *Resolved: new CI Gates section — mandatory log canary gate (canary rule + programmatic canary manifest in fixture design, since realistic values like `95` are un-greppable), recommended structured-log field allowlist, mandatory pinned `gitleaks` secret scan with honest scope note (catches credential patterns, not health data).*
 
 ### 3.H ADR-0020's sandboxing note deserves promotion
 

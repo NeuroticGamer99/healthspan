@@ -47,6 +47,8 @@ Two candidate paths remain, to be decided in a follow-up (this ADR stays Propose
 
 Either path preserves the stored-as-UCUM decision above; they differ only in the engine behind normalization.
 
+The property-based conversion suite in [testing-strategy.md](../testing-strategy.md) is the acceptance harness for this sub-decision: its properties (identity, round-trip, composition, order preservation, molar conversions with mandatory biomarker context) are written against the internal units-module API, and whichever engine is chosen must pass the suite unchanged.
+
 ### Positive Consequences
 - Units are standard and machine-parseable from migration 0001; the safety bug in [ADR-0005](0005-reference-range-frameworks.md) is structurally closed
 - Aligns result units with FHIR `Quantity` and with [ADR-0030](0030-biomarker-identity.md)/[ADR-0018](0018-fhir-interoperability.md) at no extra cost
@@ -72,4 +74,5 @@ Either path preserves the stored-as-UCUM decision above; they differ only in the
 - Related: [ADR-0018](0018-fhir-interoperability.md) — UCUM is FHIR's `Quantity.code` system
 - Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — method-variant LOINC codes can carry different reported units
 - External: [ucumvert](https://github.com/dalito/ucumvert) (candidate engine), [pyucum / stomioka-ucum](https://github.com/stomioka/ucum) (evaluated, rejected — remote-API-dependent), [UCUM at NLM](https://ucum.nlm.nih.gov/)
+- Related: [testing-strategy.md](../testing-strategy.md) — the property-based conversion suite is the acceptance harness for the open conversion-engine sub-decision
 - Resolves review item 3.E (units portion) and supports 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)

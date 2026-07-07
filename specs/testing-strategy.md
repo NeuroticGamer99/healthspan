@@ -46,6 +46,31 @@ Two distinct sub-categories of function belong here:
 - Response shaping and serialization before API delivery
 - Computed field enrichment on domain objects (derived ratios, z-scores, delta from prior draw)
 
+### Property-based tests
+
+Hypothesis-driven tests for the pure-logic targets whose input spaces are too large for example-based tests: unit conversion, timezone handling, and key derivation. Hypothesis is a dev dependency with two registered settings profiles: `dev` (small `max_examples`, fast inner loop) and `ci` (larger example counts, `derandomize=True` so a CI failure reproduces deterministically).
+
+**Unit conversion ([ADR-0031](adr/0031-units-and-ucum.md)).** Properties are written against the internal units-module API, never against a specific engine — the suite doubles as the acceptance harness for ADR-0031's open conversion-engine sub-decision: any candidate engine (ucumvert+pint, curated table) must pass the suite unchanged. Relative tolerance for float comparisons is fixed suite-wide at `1e-9`.
+
+- *Identity*: converting a value to its own unit returns it exactly
+- *Round-trip*: A→B→A recovers the original within tolerance
+- *Composition*: A→B→C agrees with A→C within tolerance
+- *Order preservation*: x < y before conversion implies converted x < converted y (linear conversions)
+- *Molar conversions*: mg/dL ↔ mmol/L parameterized by molar mass, exercising ADR-0031's biomarker-context requirement — a molar conversion attempted without biomarker context must fail loudly, never fall back to a scalar factor
+
+**Timestamp quadruple round-trips.** Strategies: `st.timezones()` × `st.datetimes()` (stdlib `zoneinfo`), which deliberately generate DST-gap and fold-ambiguous instants.
+
+- *Reconstruction*: for any (instant, IANA zone), storing the quadruple and recomputing local time from `*_utc` + `*_local_tz` reproduces `*_local_recorded` for unambiguous times
+- *Documented edge behavior*: DST-ambiguous (fold) and nonexistent (gap) local times must match the platform's documented convention — this property forces that convention to be written down before implementation
+- *UTC fixed point*: quadruple → UTC → quadruple is stable
+
+**Argon2id determinism ([ADR-0028](adr/0028-key-derivation-and-rotation.md)).** Generalizes the known-answer and NFC unit tests above.
+
+- *Determinism*: arbitrary Unicode passphrase + secret key + parameters → identical 32-byte key on repeated derivation
+- *Normalization invariance*: generated passphrases containing combining characters derive identically in NFC and NFD forms — much stronger than fixed hand-picked forms
+
+Property tests run with minimal test-only Argon2id parameters (KDFs are deliberately slow) and Hypothesis `deadline` disabled; the known-answer vectors at production parameters remain in the plain unit tests.
+
 ### Integration tests
 
 Tests that exercise a real database and/or the REST API. Each test gets its own ephemeral SQLCipher database.
@@ -100,7 +125,7 @@ Tests that specifically validate security properties.
 - **Encryption round-trip**: create database with SQLCipher → close → reopen with correct key → data intact; reopen with wrong key → failure
 - **Rekey (ADR-0028)**: `change-passphrase` and `rotate-secret-key` flows — old credentials fail after rotation, new credentials open, data intact; the pre-rekey backup still opens with the *old* credentials; rotation refuses to run without a verified backup unless `--no-backup`; missing `.keyparams` sidecar fails with the documented recovery guidance
 - **Recovery Kit flow**: init → generate Recovery Kit → simulate new machine → restore from kit → database unlocks
-- **Health data in logs**: after a test run that exercises all endpoints, grep all log output for known test biomarker values — none should appear
+- **Health data in logs**: mechanized by the log canary gate (see [CI Gates](#ci-gates)) — all log output captured during the full test run is scanned against the canary manifest; no fixture health value may appear
 
 ### Migration tests
 
@@ -129,6 +154,8 @@ Test fixtures should be realistic enough to exercise edge cases but contain no r
 - **Clinical events and interventions**: fictional but structurally complete entries with dose history records
 - **Clinical documents**: synthetic visit notes with realistic structure but no real clinical content
 
+**Canary rule.** Every synthetic health value must be grep-distinctive, because the log canary gate (see [CI Gates](#ci-gates)) works by scanning captured log output for fixture values — and realistic values like a glucose of `95` collide with timestamps, ports, and status codes. Text fields (clinical notes, medication names in notes) embed a `CANARY-` marker token; numeric health values use high-entropy decimals with at least six significant digits (e.g. `104.73921`) that cannot collide with infrastructure numbers. The fixture loader derives the **canary manifest** — the complete list of health values present in the fixtures — programmatically from the fixture files themselves, so there is no hand-maintained list to drift out of sync.
+
 ### Fixture management
 
 Fixtures live in `tests/fixtures/` as JSON or SQL files. A fixture loader creates an ephemeral SQLCipher database, applies all migrations, and loads the specified fixtures before each test or test suite.
@@ -146,6 +173,30 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 
 ---
 
+## CI Gates
+
+Checks that run as distinct CI steps and fail the build outright. These mechanize requirements that would otherwise depend on code-review vigilance.
+
+### Log canary gate (mandatory)
+
+Turns [observability.md](observability.md)'s "never log health data values" prohibition from a review norm into a mechanized invariant:
+
+1. The full test run — including E2E tests, whose spawned Core Service / MCP Server / CLI processes have their stdout and stderr captured too — writes all log output to files.
+2. A final CI step scans everything captured against the canary manifest (see the canary rule under Fixture design).
+3. Any hit fails the build, printing the matched canary value and the offending log line.
+
+The gate is only as strong as the canary rule: a fixture value that is not grep-distinctive is invisible to it. Fixture review enforces the rule; the gate enforces the logs.
+
+### Structured-log field allowlist (recommended)
+
+Because all log output is structured JSON, a second check can assert that log entries use only the permitted-field vocabulary from [observability.md](observability.md) — catching a leak through a novel field name that no canary value would match. Recommended rather than mandatory: it can false-positive on legitimate new fields, and the canary scan is the hard gate. When a legitimate field is added, the allowlist is updated in the same PR.
+
+### Repository secret scanning (mandatory)
+
+A pinned `gitleaks` step scans the full tree on every CI run for committed credentials — tokens, keys, passphrases. The hardcoded test passphrase is allowlisted. To be honest about scope: this catches *credential patterns*, not health data — there is no reliable pattern for a lab value. The personal-data containment policy ([CLAUDE.md](../CLAUDE.md)) is enforced by the `specs/personal/` gitignore and review discipline; secret scanning backstops only its credential-shaped failure modes (e.g. a Recovery Kit render or bearer token pasted into a spec).
+
+---
+
 ## Links
 - Related: [security.md](security.md) — security requirements that tests must validate
 - Related: [observability.md](observability.md) — health data logging prohibition must be tested
@@ -154,3 +205,4 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 - Related: [ADR-0010](adr/0010-cli-plugin-model.md) — plugin loader behavior to test
 - Related: [ADR-0013](adr/0013-encryption-at-rest.md) — encryption round-trip to test
 - Related: [ADR-0027](adr/0027-audit-trail-and-corrections.md) — audit trail and correction behavior to test
+- Related: [ADR-0031](adr/0031-units-and-ucum.md) — the unit-conversion property suite is the acceptance harness for its open conversion-engine sub-decision

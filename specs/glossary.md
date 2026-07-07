@@ -175,3 +175,10 @@ An HTTP endpoint (`GET /v1/health` on Core Service, `GET /health` on other proce
 
 **Request ID**
 A UUID assigned to every HTTP request on receipt, included in the response header (`X-Request-ID`) and all associated log entries. Enables correlating log entries across a request lifecycle. See [observability.md](observability.md).
+
+---
+
+## Testing
+
+**Canary value**
+A synthetic health value in test fixtures deliberately made grep-distinctive — a `CANARY-` marker token in text fields, or a high-entropy decimal (six or more significant digits) for numeric values — so that the CI log canary gate can scan captured log output for fixture values without false matches against timestamps, ports, or status codes. The complete set of canary values (the canary manifest) is derived programmatically from the fixtures. See [testing-strategy.md](testing-strategy.md).
