@@ -22,7 +22,7 @@ Response:
   "uptime_seconds": 3600
 }
 ```
-Returns `200` when healthy, `503` when not ready (e.g. database unreachable, migration pending).
+Returns `200` when healthy, `503` when not ready (e.g. database unreachable). There is no "migration pending" state: migrations run in the launcher before the Core Service starts, and a Core Service that finds an unexpected `schema_version` at startup logs `CRITICAL` and exits rather than serving ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)).
 
 ### MCP Server
 ```
@@ -112,7 +112,8 @@ Enables correlating log entries across a request/response lifecycle without a fu
 The launcher polls each process's health endpoint after starting it, with a configurable timeout and retry count. A process that does not become healthy within the timeout is considered failed; the launcher logs the error and stops.
 
 Startup order (enforced by launcher):
-1. Core Service (runs migrations on startup)
+0. Launcher pre-step ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)): collect passphrase, derive key, run any pending migrations with exclusive database access, close the connection and discard the key
+1. Core Service (receives the passphrase over stdin, derives its own key, verifies `schema_version`, refuses to start on mismatch)
 2. MCP Server (depends on Core Service being healthy)
 3. GUI (depends on Core Service being healthy)
 4. Automation Host (depends on Core Service being healthy)
@@ -123,5 +124,6 @@ This order is determined by health endpoint readiness, not fixed sleep intervals
 
 ## Links
 - Related: [ADR-0008](adr/0008-process-lifecycle.md) — process lifecycle and launcher behavior
+- Related: [ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md) — startup sequence: launcher-owned migrations, passphrase handoff, Core Service schema check
 - Related: [ADR-0025](adr/0025-plugin-host-process-matrix.md) — the Automation Host, the fourth supervised process; there is no Import Pipeline daemon (imports run as jobs, [ADR-0012](adr/0012-job-abstraction.md))
 - Related: [security.md](security.md) — health data logging prohibition

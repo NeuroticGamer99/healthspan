@@ -72,6 +72,7 @@ On first run, the launcher:
 ## Links
 - Extended by: [ADR-0025](0025-plugin-host-process-matrix.md) — adds the Automation Host as a fourth supervised process
 - Extended by: [ADR-0026](0026-named-scoped-tokens.md) — first run issues the default named-token set instead of a single bearer token
+- Extended by: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — refines launcher steps 2–4: passphrase collection and handoff channel, migration phase (launcher-owned, definitively), key discard before Core Service start
 - Related: [ADR-0006](0006-application-architecture.md) — process isolation architecture
 - Related: [ADR-0009](0009-database-migration.md) — migration runner
 - Related: [ADR-0013](0013-encryption-at-rest.md) — encryption initialization on first run

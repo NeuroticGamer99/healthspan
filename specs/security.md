@@ -118,6 +118,9 @@ The database file contains sensitive personal health data and must be encrypted.
 - Hardcoded in source code
 - Committed to version control
 - Logged
+- Passed between processes — each process that legitimately needs it derives it independently ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md))
+
+**The master passphrase** crosses a process boundary only via an interactive TTY prompt, a stdin pipe, or a permission-restricted file provided by an OS secret facility (systemd credentials, Docker secrets) — **never argv, never environment variables**, both of which are inspectable ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)). Entry surfaces (TTY prompt, GUI masked dialog) are distinct from transport: whatever collects the passphrase hands it on over one of the sanctioned channels and drops its copy after handoff. Migrations run in the launcher before Core Service starts; the launcher and Core Service hold the database sequentially, never simultaneously.
 
 **Migration path:** For users with an existing unencrypted database, `healthspan db encrypt` migrates using SQLCipher's `sqlcipher_export()`, verifies the encrypted copy (opens with the derived key, `PRAGMA integrity_check`, row-count comparison), and then requires an explicit decision about the plaintext original: user-confirmed best-effort disposal (the default), or deliberate retention via `--keep-plaintext` with a prominent warning. A plaintext health database is never silently left on disk. See [ADR-0033](adr/0033-plaintext-artifact-disposal.md).
 

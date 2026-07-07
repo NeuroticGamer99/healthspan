@@ -82,6 +82,7 @@ Steps 3–5 succeed or disappear together. The `schema_version` row is inside th
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — connection pool assumes WAL; pragma discipline deferred to this ADR from there
 - Extended by: [ADR-0037](0037-core-service-concurrency-and-driver.md) — adds `busy_timeout` to the pragma set and gives the connection factory its thread-affine pool structure
 - Related: [ADR-0008](0008-process-lifecycle.md) — launcher runs migrations before the Core Service starts (why exclusive access holds)
+- Related: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — makes launcher-owned migrations definitive and specifies the surrounding passphrase/key sequence; the Core Service refuses to start on a `schema_version` mismatch
 - Related: [ADR-0019](0019-multi-device-sync.md) — WAL sidecar files and live-file sync unsafety
 - Related: [specs/testing-strategy.md](../testing-strategy.md) — migration test targets updated to match (mid-file atomicity, foreign_key_check, pragma verification)
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 3.F (transaction discipline, pragmas) and 1.G (both corrections)
