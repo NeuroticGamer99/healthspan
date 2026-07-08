@@ -1,7 +1,7 @@
 # ADR-0036: Plugin Package Installation Integrity
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 [ADR-0024](0024-plugin-extensions.md) (Accepted) gave plugins `PLUGIN_PACKAGES` and a curated catalog of approved packages at pinned versions. The [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md) (item 2.7) found two gaps in it:

@@ -1,7 +1,7 @@
 # ADR-0030: Biomarker Identity and Value Representation
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The schema treats each biomarker as a first-class entity (`biomarkers` table) identified by a canonical name, with every result row carrying a `biomarker_id` foreign key (see [design-rationale.md](../design-rationale.md)). Two gaps in that model surface as soon as real lab data is entered:

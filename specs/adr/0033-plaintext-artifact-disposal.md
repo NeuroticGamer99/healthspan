@@ -1,7 +1,7 @@
 # ADR-0033: Plaintext Artifact Disposal
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The [architecture review](../architecture-review-2026-06-10.md) found three related defects in how the platform handles plaintext artifacts on disk:

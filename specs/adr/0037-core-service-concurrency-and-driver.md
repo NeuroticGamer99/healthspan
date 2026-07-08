@@ -1,7 +1,7 @@
 # ADR-0037: Core Service Concurrency Model and Database Driver Choice
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) (item 3.C) found that nothing in the specs says how the synchronous SQLCipher driver meets async FastAPI. The default failure mode — calling the driver inside `async def` endpoints — blocks the event loop, stalling the SSE stream (ADR-0011) and every concurrent request while query work runs. ADR-0028 decided a persistent connection pool exists; it did not decide the pool's structure, the threading model, or where blocking work (blob streaming, backups) runs. Every endpoint inherits this decision, which is why it must be written down before anything downstream assumes an answer.

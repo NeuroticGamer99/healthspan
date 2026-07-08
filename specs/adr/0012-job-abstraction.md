@@ -1,7 +1,7 @@
 # ADR-0012: Job Abstraction for Long-Running Operations
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Some operations — large bulk imports, multi-year data backfills, complex analytical computations — take seconds to minutes. Running these synchronously in a REST endpoint blocks the client and provides no progress visibility. The GUI must not freeze waiting for completion. What is the architecture for submitting, tracking, and receiving results from long-running operations?

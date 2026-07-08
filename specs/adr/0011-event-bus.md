@@ -1,7 +1,7 @@
 # ADR-0011: Event Bus and Transport Adapters
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The REST API handles request-response well but has no mechanism for the Core Service to push notifications to connected clients, for background plugins to signal completion, or for external systems to push events into the platform. A background sync that finishes, an out-of-range alert that fires, or an external device publishing a reading — none of these fit the request-response model. What is the event communication architecture?

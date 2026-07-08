@@ -1,7 +1,7 @@
 # ADR-0042: Process Supervision and Single-Instance Locking
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) item 3.E found that the launcher's supervision story is weaker than the reliability claims built on it, in two related ways:

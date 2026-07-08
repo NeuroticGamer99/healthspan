@@ -1,7 +1,7 @@
 # ADR-0026: Named Scoped Bearer Tokens
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Authentication today ([security.md](../security.md)) is a single bearer token, generated on first run, stored in the shared TOML config, and used by every client: GUI, MCP Server, CLI, plugins, job children, and the inbound webhook. Consequences:

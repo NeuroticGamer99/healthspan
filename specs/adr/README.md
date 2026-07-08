@@ -57,14 +57,14 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0002](0002-ai-provider-interface.md) | AI Client Interface | Accepted |
 | [ADR-0003](0003-database-backend.md) | Database Backend | Accepted |
 | [ADR-0004](0004-data-ingestion-strategy.md) | Data Ingestion Strategy | Accepted (partially) |
-| [ADR-0005](0005-reference-range-frameworks.md) | Reference Range Frameworks | Proposed |
+| [ADR-0005](0005-reference-range-frameworks.md) | Reference Range Frameworks | Accepted |
 | [ADR-0006](0006-application-architecture.md) | Application Architecture | Accepted |
 | [ADR-0007](0007-mcp-transport.md) | MCP Server Transport | Accepted |
 | [ADR-0008](0008-process-lifecycle.md) | Process Lifecycle Management | Accepted |
 | [ADR-0009](0009-database-migration.md) | Database Migration Approach | Accepted |
 | [ADR-0010](0010-cli-plugin-model.md) | Plugin Architecture | Accepted |
-| [ADR-0011](0011-event-bus.md) | Event Bus and Transport Adapters | Proposed |
-| [ADR-0012](0012-job-abstraction.md) | Job Abstraction for Long-Running Operations | Proposed |
+| [ADR-0011](0011-event-bus.md) | Event Bus and Transport Adapters | Accepted |
+| [ADR-0012](0012-job-abstraction.md) | Job Abstraction for Long-Running Operations | Accepted |
 | [ADR-0013](0013-encryption-at-rest.md) | Encryption at Rest | Accepted |
 | [ADR-0014](0014-websocket.md) | WebSocket / Bidirectional Communication | Proposed |
 | [ADR-0015](0015-data-export.md) | Data Export and Portability | Proposed |
@@ -77,23 +77,23 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0022](0022-semver.md) | Version Policy (SemVer 2.0.0) | Accepted |
 | [ADR-0023](0023-distribution-mechanism.md) | Distribution Mechanism | Accepted |
 | [ADR-0024](0024-plugin-extensions.md) | Plugin System Extensions — pip Dependencies and Versioning | Accepted |
-| [ADR-0025](0025-plugin-host-process-matrix.md) | Plugin Host-Process Matrix and Core Service Isolation | Proposed |
-| [ADR-0026](0026-named-scoped-tokens.md) | Named Scoped Bearer Tokens | Proposed |
-| [ADR-0027](0027-audit-trail-and-corrections.md) | Audit Trail and Data Corrections — Event Sourcing Rejected | Proposed |
-| [ADR-0028](0028-key-derivation-and-rotation.md) | Key Derivation, Rotation, and Key Lifetime | Proposed |
-| [ADR-0029](0029-mcp-streamable-http.md) | MCP Transport Refresh — Streamable HTTP | Proposed |
-| [ADR-0030](0030-biomarker-identity.md) | Biomarker Identity and Value Representation | Proposed |
+| [ADR-0025](0025-plugin-host-process-matrix.md) | Plugin Host-Process Matrix and Core Service Isolation | Accepted |
+| [ADR-0026](0026-named-scoped-tokens.md) | Named Scoped Bearer Tokens | Accepted |
+| [ADR-0027](0027-audit-trail-and-corrections.md) | Audit Trail and Data Corrections — Event Sourcing Rejected | Accepted |
+| [ADR-0028](0028-key-derivation-and-rotation.md) | Key Derivation, Rotation, and Key Lifetime | Accepted |
+| [ADR-0029](0029-mcp-streamable-http.md) | MCP Transport Refresh — Streamable HTTP | Accepted |
+| [ADR-0030](0030-biomarker-identity.md) | Biomarker Identity and Value Representation | Accepted |
 | [ADR-0031](0031-units-and-ucum.md) | Units and UCUM | Proposed |
 | [ADR-0032](0032-biomarker-loinc-cardinality.md) | Biomarker–LOINC Cardinality | Proposed — stub |
-| [ADR-0033](0033-plaintext-artifact-disposal.md) | Plaintext Artifact Disposal | Proposed |
-| [ADR-0034](0034-clinical-document-storage.md) | Clinical Document Original File Storage | Proposed |
-| [ADR-0035](0035-migration-execution-semantics.md) | Migration Execution Semantics and Connection Pragmas | Proposed |
-| [ADR-0036](0036-plugin-package-installation-integrity.md) | Plugin Package Installation Integrity | Proposed |
-| [ADR-0037](0037-core-service-concurrency-and-driver.md) | Core Service Concurrency Model and Database Driver Choice | Proposed |
-| [ADR-0038](0038-backup-execution-and-verification.md) | Backup Execution and Verification | Proposed |
-| [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) | Startup Sequence — Migration Ownership and Passphrase Handoff | Proposed |
-| [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — Liveness Exemption and Monitor Scope | Proposed |
-| [ADR-0041](0041-clinical-document-fts.md) | Clinical Document Full-Text Search | Proposed |
-| [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Proposed |
+| [ADR-0033](0033-plaintext-artifact-disposal.md) | Plaintext Artifact Disposal | Accepted |
+| [ADR-0034](0034-clinical-document-storage.md) | Clinical Document Original File Storage | Accepted |
+| [ADR-0035](0035-migration-execution-semantics.md) | Migration Execution Semantics and Connection Pragmas | Accepted |
+| [ADR-0036](0036-plugin-package-installation-integrity.md) | Plugin Package Installation Integrity | Accepted |
+| [ADR-0037](0037-core-service-concurrency-and-driver.md) | Core Service Concurrency Model and Database Driver Choice | Accepted |
+| [ADR-0038](0038-backup-execution-and-verification.md) | Backup Execution and Verification | Accepted |
+| [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) | Startup Sequence — Migration Ownership and Passphrase Handoff | Accepted |
+| [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — Liveness Exemption and Monitor Scope | Accepted |
+| [ADR-0041](0041-clinical-document-fts.md) | Clinical Document Full-Text Search | Accepted |
+| [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Accepted |
 | [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
 | [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |

@@ -1,7 +1,7 @@
 # ADR-0005: Reference Range Frameworks
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Lab results have a single reference range from the reporting lab, stored per result row (see design-rationale.md). However, there are multiple clinically meaningful ways to interpret whether a value is optimal:

@@ -1,7 +1,7 @@
 # ADR-0028: Key Derivation, Rotation, and Key Lifetime
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 ADR-0013 (Accepted) decided SQLCipher encryption with a two-factor key model. The 2026-06-10 architecture review found four defects in its specification — none reversing the decision, all in how it is realized. ADR-0013 is immutable under ADR governance, so this ADR extends it:

@@ -1,7 +1,7 @@
 # ADR-0034: Clinical Document Original File Storage
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The clinical documents data type ([data-model.md](../data-model.md)) stores a `source_file_hash` — the SHA-256 of the original imported file — which implies the original (lab PDF, CCDA export, FHIR DocumentReference payload) is retained somewhere. Nothing specified where. The [architecture review](../architecture-review-2026-06-10.md) (item 2.9) flagged the default failure mode: a plain `documents/` directory next to the database would be plaintext PHI outside the SQLCipher encryption boundary, silently voiding the trust model's guarantees ([security.md](../security.md)) — "cloud sync of the encrypted file is safe" and "device theft yields ciphertext" are both false the moment a folder of original PDFs sits beside the database.

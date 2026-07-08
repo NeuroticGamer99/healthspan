@@ -49,8 +49,8 @@ CLI + plugins           ─┘
 - **MCP Server** — exposes named tools to any MCP-compatible AI client. AI-provider agnostic.
 - **GUI** — standalone PySide6 desktop client. Replaceable: it's just another API client.
 - **CLI (command-line interface)** — first-class scripting layer with a directory-scanning plugin system. Drop a `.py` file into the plugins directory; new commands appear.
-- **Automation Host** — resident process where automation rules, notification channels, and the watch-folder importer run, reacting to events (see [ADR-0025](specs/adr/0025-plugin-host-process-matrix.md), currently Proposed). There is no separate import daemon — imports run as jobs submitted to the Core Service.
-- **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapters for more complex deployments (design not yet finalized — see [ADR-0011](specs/adr/0011-event-bus.md), currently Proposed).
+- **Automation Host** — resident process where automation rules, notification channels, and the watch-folder importer run, reacting to events (see [ADR-0025](specs/adr/0025-plugin-host-process-matrix.md)). There is no separate import daemon — imports run as jobs submitted to the Core Service.
+- **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapters for more complex deployments (see [ADR-0011](specs/adr/0011-event-bus.md)).
 
 Full architectural documentation is in [`specs/`](specs/), including 20+ Architecture Decision Records covering every major design choice.
 
@@ -73,7 +73,7 @@ The platform is designed around these data types, with importers planned or in p
 | Interventions | Manual entry (with full dose history tracking) | Table defined |
 | Clinical documents | Manual entry; future: patient portal export, PDF import | Not yet designed |
 
-All data enters through a structured import pipeline: full-batch validation before any write, atomic transactions (all-or-nothing per import), dry-run mode, and explicit conflict policies (reject, skip, or upsert) — no silent data mutation. Long-running imports are designed to run through the same job system as other async operations, which is designed, not final (see [ADR-0012](specs/adr/0012-job-abstraction.md), currently Proposed).
+All data enters through a structured import pipeline: full-batch validation before any write, atomic transactions (all-or-nothing per import), dry-run mode, and explicit conflict policies (reject, skip, or upsert) — no silent data mutation. Long-running imports run through the same job system as other async operations (see [ADR-0012](specs/adr/0012-job-abstraction.md)).
 
 Multi-source lab handling is a first-class design concern: every result row carries its lab source, reference ranges are stored per-row rather than per-biomarker, and canonical biomarker names normalize naming inconsistencies across labs.
 
@@ -86,7 +86,7 @@ Clinical documents and visit notes are a prioritized data type — clinician nar
 The plugin architecture is designed for the same kind of extensibility that made Home Assistant the dominant home automation platform.
 
 - Drop a `.py` file or Python package into the plugins directory — no build step required. Plugins that need pip packages (pandas, numpy, etc.) declare them and the loader installs from a curated, version-locked catalog automatically.
-- Plugins can register: CLI commands, MCP tools, import adapters, analysis functions, query patterns, reference range frameworks, automation rules, notification channels — the extension points themselves are settled, but reference range frameworks, automation rules, and notification channels are designed, not final (see [ADR-0005](specs/adr/0005-reference-range-frameworks.md), [ADR-0016](specs/adr/0016-automation-plugin-type.md), [ADR-0017](specs/adr/0017-notification-channels.md), all currently Proposed)
+- Plugins can register: CLI commands, MCP tools, import adapters, analysis functions, query patterns, reference range frameworks, automation rules, notification channels — the extension points themselves are settled, but automation rules and notification channels are designed, not final (see [ADR-0016](specs/adr/0016-automation-plugin-type.md) and [ADR-0017](specs/adr/0017-notification-channels.md), both currently Proposed stubs)
 - Plugins can provide services to other plugins via a namespaced service registry (`quest.parser`, `quest.api_client`, etc.)
 - Built-in functionality ships as first-party plugins against the same interfaces — there is no privileged internal API
 - Plugin API versioning with compatibility range declarations (`PLUGIN_API_MIN_VERSION`, `PLUGIN_API_MAX_VERSION`)

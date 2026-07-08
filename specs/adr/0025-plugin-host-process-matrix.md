@@ -1,7 +1,7 @@
 # ADR-0025: Plugin Host-Process Matrix and Core Service Isolation
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Which process loads which plugin type — and may third-party code ever execute inside the Core Service process?

@@ -1,7 +1,7 @@
 # ADR-0027: Audit Trail and Data Corrections — Event Sourcing Rejected
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Three intertwined schema questions in [open-questions.md](../open-questions.md) block migration 0001: how mutations are audited, how incorrect data is corrected without losing history, and whether event sourcing should be the storage model that solves both at once. They must be decided together — an audit trail bolted on after the first migration has no record of anything that came before it, and the correction pattern shapes every data table's schema.

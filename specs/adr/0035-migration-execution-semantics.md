@@ -1,7 +1,7 @@
 # ADR-0035: Migration Execution Semantics and Connection Pragmas
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 ADR-0009 (Accepted) chose a custom migration runner and promised "atomic per migration." The [architecture review](../architecture-review-2026-06-10.md) found the promise does not survive contact with the driver, and two adjacent defects in the same ADR (items 3.F and 1.G — the latter deferred here because fixing it changes decision content in an Accepted ADR):

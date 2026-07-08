@@ -1,7 +1,7 @@
 # ADR-0038: Backup Execution and Verification
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) (item 2.1) found that scheduled backups — the platform's entire recovery story (ADR-0027 rejects event sourcing partly because backups carry recovery; ADR-0019 makes backup output the only sync-safe artifact) — have **no process that can run them**. ADR-0019 prescribes "a scheduled `healthspan db backup`," but: heavyweight job children never receive the key (INV-1, ADR-0012); the Automation Host has no key and cannot run a CLI command that prompts for a passphrase; and the CLI path requires a human present. The only process that can open the database while the platform runs is the Core Service.
@@ -35,7 +35,7 @@ Option 2 requires the passphrase without a human (full auto-unlock — a securit
 - **Single-flight:** at most one backup job runs at a time; a submission while one is running returns the running job's ID rather than queuing a duplicate.
 - **Threading:** the job is coordinated as an asyncio task but the copy and verification run on a **dedicated worker thread** — not one of ADR-0037's eight request-pool slots, which a minutes-long copy would monopolize. The thread takes its own thread-local connection from the shared factory; ADR-0037's affinity rules hold unchanged. This ADR also corrects ADR-0012's lightweight-job wording: lightweight means *in-process and first-party*, not *on the event loop* — blocking work inside a lightweight job goes through the ADR-0037 bridge.
 - **Write contention, stated honestly:** the SQLite Online Backup API restarts the copy when another connection writes to the source database. At this platform's bimodal write volume (ADR-0027) restarts are rare; worst case, a backup racing a bulk import restarts and completes after the import commits. The stepped copy (`pages=N`, sleep between steps) never starves writers.
-- **Configuration:** a `[backup]` config section — schedule, destination directory, retention count. The destination is the directory ADR-0019 designates as the cloud-sync target and is subject to the same containment validation as other configured directories (ADR-0012's file-path rules).
+- **Configuration:** a `[backup]` config section — schedule, destination directory, retention count. The destination is the directory ADR-0019 designates as the cloud-sync target and is subject to the same containment validation as other configured directories (ADR-0012's file-path rules). **Defaults: the schedule is daily; the retention count is 14** — recorded here per the project's convention that config defaults live in the owning ADR (ADR-0037's `busy_timeout = 5000ms`, ADR-0035's `synchronous = NORMAL`). Daily bounds data loss at one day, proportionate to the platform's bimodal, low-volume write profile (ADR-0027); 14 verified dailies give a two-week recovery window in the sync target — deep enough to survive a corruption discovered late — at a storage cost that is trivial for a personal database. Both remain user-configurable; the defaults are the safe floor, not a ceiling.
 
 ### Verification: part of every backup, gating publication
 

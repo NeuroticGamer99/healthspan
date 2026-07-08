@@ -1,7 +1,7 @@
 # ADR-0039: Startup Sequence — Migration Ownership and Passphrase Handoff
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) found two gaps on the startup path (items 1.C and 2.2) that are one design surface:

@@ -1,7 +1,7 @@
 # ADR-0029: MCP Transport Refresh — Streamable HTTP
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 ADR-0007 chose HTTP/SSE as the MCP server transport. Since then, the MCP specification (2025-03-26 revision) deprecated the HTTP+SSE transport and replaced it with **Streamable HTTP**; subsequent spec revisions continue on Streamable HTTP, and `fastmcp` supports it as its standard HTTP transport. No implementation code exists yet, so the platform can adopt the current transport before any code or deployed client depends on the deprecated one. What transport should the MCP server actually implement?

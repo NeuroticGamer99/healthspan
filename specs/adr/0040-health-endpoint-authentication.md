@@ -1,7 +1,7 @@
 # ADR-0040: Health Endpoint Authentication — the Liveness Exemption and the Monitor Scope
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

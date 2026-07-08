@@ -1,7 +1,7 @@
 # ADR-0041: Clinical Document Full-Text Search
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Clinical documents and visit notes ([data-model.md](../data-model.md)) are among the highest-value data types for AI clients, and the `body` free-text column is their primary queryable surface — an AI client answers "what did my cardiologist say about my LDL trajectory?" by searching clinician narrative, not structured values. [open-questions.md](../open-questions.md) left the search strategy undecided among three options: SQLite FTS5, application-level scan in the Core Service, or embedding-based semantic search via a plugin. The [architecture review](../architecture-review-2026-07-06.md) (item 3.D) recommended resolving it now — and deciding it *with the documents table*, so the index and its triggers ship in migration 0001 rather than being retrofitted onto a populated table later.
