@@ -174,10 +174,22 @@ The fourth launcher-supervised process (extending ADR-0008's Core Service + MCP 
 - **Loads:** `automation`, `notification_channel`, `analysis`, `query`, `provider` plugins from the plugins directory
 - **Also hosts (first-party, shipped in the `healthspan` package):**
   - the declarative rule engine — interprets trigger/condition/action rules (ADR-0016); rules are data, the engine is code, and the code runs here, not in Core Service
-  - the watch-folder importer — the one import concern that genuinely needs residency (see review item 1.D); a watch-folder import *is* an automation: trigger = file appears, action = submit import job. It holds the dedicated `watch-import` token (`jobs import`) rather than the process credential ([ADR-0026](0026-named-scoped-tokens.md))
+  - the watch-folder importer — the one import concern that genuinely needs residency (see review item 1.D); a watch-folder import *is* an automation: trigger = file appears, action = submit import job. It holds the dedicated `watch-import` token (`jobs import`) rather than the process credential ([ADR-0026](0026-named-scoped-tokens.md)). Post-import file handling is specified below.
 - **Subscribes:** `GET /v1/events` (SSE). On reconnect it sends the standard SSE `Last-Event-ID` header; Core Service replays events after that ID from a retained window (requirement levied on ADR-0011, below). If replay begins with a `gap` marker, the host must reconcile — re-query recent imports and job states via REST — before resuming normal trigger processing (ADR-0011). The host persists its last-processed event ID locally — the full epoch-qualified SSE ID ([ADR-0011](0011-event-bus.md), review item 2.2), so a cursor from a prior Core Service run is detected as an epoch mismatch and answered with an all-partition `gap`, never a silently empty replay (the cursor file contains only the event ID — no health data).
 - **Acts:** exclusively via the Core REST API with its own bearer token, carrying `read`, `events`, and `jobs` scopes — never `admin` (ADR-0026). The sole exception to the shared process credential is the first-party watch-folder importer's dedicated `watch-import` token (`jobs import`), which keeps the mass-mutation `import` scope out of the credential handed to directory-loaded plugins.
 - **Never:** opens the database, touches the encryption key, or loads code on behalf of Core Service.
+
+### Watch-folder post-import handling
+
+The watch folder is the platform's one *unattended* import flow (review 2026-07-07 item 2.4), so the two policies that assume a human at a prompt — [ADR-0034](0034-clinical-document-storage.md)'s source-disposal offer and [ADR-0033](0033-plaintext-artifact-disposal.md)'s dispose/keep prompt — need an unattended answer, and something must prevent the importer from re-triggering forever on a file that stays in the watched directory (the dedup/conflict policy protects the *data*; the trigger loop is a separate problem).
+
+The watch-folder configuration declares a post-import action, applied when a file's import job reaches a terminal **success** state — including a dedup no-op success, or duplicate drops would loop:
+
+- **`move` (default)** — the file is atomically renamed into a `processed/` subfolder of the watched directory (same filesystem, so the rename is atomic; a name collision gains a timestamp suffix). Loop prevention is structural: only the watched root triggers, and subfolders are never scanned. The user's file is kept.
+- **`keep`** — the file stays in place; the importer tracks content hashes (the same SHA-256 identity as ADR-0034's `source_file_hash`) and never re-submits unchanged content. Changed content under the same name is a new document and does re-trigger. The tracking file contains hashes only — no health data (the same discipline as the SSE cursor file above).
+- **`dispose`** — best-effort disposal per ADR-0033 after verified success, with the honest caveat and the full-disk-encryption recommendation printed to the log (there is no TTY). The config declaration *is* the explicit choice ADR-0033's rule 6 demands of non-interactive runs — the unattended analog of `--dispose-plaintext`. Defaulting to `move` does not violate that rule: rule 6 refuses to guess between two choices that both have teeth (destroy vs. retain plaintext); `move` destroys nothing and leaks nothing new.
+
+Uniform across all three modes: a file whose import job **fails** is never disposed — it moves to a `failed/` sibling subfolder, visible and out of the trigger path (a poison file cannot loop), with the failure surfaced through normal job history and `job.*` events; disposal only ever follows verified success (ADR-0034's ordering). A file whose import job is still in flight is not re-submitted. And stated honestly: under `move` and `keep`, the watch directory tree holds plaintext health exports indefinitely — user-custody plaintext like any export, with ADR-0033's full-disk-encryption backstop as the standing recommendation.
 
 ### Lifecycle
 
@@ -254,5 +266,7 @@ Conforming edits required by this ADR (all target documents are Proposed or free
 - Related: [ADR-0020](0020-plugin-registry.md) — trust tiers as the future relaxation path
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — named scoped tokens; per-host credentials and credential tiers
 - Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — supplies the restart-with-backoff mechanism that makes this ADR's "supervised resident process" language honest for the Automation Host
+- Related: [ADR-0033](0033-plaintext-artifact-disposal.md) — disposal policy behind the watch folder's `dispose` action; its rule 6 (non-interactive runs must choose) is why the action is config-declared
+- Related: [ADR-0034](0034-clinical-document-storage.md) — the source-disposal offer whose unattended form is the watch folder's config-declared post-import action
 - Related: [specs/security.md](../security.md) — Security Invariants
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.A and 3.H
