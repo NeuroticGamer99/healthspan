@@ -43,12 +43,12 @@ The pipeline is ordered so no partial or unverified artifact can ever appear und
 
 1. **Copy** the live database via the driver's native backup API to a temporary name in the destination directory (`<final-name>.partial`).
 2. **Copy the `.keyparams` sidecar** alongside (ADR-0028's travel requirement), byte-comparing the copy against the original.
-3. **Verify the copy**: open it with the currently held key (raw-key PRAGMA, in-process — INV-1 intact), run `PRAGMA integrity_check` (the full check, not `quick_check` — minutes on a large database is the right price for the artifact the entire recovery story rests on, and it runs on a background thread), and confirm the copy's `schema_version` matches the live database's.
+3. **Verify the copy**: open it with the currently held key (raw-key PRAGMA, in-process — INV-1 intact), run `PRAGMA integrity_check` (the full check, not `quick_check` — minutes on a large database is the right price for the artifact the entire recovery story rests on, and it runs on a background thread) and `PRAGMA foreign_key_check` (a cheap statement, and the one `integrity_check` does not cover: it validates referential consistency, not page/b-tree structure — it runs independent of the `foreign_keys` enforcement pragma and must return no rows), and confirm the copy's `schema_version` matches the live database's.
 4. **Publish atomically**: rename database copy and sidecar to their final timestamped names only after verification passes — the same verify-then-commit ordering as ADR-0028's pre-rekey backup and ADR-0033's verify-then-dispose flow.
 5. **On any failure**: delete the partial files, transition the job to `failed` (the `job.failed` event is visible to Automation Host rules for notification routing). A backup that cannot be verified does not exist.
 6. **Retention**: after a successful publish, prune verified backups beyond the configured count, oldest first (each with its sidecar). **Pruning never runs after a failed backup** — a failing backup pipeline must not eat the good copies it is failing to replace.
 
-**Verification defined once:** "verified" means *opens with the current key + `PRAGMA integrity_check` passes + `schema_version` matches the source*. ADR-0028's mandatory pre-rekey backup adopts this definition by reference (it previously specified only key-open).
+**Verification defined once:** "verified" means *opens with the current key + `PRAGMA integrity_check` passes + `PRAGMA foreign_key_check` returns no rows + `schema_version` matches the source*. `integrity_check` validates page and b-tree structure; `foreign_key_check` validates the referential consistency the schema actually promises — belt-and-suspenders over the source's runtime FK enforcement, but one cheap statement at a step already measured in minutes. ADR-0028's mandatory pre-rekey backup adopts this definition by reference (it previously specified only key-open).
 
 ### CLI `healthspan db backup`: the offline path, exclusive
 
@@ -64,7 +64,7 @@ The pipeline is the backup pipeline mirrored — **verify-then-install**, so not
 
 1. **Locate the sidecar**: the `.keyparams` sidecar published alongside the backup (step 2 of the pipeline above guarantees the pair exists for every verified backup). Missing → fail with ADR-0028's documented recovery guidance. The command carries the sidecar so the user never has to remember it — forgetting it is the most likely user error.
 2. **Copy** backup and sidecar into the live directory under temporary names (`<database-path>.restoring`).
-3. **Verify the copy**: derive the key from the *backup's* sidecar parameters, key-open, run the full `PRAGMA integrity_check`, read its `schema_version`. Any failure deletes the temporary copies; the existing live file is untouched.
+3. **Verify the copy**: derive the key from the *backup's* sidecar parameters, key-open, run the full `PRAGMA integrity_check` and `PRAGMA foreign_key_check`, read its `schema_version`. Any failure deletes the temporary copies; the existing live file is untouched.
 4. **`schema_version` policy** — restore never migrates implicitly:
    - **equal** to the installed code's target: proceed;
    - **older**: proceed, and print that the next start's launcher migration phase (ADR-0039) or an explicit `healthspan db migrate` brings it forward;
@@ -73,7 +73,7 @@ The pipeline is the backup pipeline mirrored — **verify-then-install**, so not
 
 **The displaced live file is aside-renamed, never deleted.** It is ciphertext, so keeping it carries no ADR-0033 plaintext-disposal obligation; the command prints its location and leaves disposal to the user. A mistaken restore that destroyed the only live copy would be exactly the failure this ADR's "an unverified backup is worse than no backup" ethos exists to prevent.
 
-**"Verified" adapted, not redefined:** key-open and the full `integrity_check` apply unchanged; the definition's third clause (`schema_version` matches the source) has no source on restore and becomes the version policy above.
+**"Verified" adapted, not redefined:** key-open, the full `integrity_check`, and `foreign_key_check` apply unchanged; the definition's final clause (`schema_version` matches the source) has no source on restore and becomes the version policy above.
 
 **Relationship to `healthspan init --restore` (ADR-0013):** `init --restore` re-establishes *credentials* on a new machine — scan the Recovery Kit, store the secret key in the OS keychain. `db restore` installs the *data file*. A brand-new machine runs both, in that order.
 
@@ -133,4 +133,4 @@ The pipeline is the backup pipeline mirrored — **verify-then-install**, so not
 - Related: [ADR-0013](0013-encryption-at-rest.md) — `healthspan init --restore` recovers credentials; `db restore` installs the data file
 - Related: [specs/security.md](../security.md) — INV-1; single database owner
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.1 — scheduled backup execution locus and routine verification
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 2.1 — the restore command and round-trip verification
+- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 2.1 — the restore command and round-trip verification; item 2.5 — `foreign_key_check` added to the verification definition

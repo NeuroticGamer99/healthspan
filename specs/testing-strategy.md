@@ -201,6 +201,10 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 
 Checks that run as distinct CI steps and fail the build outright. These mechanize requirements that would otherwise depend on code-review vigilance.
 
+### Workflow provenance (the gates ship with the first code)
+
+Every gate below is specified but not yet wired: the repository has no CI workflow beyond `publish.yml`, which is correct for a design-phase project with no code to gate. The [2026-07-07 review](architecture-review-2026-07-07.md) (item 2.5) flags the trap in that — the first PR that introduces code or a real runtime dependency **must also add the CI workflow that runs every gate in this section** (log canary, repository secret scanning, strict static typing, lint + format, dependency vulnerability audit), with each tool's version pinned in that same PR (the pins item 3.A deferred to "the CI workflow itself"). Landing the gates with the first code they guard is the point; retrofitting them against an existing codebase is the exact failure mode the gates exist to prevent.
+
 ### Log canary gate (mandatory)
 
 Turns [observability.md](observability.md)'s "never log health data values" prohibition from a review norm into a mechanized invariant:
