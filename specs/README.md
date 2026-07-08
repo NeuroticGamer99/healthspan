@@ -22,6 +22,7 @@ The design documents inform ADRs; the ADRs formalize specific decisions that eme
 |----------|---------|
 | [design-rationale.md](design-rationale.md) | Core design philosophy, architectural principles, and cross-cutting conventions (timestamp handling, canonical biomarker names, schema versioning). Start here for the "why" behind major decisions. |
 | [data-model.md](data-model.md) | Inventory of all health data types the platform handles, their sources, schema considerations, and current design status. Also covers mobile health platform APIs and integration paths. |
+| [provenance-and-derived-data.md](provenance-and-derived-data.md) | Content-class and authorship model: keeps source data, interpretation (self- or AI-authored), and derived values structurally distinguishable. States the invariant (INV-6) and the taxonomy, with pointers to the owning ADRs and schema sections. |
 | [security.md](security.md) | Security requirements and threat model. Covers the trust model, authentication, encryption at rest, network security, input validation, plugin security boundary, and logging prohibitions. |
 | [api-reference.md](api-reference.md) | Design-time specification of the Core REST API surface. Consolidates endpoints defined across ADRs into a single reference. Stub — details added during implementation. |
 | [testing-strategy.md](testing-strategy.md) | Testing approach across all layers: unit, integration, plugin, end-to-end, security, and migration tests. Covers synthetic test data, encryption testing, and cross-platform concerns. |

@@ -52,12 +52,13 @@ Option 3 is disproportionate: OAuth2's machinery (flows, refresh tokens, an IdP)
 
 ## Scope Model
 
-Eight flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
+Nine flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
 
 | Scope | Grants |
 |---|---|
 | `read` | GET on data endpoints, and SSE subscription (`GET /v1/events`) — event payloads can carry health data, so subscribing *is* reading |
 | `write` | Create, correct, and delete individual records |
+| `annotate` | Create, supersede, and delete rows in interpretation-class tables (currently `analyses`) — separated from `write` so an AI client can be granted interpretive authorship with zero capability against source data; author identity is stamped from the token, and cross-author supersession is restricted ([ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md)) |
 | `import` | Bulk import endpoints — separated from `write` because it is the mass-mutation path |
 | `events` | Event publication via `POST /v1/events/inbound`, bounded by the token's publish-namespace allowlist (see "No scope laundering through the event system" below) |
 | `jobs` | Submit and cancel jobs (`POST /v1/jobs`, `DELETE /v1/jobs/{id}`), and read job status |
@@ -85,16 +86,16 @@ Issued at first run (extends ADR-0008's first-run sequence):
 
 | Token name | Holder | Scopes |
 |---|---|---|
-| `cli-admin` | CLI (built-in commands) | `read write import events jobs monitor admin` |
+| `cli-admin` | CLI (built-in commands) | `read write annotate import events jobs monitor admin` |
 | `cli-plugins` | CLI (handed to directory-loaded plugins) | `read write import jobs` |
-| `gui` | GUI | `read write import jobs monitor` |
+| `gui` | GUI | `read write annotate import jobs monitor` |
 | `mcp` | MCP Server → Core | **`read`** |
 | `automation-host` | Automation Host | `read events jobs` (`write` opt-in) |
 | `watch-import` | Automation Host (first-party watch-folder importer only) | `jobs import` |
 | `webhook` | Inbound webhook callers | `events` |
 | `launcher` | Launcher (supervision reports only) | `supervise` |
 
-- **MCP is read-only by default.** Granting the AI client write capability is a deliberate act: the user issues a second named token (e.g. `mcp-write`) and configures the MCP server to use it. It is never a config flag that silently upgrades the existing token.
+- **MCP is read-only by default.** Granting the AI client write capability is a deliberate act: the user issues a second named token (e.g. `mcp-write`) and configures the MCP server to use it. It is never a config flag that silently upgrades the existing token. For AI-authored analyses specifically, the recommended second token carries `read annotate`, not `write` — interpretive authorship without source-data mutation ([ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md)).
 - **Automation Host** automations that flag or annotate results need `write`; the default omits it so a fresh install's automation surface is read-and-react only.
 - **`watch-import`** is held by the first-party watch-folder importer resident in the Automation Host ([ADR-0025](0025-plugin-host-process-matrix.md)) — the one default flow that must submit import jobs, which requires `jobs` *plus* `import` under the no-laundering rule. It is deliberately not folded into `automation-host`: `import` is the mass-mutation scope, and the Automation Host process credential is exactly what directory-loaded automation plugins are handed (INV-3), so a compromised automation plugin still cannot reach bulk import. The importer reads its token from its own keyring entry (service `healthspan`, username `token:watch-import`, per the client-side storage convention above) — the same shape as the admin-extension escape hatch below, minted at init rather than by the user. It carries no `events` scope (hence no publish-namespace allowlist) and no `read`: job submission and job-status reads are both under `jobs`, and the importer never queries health data.
 - **`monitor` holders:** `cli-admin` and `gui` carry `monitor` for CLI diagnostics and the GUI status page; `mcp` deliberately does not — giving the AI client ops detail (version, `schema_version`, usage metrics) is a deliberate token issuance, not a default ([ADR-0040](0040-health-endpoint-authentication.md)).
@@ -235,6 +236,7 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - Related: [ADR-0013](0013-encryption-at-rest.md) — keyring storage mechanism and platform asymmetries
 - Related: [specs/security.md](../security.md) — Authentication requirements; Security Invariants
 - Extended by: [ADR-0040](0040-health-endpoint-authentication.md) — adds the `monitor` scope, the liveness-endpoint `public` exemption, and `monitor` in the `cli-admin`/`gui` defaults
+- Extended by: [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) — adds the `annotate` scope, the token `authorship` attribute (stamped onto interpretive rows), and `annotate` in the `cli-admin`/`gui` defaults
 - Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — the `supervise` scope and `launcher` token serve its supervision-report endpoint (review 2026-07-07 item 1.A)
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — the pre-delete backup offer under these scopes (review 2026-07-07 item 1.B)
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10

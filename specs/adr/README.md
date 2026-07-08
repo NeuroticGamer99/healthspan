@@ -95,3 +95,5 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — Liveness Exemption and Monitor Scope | Proposed |
 | [ADR-0041](0041-clinical-document-fts.md) | Clinical Document Full-Text Search | Proposed |
 | [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Proposed |
+| [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
+| [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |

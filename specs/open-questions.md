@@ -44,6 +44,12 @@ The `biomarkers` table has a `category` column (lipids, metabolic, thyroid, horm
 
 ~~**Clinical documents — full-text search strategy**~~ → Resolved (FTS5 external-content over `body`) — see Resolved section and [ADR-0041](adr/0041-clinical-document-fts.md).
 
+**Subjective observation vocabulary ([data-model.md](data-model.md), Subjective Observations)**
+The journal type starts freeform — `body` text only. Should a structured vocabulary (tags; 1–10 scales for energy, mood, pain, sleep quality) be added, and when? Structured fields make longitudinal plots of subjective state possible, but structure that arrives before the logging habit does tends to kill the habit. Ties to the Levels export question (Data Ingestion below): if the "how I'm feeling" tracker is in the activity-log export, its note-type vocabulary should map onto whatever is chosen here. Defer until real entries accumulate and show what structure they actually carry.
+
+**Derived data points — deferred schema ([ADR-0044](adr/0044-derived-data-points.md))**
+ADR-0044 fixes the principle (derived values are a distinct content class, never stored in source-data tables; interim home is the `result_data` attachment on analyses) and deliberately defers the derived-series table. Sub-questions recorded for when it is designed: (1) internally computed (formula stored, rebuildable) vs. externally computed (opaque snapshot) — the two subtypes behave differently under the [ADR-0027](adr/0027-audit-trail-and-corrections.md) correction model; (2) does a derived series get a `biomarker_id` ([ADR-0030](adr/0030-biomarker-identity.md))? (3) may derived series be range-compared ([ADR-0005](adr/0005-reference-range-frameworks.md)) — HOMA-IR has published ranges, so a blanket "never" is wrong; (4) staleness marking when a source row feeding a derived point is superseded. Design trigger: the analyses table exists in a running system and accumulated attachments show which subtype dominates.
+
 ---
 
 ## Data Entry

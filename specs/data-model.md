@@ -48,7 +48,7 @@ Discrete architectural decisions that emerge from this document should be captur
 - **Description:** Food events, exercise sessions, and free-form notes. Provides the contextual layer that makes CGM data clinically interpretable. The "how I'm feeling" subjective tracker may appear here as a note type — confirm when inspecting a real export.
 - **Export:** CSV export available manually via Levels export page.
 - **Import adapter:** `levels.activity`
-- **Status:** Not yet designed — new data type; overlaps with subjective health log and activity event types
+- **Status:** Not yet designed — new data type; overlaps with the [Subjective Observations (Journal)](#subjective-observations-journal) type and activity event types — imported Levels notes would land there as patient-authored entries with import provenance
 
 ### Nutrition Logs (Levels)
 - **Sources:** Levels
@@ -127,6 +127,35 @@ Discrete architectural decisions that emerge from this document should be captur
 - **AI/MCP value:** This is one of the highest-value data types for AI client interactions. Clinician narrative captures reasoning, differential diagnoses, and interpretation context that structured lab values cannot express. MCP tools can surface relevant visit notes alongside lab trends, enabling an AI client to answer questions like "what did my cardiologist say about my LDL trajectory?" or "summarize all provider guidance on my insulin resistance" by FTS5 full-text search across the `body` column ([ADR-0041](adr/0041-clinical-document-fts.md)).
 - **Status:** Not yet designed — prioritized; original-file storage boundary decided ([ADR-0034](adr/0034-clinical-document-storage.md))
 
+### Subjective Observations (Journal)
+- **Sources:** Manual entry (GUI/CLI); possibly Levels activity-log notes on import (see the Levels export open question)
+- **Cadence:** Event-based, freeform — whenever the owner has something to record
+- **Volume:** Low
+- **Description:** First-person, contemporaneous narrative: how you feel today, what you think of the current training block, a new ache and a suspicion about its cause. Content class: **source** — the fact that the owner felt or suspected something on a given date is itself a datum, and its narrative form cannot be confused with a measurement ([provenance-and-derived-data.md](provenance-and-derived-data.md)). Distinct from Analyses & Interpretations below: a journal entry records in the moment; an analysis synthesizes in retrospect.
+- **Schema considerations:**
+  - `observed_at` — timestamp quadruple (UTC + local + tz + inferred flag)
+  - `body` — free text, the primary surface; FTS5-indexed via the [ADR-0041](adr/0041-clinical-document-fts.md) pattern (own external-content virtual table and triggers)
+  - Junction links to what the entry is about — `observation_interventions`, `observation_events` (same two-column link pattern as clinical documents) — so "new ache since starting X" is a real foreign key an AI client can traverse, not just prose
+  - Structured vocabulary (tags, 1–10 scales for energy/mood/pain) deliberately deferred — freeform first, structure when real entries show what they carry (see [open-questions.md](open-questions.md))
+  - Standard audit columns and supersession ([ADR-0027](adr/0027-audit-trail-and-corrections.md))
+- **Note:** Subsumes the former "Subjective health logs" candidate from the not-yet-evaluated list. The original caveat stands: confirm whether the Levels activity-log export carries the "how I'm feeling" tracker before designing the import mapping — imported Levels notes would land here as patient-authored entries with import provenance.
+- **Status:** Sketched — schema considerations above; vocabulary and Levels mapping open
+
+### Analyses & Interpretations
+- **Sources:** Manual entry (owner-authored); AI clients via the MCP write path ([ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md))
+- **Cadence:** Event-based (per analysis performed)
+- **Volume:** Low
+- **Description:** Retrospective synthesis over stored data — the owner's conclusions and AI-authored analysis, in one table, distinguishable per row. Content class: **interpretation** — never written into source-data tables (INV-6, [ADR-0044](adr/0044-derived-data-points.md)). Longitudinal self-review ("what did I conclude last quarter, and what did the model conclude?") is a query over prior rows, not a folder of external documents.
+- **Schema considerations:**
+  - `analysis_date` — timestamp quadruple
+  - `author_type` enum: `self` | `ai` — **stamped by the Core Service from the writing token's `authorship` attribute, never caller-supplied** ([ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md)); `author_token` records the stamped token name; `tool_info` is optional caller-supplied text (model name/version) stored as a claim, distinct from the stamped identity
+  - `title`, `body` — narrative; `body` FTS5-indexed via the [ADR-0041](adr/0041-clinical-document-fts.md) pattern
+  - Junction links to the data analyzed — `analysis_lab_draws`, `analysis_documents`, `analysis_interventions`, `analysis_observations` (two-column link pattern)
+  - `result_data` — optional structured JSON attachment for small computed result sets; the interim home for derived data points per [ADR-0044](adr/0044-derived-data-points.md) (reviewable and searchable, not yet plottable as first-class series)
+  - Standard audit columns and supersession; supersede/delete restricted by the author guard ([ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md)): a token manages its own rows, owner-held tokens manage all
+- **AI/MCP value:** High in both directions — AI clients write attributed analysis here (`read annotate` token), and reads return `author_type`/`tool_info` so a model can distinguish prior interpretation (including its own) from measurement ([provenance-and-derived-data.md](provenance-and-derived-data.md), Presentation rule)
+- **Status:** Sketched — direction set by [provenance-and-derived-data.md](provenance-and-derived-data.md), [ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md), [ADR-0044](adr/0044-derived-data-points.md)
+
 ---
 
 ## CGM and Mobile Health Platform APIs
@@ -166,7 +195,6 @@ The following are candidate data types that may be worth modeling. Each needs re
 - **Medication adherence** (distinct from the intervention record itself)
 - **Imaging reports** (radiology reads, echo reports — structurally similar to visit notes but distinct document type; covered by `document_type = imaging_report` in the Clinical Documents table)
 - **Additional wearable sources** (Apple Watch, Oura, Whoop)
-- **Subjective health logs** (energy, symptoms, mood — may be covered by Levels activity logs export; confirm before designing a separate table)
 - **Dietary logs / nutrition** (partially covered by Levels nutrition logs export; general nutrition tracking beyond Levels is a separate concern)
 
 ---
@@ -180,6 +208,7 @@ Topics that affect multiple data types and need consistent treatment:
 - **Biomarker alias resolution** — where does lab-name → canonical-name mapping live? LOINC ([ADR-0030](adr/0030-biomarker-identity.md)) resolves electronic feeds directly and reduces this, but a name-based fallback is still needed for PDF/manual data; one concept can carry several LOINC codes ([ADR-0032](adr/0032-biomarker-loinc-cardinality.md)). (see [open-questions.md](open-questions.md))
 - **Timezone handling** — resolved: UTC ground truth + `local_recorded` + `local_tz` (IANA) + `tz_inferred` flag on every timestamp. See [design-rationale.md](design-rationale.md) for the full convention.
 - **Source provenance** — every row should carry an import batch reference; the `audit_log` table (see below) provides the full trail. Bulk-import inserts are audited at batch level ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): one `import` audit row per (batch, table), with row-level "where did this come from" answered by each row's `import_batch_id`
+- **Content class and authorship** — decided in principle ([provenance-and-derived-data.md](provenance-and-derived-data.md)): every datum is classed source / interpretation / derivation structurally (by table), authorship on interpretive rows is stamped from token identity ([ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md)), and interpretation or derivation is never written into source-data tables ([ADR-0044](adr/0044-derived-data-points.md), INV-6)
 - **Longitudinal data correction** — decided ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): `superseded_by` self-FK on every data table; value corrections supersede (never mutate in place), designated metadata repairs (timezone workflow) update in place with full audit; current state via per-table `*_current` views
 - **Audit trail** — decided ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): platform-wide append-only `audit_log`, written in the same transaction as every mutation, in the schema from migration 0001; per-row image audit for mutations of existing data, batch-level audit for bulk-import inserts; event sourcing was considered and rejected
 - **Multiple reference range frameworks** — results need to be comparable against more than one set of ranges: the lab's own range (already stored per result row), longevity-optimized ranges (e.g. Function Health), and practitioner-specific optimal ranges (e.g. Attia, Brewer, Hyman). Requires a named framework table separate from per-result lab ranges. See [ADR-0005](adr/0005-reference-range-frameworks.md).
