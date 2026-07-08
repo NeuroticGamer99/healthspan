@@ -43,7 +43,7 @@ Option 3 is disproportionate: OAuth2's machinery (flows, refresh tokens, an IdP)
 - Token names (never values) make audit logging meaningful
 
 ### Negative Consequences / Tradeoffs
-- Seven default credentials to issue, store, and document instead of one
+- Eight default credentials to issue, store, and document instead of one
 - The CLI carries two credentials (admin and plugin-tier), and the loader must assign them by plugin provenance — a deliberate refinement of ADR-0010's parity principle (see below)
 - Scope enforcement adds a required-scope declaration to every REST route (mechanical, one-time)
 - Legitimate admin-extension plugins need a documented escape hatch (deliberate named-token issuance) and will 403 by default
@@ -52,7 +52,7 @@ Option 3 is disproportionate: OAuth2's machinery (flows, refresh tokens, an IdP)
 
 ## Scope Model
 
-Seven flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
+Eight flat scopes. No hierarchy, no wildcards, no resource-level granularity — scopes gate *capability classes*, and the REST API's validation gates everything finer.
 
 | Scope | Grants |
 |---|---|
@@ -62,6 +62,7 @@ Seven flat scopes. No hierarchy, no wildcards, no resource-level granularity —
 | `events` | Event publication via `POST /v1/events/inbound`, bounded by the token's publish-namespace allowlist (see "No scope laundering through the event system" below) |
 | `jobs` | Submit and cancel jobs (`POST /v1/jobs`, `DELETE /v1/jobs/{id}`), and read job status |
 | `monitor` | `GET /v1/health/detail` and `GET /v1/metrics` — read-only operational metadata, never health data; separate from `read` so observability tooling can be granted ops visibility without health-data access ([ADR-0040](0040-health-endpoint-authentication.md)) |
+| `supervise` | `POST /v1/system/process-reports` — submit supervision reports, from which the Core Service emits the reserved `system.process.*`/`system.core.restarted` events itself ([ADR-0042](0042-process-supervision-and-single-instance-locking.md)); nothing else |
 | `admin` | Token management, config mutation, migration triggers |
 
 **No scope laundering through the job system:** submitting a job requires `jobs` *plus* every scope the job type declares. An import job requires `jobs` + `import`. A token holding only `jobs` can submit only jobs whose types declare no additional scopes. The job type's required scopes are part of its registration metadata (ADR-0012).
@@ -69,7 +70,7 @@ Seven flat scopes. No hierarchy, no wildcards, no resource-level granularity —
 **No scope laundering through the event system:** the `events` scope does not grant publish-anything. Without the following rules, the weakest credential in the system — the webhook's `events`-only token — could forge a trusted event type (`data.imported`), fire an automation, and have the Automation Host execute the automation's actions with *its* credentials: a confused-deputy path around every scope above. Forgery must be structurally impossible, not merely discouraged:
 
 1. **Source stamping** — the `source` field of every inbound event is set by the Core Service from the authenticated token's name; a payload that attempts to supply `source` is rejected. Events from internal components are stamped by the bus itself. Subscribers may treat provenance as trustworthy data.
-2. **Reserved internal namespaces** — `data.*`, `job.*`, `schedule.*`, `schema.*`, `system.*`, and `plugin.*` are statements of platform fact. They are never publishable through the generic `/v1/events/inbound` endpoint, for any token: the facts they represent enter the system only through purpose-built, validated REST endpoints (bulk import → `data.imported`; the job progress endpoint → `job.progress`; loader status reports → `plugin.loaded`), from which the Core Service emits the event itself. A forged `data.imported` or `job.complete` cannot exist.
+2. **Reserved internal namespaces** — `data.*`, `job.*`, `schedule.*`, `schema.*`, `system.*`, and `plugin.*` are statements of platform fact. They are never publishable through the generic `/v1/events/inbound` endpoint, for any token: the facts they represent enter the system only through purpose-built, validated REST endpoints (bulk import → `data.imported`; the job progress endpoint → `job.progress`; loader status reports → `plugin.loaded`; supervision reports → `system.process.*`, [ADR-0042](0042-process-supervision-and-single-instance-locking.md)), from which the Core Service emits the event itself. A forged `data.imported` or `job.complete` cannot exist.
 3. **Per-token publish namespaces** — the token record carries an event-namespace allowlist consulted whenever `events` scope is exercised. The webhook token may publish only `external.*`; the Automation Host token may publish `alert.*`, `sync.*`, and `external.*`.
 
 Rule 2 also closes a safety hole specific to a health platform: a forged `alert.resolved` could otherwise mask a genuine clinical alert. Under rule 3, `alert.*` publication is confined to the Automation Host and Core internals.
@@ -91,12 +92,14 @@ Issued at first run (extends ADR-0008's first-run sequence):
 | `automation-host` | Automation Host | `read events jobs` (`write` opt-in) |
 | `watch-import` | Automation Host (first-party watch-folder importer only) | `jobs import` |
 | `webhook` | Inbound webhook callers | `events` |
+| `launcher` | Launcher (supervision reports only) | `supervise` |
 
 - **MCP is read-only by default.** Granting the AI client write capability is a deliberate act: the user issues a second named token (e.g. `mcp-write`) and configures the MCP server to use it. It is never a config flag that silently upgrades the existing token.
 - **Automation Host** automations that flag or annotate results need `write`; the default omits it so a fresh install's automation surface is read-and-react only.
 - **`watch-import`** is held by the first-party watch-folder importer resident in the Automation Host ([ADR-0025](0025-plugin-host-process-matrix.md)) — the one default flow that must submit import jobs, which requires `jobs` *plus* `import` under the no-laundering rule. It is deliberately not folded into `automation-host`: `import` is the mass-mutation scope, and the Automation Host process credential is exactly what directory-loaded automation plugins are handed (INV-3), so a compromised automation plugin still cannot reach bulk import. The importer reads its token from its own keyring entry (service `healthspan`, username `token:watch-import`, per the client-side storage convention above) — the same shape as the admin-extension escape hatch below, minted at init rather than by the user. It carries no `events` scope (hence no publish-namespace allowlist) and no `read`: job submission and job-status reads are both under `jobs`, and the importer never queries health data.
 - **`monitor` holders:** `cli-admin` and `gui` carry `monitor` for CLI diagnostics and the GUI status page; `mcp` deliberately does not — giving the AI client ops detail (version, `schema_version`, usage metrics) is a deliberate token issuance, not a default ([ADR-0040](0040-health-endpoint-authentication.md)).
 - **Event namespaces:** tokens carrying `events` also carry a publish-namespace allowlist — `webhook`: `external.*`; `automation-host`: `alert.*`, `sync.*`, `external.*` (see the event-laundering rules above). `cli-admin` holds `events` with the non-reserved namespaces for scripting.
+- **`launcher`** is held by the launcher solely to file supervision reports (`POST /v1/system/process-reports`, [ADR-0042](0042-process-supervision-and-single-instance-locking.md)), from which the Core Service itself emits the reserved `system.process.*` events. Its scope is deliberately not `events` — that is the generic-inbound publish path with its namespace allowlists, and granting it would put the launcher one allowlist edit away from the laundering surface rule 2 closes — and not `monitor` or `admin`: a leaked `launcher` token can do exactly one thing, file process reports the Core Service still validates. It carries no publish-namespace allowlist (no `events`), no `read`, no `jobs`. Stored in the launcher's keyring entry (`token:launcher`, per the client-side storage convention); it never appears in argv, environment, compose files, or unit files, and [ADR-0040](0040-health-endpoint-authentication.md)'s liveness polling remains credential-free — the two channels are independent.
 - **Job children** do not appear in this table — they receive ephemeral tokens (below).
 
 ## Token Format, Verification, and Storage
@@ -201,6 +204,7 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - **ADR-0011** (Proposed): webhook inbound adapter authenticates callers with the `events`-scoped token and may publish only `external.*`; the envelope `source` is stamped from token identity; reserved namespaces are marked internal-only in the event catalog
 - **ADR-0012** (Proposed): job children use ephemeral single-job tokens; progress reporting moves to the dedicated `POST /v1/jobs/{id}/progress` endpoint
 - **ADR-0025** (Proposed): Automation Host and job-child token references now cite this ADR
+- **ADR-0042** (Proposed): the `supervise` scope and `launcher` token exist for its supervision-report endpoint; ADR-0011's event catalog gains the `system.process.*`/`system.core.restarted` members Core emits from those reports
 
 ## Pros and Cons of the Options
 
@@ -210,7 +214,7 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 
 ### Named scoped tokens (chosen)
 - Pro: blast-radius bounding at every trust seam the platform actually has; per-client lifecycle; meaningful audit identity
-- Con: seven credentials, dual-token CLI, per-route scope declarations — all mechanical, one-time costs
+- Con: eight credentials, dual-token CLI, per-route scope declarations — all mechanical, one-time costs
 
 ### OAuth2/OIDC local IdP
 - Pro: standard flows, standard libraries, delegation and expiry built in
@@ -229,5 +233,6 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - Related: [ADR-0013](0013-encryption-at-rest.md) — keyring storage mechanism and platform asymmetries
 - Related: [specs/security.md](../security.md) — Authentication requirements; Security Invariants
 - Extended by: [ADR-0040](0040-health-endpoint-authentication.md) — adds the `monitor` scope, the liveness-endpoint `public` exemption, and `monitor` in the `cli-admin`/`gui` defaults
+- Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — the `supervise` scope and `launcher` token serve its supervision-report endpoint (review 2026-07-07 item 1.A)
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.6 — MCP client-facing credential spec (format, hashed keyring storage, rotation command)

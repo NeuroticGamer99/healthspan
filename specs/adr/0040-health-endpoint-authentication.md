@@ -104,6 +104,8 @@ ADR-0026 requires every route to declare its required scope(s). The liveness rou
 | GUI status page, CLI diagnostics | `GET /v1/health/detail`, `/v1/metrics` | `gui` / `cli-admin` (carry `monitor`) |
 | User-installed scraper or uptime monitor | `GET /v1/health/detail`, `/v1/metrics` | user-minted token with `monitor` only |
 
+The launcher does hold one credential — the `supervise`-scoped `launcher` token for supervision reports ([ADR-0042](0042-process-supervision-and-single-instance-locking.md)) — but that is a separate channel, keyring-held, never in argv or environment: liveness polling remains credential-free, and this ADR's decision is unaffected.
+
 ### Positive Consequences
 
 - The launcher, Docker, and systemd all gain a working, uniform readiness story with zero secret distribution

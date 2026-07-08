@@ -182,7 +182,7 @@ The fourth launcher-supervised process (extending ADR-0008's Core Service + MCP 
 ### Lifecycle
 
 - Started by the launcher after Core Service is healthy; stoppable/startable independently (`healthspan automations start`, `healthspan automations status`)
-- If the Automation Host is down, automations do not fire — honestly and visibly (status command, `system.*` events, GUI indicator), not silently. On restart it resumes from its cursor and processes the replayed window, so brief outages do not lose triggers whose events are still retained.
+- If the Automation Host is down, automations do not fire — honestly and visibly (status command, `system.*` events, GUI indicator — the launcher's supervision reports become Core-emitted `system.process.*` events, [ADR-0042](0042-process-supervision-and-single-instance-locking.md)), not silently. On restart it resumes from its cursor and processes the replayed window, so brief outages do not lose triggers whose events are still retained.
 - Execution tracing per ADR-0016 remains a requirement on the automation engine and is unaffected by where the engine runs.
 
 ### Why a resident daemon rather than a CLI mode

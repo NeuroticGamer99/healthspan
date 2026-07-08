@@ -129,7 +129,7 @@ Event types use dot-notation namespaces (consistent with service names in ADR-00
 | `sync.*` | `sync.started`, `sync.complete`, `sync.failed` | Automation Host (sync/poller plugins) |
 | `schema.*` | `schema.migrated` | Core Service migration path — **reserved** |
 | `plugin.*` | `plugin.loaded`, `plugin.failed` | Core Service, on host loader status reports — **reserved** |
-| `system.*` | `system.started`, `system.stopping` | Core Service — **reserved** |
+| `system.*` | `system.started`, `system.stopping`, `system.process.restarted`, `system.process.failed`, `system.process.recovered`, `system.core.restarted` | Core Service — **reserved**; the supervision members on launcher reports via `POST /v1/system/process-reports` (ADR-0042) |
 | `schedule.*` | `schedule.interval`, `schedule.cron` | Core Service scheduler — **reserved** |
 | `external.*` | externally sourced events | Inbound adapters (webhook, MQTT); source-stamped per token |
 
@@ -230,3 +230,4 @@ The Core Service has no knowledge of Qt. The conversion is entirely inside the G
 - Related: [ADR-0012](0012-job-abstraction.md) — job events flow through this bus
 - Related: [ADR-0014](0014-websocket.md) — bidirectional extension to this architecture
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — `data.imported`/`data.corrected`/`data.deleted` are emitted by Core on validated mutations and drive aggregate invalidation
+- Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — the `system.process.*`/`system.core.restarted` catalog members are Core-emitted from the launcher's supervision reports (review 2026-07-07 item 1.A)

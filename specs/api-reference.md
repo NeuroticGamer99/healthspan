@@ -51,6 +51,7 @@ Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-e
 | `GET /v1/health` | none (`public`) — liveness only: `200`/`503` and a status word |
 | `GET /v1/health/detail` | `monitor` — version, `schema_version`, `db_connected`, uptime |
 | `GET /v1/metrics` | `monitor` — request counts, status histogram, job counts |
+| `POST /v1/system/process-reports` | `supervise` — launcher supervision reports, from which the Core Service emits the reserved `system.process.*`/`system.core.restarted` events ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)) |
 
 ### Reference data
 Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.
