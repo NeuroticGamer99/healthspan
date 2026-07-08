@@ -140,7 +140,7 @@ An async operation that runs as a separate process spawned by the Core Service. 
 ## Security and Encryption
 
 **Bearer token**
-A named, scoped, revocable credential (cryptographically random, minimum 32 bytes, base64url-encoded, `hsp_`-prefixed) required in the `Authorization` header of every HTTP request. The default token set is issued on first run; each client stores only its own token via the OS keychain — never in the shared TOML config. The Core Service stores only hashes. Never appears in URLs, logs, or source code. See [ADR-0026](adr/0026-named-scoped-tokens.md) and [security.md](security.md).
+A named, scoped, revocable credential (cryptographically random, minimum 32 bytes, base64url-encoded, `hsp_`-prefixed) required in the `Authorization` header of every HTTP request except the single unauthenticated liveness probe (ADR-0040). The default token set is issued on first run; each client stores only its own token via the OS keychain — never in the shared TOML config. The Core Service stores only hashes. Never appears in URLs, logs, or source code. See [ADR-0026](adr/0026-named-scoped-tokens.md) and [security.md](security.md).
 
 **Secret key**
 A randomly generated 32-byte value stored in the OS keychain via `keyring`. One of the two components of the two-factor hybrid key model. Never typed by the user under normal operation. See [ADR-0013](adr/0013-encryption-at-rest.md).

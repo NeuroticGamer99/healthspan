@@ -39,12 +39,12 @@ Chosen option: **Hybrid — event-driven progress as primary, REST polling as fa
 ## Job Lifecycle
 
 ```
-POST /v1/jobs  →  queued  →  started  →  progress (0–100%)  →  complete
+POST /v1/jobs  →  queued  →  running  →  progress (0–100%)  →  complete
                                                               →  failed
                                        ↑  cancelled (via DELETE /v1/jobs/{id})
 ```
 
-Each state transition publishes a `job.*` event on the event bus (ADR-0011). `failed` carries a reason distinguishing an ordinary handler failure from `cancelled` (cooperative cancel), `timed_out` (a liveness or wall-clock bound fired), and `interrupted` (a startup sweep reclaimed a job orphaned by a prior Core Service exit) — see [Job Lifetime Bounds](#job-lifetime-bounds).
+A job's status is one of exactly four states — `queued`, `running`, `complete`, `failed`. Each state transition publishes a `job.*` event on the event bus (ADR-0011); the event names `job.started` and `job.complete` (ADR-0011 catalog) mark the transitions *into* the `running` and `complete` states — the event vocabulary and the state vocabulary are deliberately distinct. `failed` carries a reason distinguishing an ordinary handler failure from `cancelled` (cooperative cancel), `timed_out` (a liveness or wall-clock bound fired), and `interrupted` (a startup sweep reclaimed a job orphaned by a prior Core Service exit) — see [Job Lifetime Bounds](#job-lifetime-bounds).
 
 ## REST API
 
@@ -174,7 +174,7 @@ Two paths terminate a child from the outside:
 
 ### Startup sweep
 
-On start, **before** the Core Service accepts any new job submission or mints any new token, it sweeps the `jobs` table: every job persisted in a non-terminal state (`queued`, `started`/`running`) from a previous run is transitioned to `failed` (reason `interrupted`), expiring its token. Sweeping *first* closes the window in which a stale token and a freshly minted one could coexist ambiguously. Swept jobs are not auto-resumed — jobs are not checkpointed; the `interrupted` reason distinguishes them from `cancelled` and `timed_out` so the user resubmits deliberately.
+On start, **before** the Core Service accepts any new job submission or mints any new token, it sweeps the `jobs` table: every job persisted in a non-terminal state (`queued`, `running`) from a previous run is transitioned to `failed` (reason `interrupted`), expiring its token. Sweeping *first* closes the window in which a stale token and a freshly minted one could coexist ambiguously. Swept jobs are not auto-resumed — jobs are not checkpointed; the `interrupted` reason distinguishes them from `cancelled` and `timed_out` so the user resubmits deliberately.
 
 A spawned child can outlive a Core Service *crash* — on POSIX it is reparented to init and keeps running with a live token. Marking its job `failed` **expires the token**: the child's next API call gets 401, which neutralizes it on every platform identically. That is the correctness guarantee. As best-effort hygiene the sweep also persists each child's PID and spawn identity and attempts to kill an orphan directly, guarded against PID reuse by comparing the OS-reported process creation time (via `psutil` — see below) before signalling; if the identity cannot be confirmed it skips the kill rather than risk signalling an unrelated reused PID. Reclaiming the process sooner is a convenience; token expiry is what makes the orphan harmless.
 

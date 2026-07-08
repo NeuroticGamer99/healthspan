@@ -50,7 +50,7 @@ CLI + plugins           ─┘
 - **GUI** — standalone PySide6 desktop client. Replaceable: it's just another API client.
 - **CLI (command-line interface)** — first-class scripting layer with a directory-scanning plugin system. Drop a `.py` file into the plugins directory; new commands appear.
 - **Automation Host** — resident process where automation rules, notification channels, and the watch-folder importer run, reacting to events (see [ADR-0025](specs/adr/0025-plugin-host-process-matrix.md), currently Proposed). There is no separate import daemon — imports run as jobs submitted to the Core Service.
-- **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapter plugins for more complex deployments (design not yet finalized — see [ADR-0011](specs/adr/0011-event-bus.md), currently Proposed).
+- **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapters for more complex deployments (design not yet finalized — see [ADR-0011](specs/adr/0011-event-bus.md), currently Proposed).
 
 Full architectural documentation is in [`specs/`](specs/), including 20+ Architecture Decision Records covering every major design choice.
 
@@ -98,7 +98,7 @@ The plugin architecture is designed for the same kind of extensibility that made
 - **Encryption at rest** — SQLCipher AES-256. Two-factor key model: a randomly generated secret key (stored in the OS keychain) combined with a user master passphrase, derived via Argon2id. A printable Recovery Kit enables cross-device recovery. Passphrase-only mode available for headless or cross-device use cases.
 - **Local-first** — no cloud service required. All data stays on your machine by default.
 - **AI client agnostic** — works with any MCP-compatible AI client. Use a local LLM and your health data never leaves the machine.
-- **Authenticated API** — bearer token on every endpoint. Host header validation and CORS allowlist protect against DNS rebinding attacks even on localhost.
+- **Authenticated API** — bearer token on every endpoint except the unauthenticated liveness probe ([ADR-0040](specs/adr/0040-health-endpoint-authentication.md)). Host header validation and CORS allowlist protect against DNS rebinding attacks even on localhost.
 - **Plugins are trusted-user code** — they run with your privileges and are not sandboxed. Only install plugins you have read and trust.
 
 See [`specs/security.md`](specs/security.md) for the full security requirements and threat model.
@@ -109,7 +109,7 @@ See [`specs/security.md`](specs/security.md) for the full security requirements 
 
 **Early development — design phase in-progress, implementation not yet started.**
 
-The full architecture is currently documented across 20+ ADRs covering application architecture, plugin system, event bus, job abstraction, encryption, data model, and more. Work continues on the basic architecture specifications. No installable release exists yet.
+The full architecture is currently documented across the project's ADRs covering application architecture, plugin system, event bus, job abstraction, encryption, data model, and more. Work continues on the basic architecture specifications. No installable release exists yet.
 
 If you want to follow along or contribute, the [`specs/`](specs/) directory is the place to start. [`specs/design-rationale.md`](specs/design-rationale.md) covers the core design philosophy. [`specs/open-questions.md`](specs/open-questions.md) lists known items that need to be decided.
 

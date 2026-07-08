@@ -34,13 +34,15 @@ ADR-0027's delete semantics: clients surface a confirmation that "offers to run 
 
 ### C. Minor staleness and drift
 
-- [ ] README: "ZeroMQ and MQTT designed as **adapter plugins**" — transport adapters are internal components, *not* loadable plugins (ADR-0025/ADR-0011; the glossary already says so). Reword to "adapters."
-- [ ] README "Authenticated API — bearer token on every endpoint" and glossary's "required in the `Authorization` header of every HTTP request" — both now have one named exemption (the credential-free liveness probe, [ADR-0040](adr/0040-health-endpoint-authentication.md)). Add the qualifier so the platform's own docs don't overstate what its tests deliberately refute.
-- [ ] README "documented across 20+ ADRs" (twice) — true but drifting (there are 42); drop the count as specs/README.md did after the last review.
-- [ ] [NOTICE](../NOTICE) first line still reads "**biocontext**" — pre-rename leftover; the copyright line should say Healthspan.
-- [ ] [ADR-0011](adr/0011-event-bus.md) envelope example: `"source": "plugin:quest_importer"` — no stamping rule produces that shape. Sources are authenticated token names (`automation-host`, `job:<uuid>`) or internal-component identities; a Quest import's `data.imported` is Core-emitted. Same class as the last review's 1.B; use a shape that can exist.
-- [ ] [ADR-0012](adr/0012-job-abstraction.md) job-state vocabulary drifts: the lifecycle diagram says `started`, the status example and query filter say `running`, the startup sweep hedges with "`started`/`running`". Pin one set (recommend `queued`, `running`, `complete`, `failed`) before it fossilizes into code and the API contract.
-- [ ] [ADR-0011](adr/0011-event-bus.md)'s Positive Consequences and architecture diagram say the MCP server and CLI "subscribe via the SSE stream," but its own Event API section makes persistent subscription Automation Host (+ GUI) only, and the "publish requires the host token to carry `events`" sentence means the *plugin-tier* credential (the CLI's process credential `cli-admin` does carry `events`). Tighten the roster and the wording.
+*Resolved 2026-07-08 — mechanical batch, no ADR-content decisions. ADR-0011 and ADR-0012 both still Proposed (direct edits). The `"source"` example was made real per Matthew's call: switched to `sync.complete`/`automation-host` (an already-named token identity) rather than coining a Core-internal source string. Only one "20+ ADRs" occurrence survived in README (the second was already gone).*
+
+- [x] README: "ZeroMQ and MQTT designed as **adapter plugins**" — transport adapters are internal components, *not* loadable plugins (ADR-0025/ADR-0011; the glossary already says so). Reword to "adapters."
+- [x] README "Authenticated API — bearer token on every endpoint" and glossary's "required in the `Authorization` header of every HTTP request" — both now have one named exemption (the credential-free liveness probe, [ADR-0040](adr/0040-health-endpoint-authentication.md)). Add the qualifier so the platform's own docs don't overstate what its tests deliberately refute.
+- [x] README "documented across 20+ ADRs" (twice) — true but drifting (there are 42); drop the count as specs/README.md did after the last review.
+- [x] [NOTICE](../NOTICE) first line still reads "**biocontext**" — pre-rename leftover; the copyright line should say Healthspan.
+- [x] [ADR-0011](adr/0011-event-bus.md) envelope example: `"source": "plugin:quest_importer"` — no stamping rule produces that shape. Sources are authenticated token names (`automation-host`, `job:<uuid>`) or internal-component identities; a Quest import's `data.imported` is Core-emitted. Same class as the last review's 1.B; use a shape that can exist. *(Also fixed the adjacent publish example whose `{"source": …}` payload the stamping rule rejects.)*
+- [x] [ADR-0012](adr/0012-job-abstraction.md) job-state vocabulary drifts: the lifecycle diagram says `started`, the status example and query filter say `running`, the startup sweep hedges with "`started`/`running`". Pin one set (recommend `queued`, `running`, `complete`, `failed`) before it fossilizes into code and the API contract.
+- [x] [ADR-0011](adr/0011-event-bus.md)'s Positive Consequences and architecture diagram say the MCP server and CLI "subscribe via the SSE stream," but its own Event API section makes persistent subscription Automation Host (+ GUI) only, and the "publish requires the host token to carry `events`" sentence means the *plugin-tier* credential (the CLI's process credential `cli-admin` does carry `events`). Tighten the roster and the wording.
 
 ---
 
@@ -122,11 +124,11 @@ Reaffirming the last review's 3.I after this pass: FastAPI + fastmcp + typer + P
 
 ### 4.C Small fixes list (mechanical)
 
-- [ ] NOTICE "biocontext" → Healthspan (1.C)
-- [ ] README: adapter-plugins wording, bearer-token qualifier, ADR count (1.C)
-- [ ] glossary: bearer-token qualifier (1.C)
-- [ ] ADR-0011: envelope `source` example; subscriber-roster wording (1.C)
-- [ ] ADR-0012: job-state vocabulary (1.C)
+- [x] NOTICE "biocontext" → Healthspan (1.C)
+- [x] README: adapter-plugins wording, bearer-token qualifier, ADR count (1.C)
+- [x] glossary: bearer-token qualifier (1.C)
+- [x] ADR-0011: envelope `source` example; subscriber-roster wording (1.C)
+- [x] ADR-0012: job-state vocabulary (1.C)
 
 ---
 

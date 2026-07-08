@@ -27,7 +27,7 @@ The Core Service hosts an internal asyncio-based event bus. Transport adapters b
 
 ### Positive Consequences
 - No additional infrastructure dependency by default — the event bus runs inside the Core Service process
-- The Automation Host, GUI, MCP server, and CLI subscribe via the SSE stream — a standard HTTP connection, no special client library required
+- The Automation Host and GUI hold persistent SSE subscriptions — a standard HTTP connection, no special client library required; the MCP server and CLI consume the REST and event API without maintaining a standing subscription (see Event API)
 - Transport adapters sit behind a uniform internal interface — MQTT and ZeroMQ are opt-in, not forced
 - Qt integration is clean: one background thread subscribes to the SSE stream and emits Qt signals on the GUI main thread, with no Qt dependency in the Core Service
 - External event sources (MQTT devices, webhooks) feed through inbound adapters into the same bus
@@ -43,7 +43,7 @@ External MQTT device  → MQTT inbound adapter  ─┐
 Webhook / HTTP POST   → HTTP inbound adapter   ─┤
                                                  ├→ Internal Event Bus
 Internal component    → bus publish            ─┘      │
-(scheduler, jobs)                                        ├→ SSE outbound adapter  → Automation Host / GUI / MCP server / CLI
+(scheduler, jobs)                                        ├→ SSE outbound adapter  → Automation Host / GUI (persistent subscribers)
                                                          ├→ ZeroMQ outbound adapter → external processes
                                                          └→ MQTT outbound adapter → external subscribers
 ```
@@ -84,11 +84,11 @@ No plugin code runs inside the Core Service (ADR-0025), so no plugin touches the
 
 - **Core Service internal components** (scheduler, job orchestrator, adapters): direct in-process bus access
 - **Automation Host plugins**: `publish` POSTs to `/v1/events/inbound`, bounded by the host token's publish-namespace allowlist (`alert.*`, `sync.*`, `external.*` — ADR-0026); `subscribe` is backed by the host's SSE connection with replay
-- **CLI and MCP Server plugins**: `publish` requires the host token to carry `events` scope — under the default token set it does not (ADR-0026), so publication from these hosts fails closed; `subscribe` is unavailable — persistent event subscription belongs to the Automation Host
+- **CLI and MCP Server plugins**: `publish` requires the plugin-tier credential to carry `events` scope — under the default token set it does not (ADR-0026), so publication from directory-loaded plugins fails closed. The CLI *process* credential `cli-admin` does carry `events` (ADR-0026/ADR-0040), so first-party CLI commands can publish. Either way `subscribe` is unavailable to both hosts — persistent event subscription belongs to the Automation Host (and the GUI, cosmetically)
 
 ```python
 # Publishing (uniform in every host)
-context.events.publish("sync.complete", {"source": "quest", "count": 42})
+context.events.publish("sync.complete", {"lab": "quest", "count": 42})
 context.events.publish("alert.triggered", {"biomarker": "insulin", "value": 18.4})
 
 # Subscribing (Automation Host plugins and Core Service internal components)
@@ -108,9 +108,9 @@ Every event has a consistent envelope:
 ```json
 {
   "id": "uuid",
-  "type": "data.imported",
+  "type": "sync.complete",
   "timestamp": "2026-03-21T14:30:00Z",
-  "source": "plugin:quest_importer",
+  "source": "automation-host",
   "payload": { ... }
 }
 ```
