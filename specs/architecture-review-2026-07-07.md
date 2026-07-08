@@ -24,7 +24,9 @@ The contradiction, three layers deep:
 
 ### B. The pre-delete backup offer is impossible as written — and structurally impossible for the GUI
 
-- [ ] Reconcile [ADR-0027](adr/0027-audit-trail-and-corrections.md)'s delete flow with [ADR-0038](adr/0038-backup-execution-and-verification.md)'s exclusivity rule and [ADR-0026](adr/0026-named-scoped-tokens.md)'s GUI scopes.
+- [x] Reconcile [ADR-0027](adr/0027-audit-trail-and-corrections.md)'s delete flow with [ADR-0038](adr/0038-backup-execution-and-verification.md)'s exclusivity rule and [ADR-0026](adr/0026-named-scoped-tokens.md)'s GUI scopes.
+
+*Resolved 2026-07-08 per recommendation, direct edits (all three ADRs still Proposed). `backup.database` stays `admin`-scoped. ADR-0027's delete bullet reworded: the offer names the mechanism each client can reach — the CLI's built-in delete submits the `backup.database` job (`cli-admin` carries `admin`); the GUI, deliberately lacking `admin`, shows the age of the last successful verified backup from job history (`jobs` scope) and directs to the CLI when stale or absent; the offer is informational, not blocking. Fan-out: ADR-0038 consequences/links (exclusivity rule is why the CLI command can't be the delete-flow mechanism), ADR-0026 holder bullet (`gui` lacking `admin` is an accepted consequence, not an oversight) + consequences/links, testing-strategy.md (gui 403 on `backup.database`, cli-admin success, job-history read under `jobs` alone).*
 
 ADR-0027's delete semantics: clients surface a confirmation that "offers to run `healthspan db backup` first." But a delete request implies Core Service is up, and ADR-0038 now makes `healthspan db backup` **refuse to run while Core Service is up**. The in-service path is the `backup.database` job, whose declared scope is `admin` — under the no-laundering rule that means `jobs` + `admin`, and the `gui` token (`read write import jobs monitor`) lacks `admin`: the GUI receives a 403 for the very backup ADR-0027 requires it to offer. The CLI's built-in delete path works only because built-ins hold `cli-admin`.
 

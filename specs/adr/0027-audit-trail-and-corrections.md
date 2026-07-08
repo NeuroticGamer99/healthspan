@@ -136,7 +136,7 @@ With supersession covering corrections, true deletion is rare — the canonical 
 
 - The row is removed; the `audit_log` row (`operation = 'delete'`) preserves the full row image in `old_values`, so what was deleted is always answerable and manual restoration is possible
 - The Core Service emits `data.deleted` (reserved, Core-emitted) so aggregates and subscribers react
-- **Deletion is treated as a flagged, deliberate act in clients**: the GUI and CLI surface a confirmation that identifies exactly what will be deleted and **offers to run `healthspan db backup` first** — the platform's recovery story is backups, so the delete flow is where a backup is offered
+- **Deletion is treated as a flagged, deliberate act in clients**: the confirmation identifies exactly what will be deleted and **offers a pre-delete backup through the mechanism the client can actually reach** — a delete implies the Core Service is up, so that mechanism is the `backup.database` job ([ADR-0038](0038-backup-execution-and-verification.md)), never `healthspan db backup`, which refuses to run against a live service. The CLI's built-in delete submits the job directly (`cli-admin` carries the job's declared `admin` scope, [ADR-0026](0026-named-scoped-tokens.md)); the `gui` token deliberately lacks `admin`, so the GUI's offer is honest rather than fake — its confirmation shows the age of the last successful verified backup (read from job history via its `jobs` scope) and, when that is stale or absent, directs the user to an admin surface (the CLI). The offer is informational, not blocking. The platform's recovery story is backups, so the delete flow is where a backup is surfaced (architecture review 2026-07-07, item 1.B)
 - Rows that are part of a supersession chain (either end) are not deletable — correcting history and erasing it are different operations, and the latter does not exist for chained rows
 
 ## CQRS-Lite: Degree of Read/Write Separation
@@ -177,6 +177,8 @@ The full command/query split is rejected along with event sourcing. What remains
 - Resolves: [open-questions.md](../open-questions.md) — longitudinal data correction, audit trail, event sourcing, CQRS
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 3.A
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.A — bulk-import audit granularity (batch-level for inserts)
+- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 1.B — the pre-delete backup offer names a mechanism each client can reach
+- Related: [ADR-0038](0038-backup-execution-and-verification.md) — the `backup.database` job is the in-service pre-delete backup; `healthspan db backup` refuses to run against a live service
 - Related: [ADR-0021](0021-time-series-aggregation.md) — aggregates as rebuildable read models; invalidation via `data.*` events
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — `actor` from token identity; `auth_audit` as the distinct security record
 - Related: [ADR-0011](0011-event-bus.md) — reserved `data.*` events emitted by Core on validated mutations

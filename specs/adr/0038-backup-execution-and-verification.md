@@ -89,6 +89,7 @@ The CLI command remains for stopped-service use — the rekey flow, restores, an
 - **ADR-0019**: "scheduled `healthspan db backup`" language redirected — the in-service `backup.database` job is the scheduled producer; the CLI is the offline path
 - **ADR-0012**: lightweight-job definition corrected (in-process ≠ on the event loop; blocking work uses the ADR-0037 bridge); `backup.database` recorded as the canonical first-party lightweight job
 - **ADR-0028**: pre-rekey "verified backup" adopts this ADR's verification definition; CLI exclusivity rule extended to `db backup`
+- **ADR-0027**: the pre-delete backup offer names the in-service `backup.database` job — the exclusivity rule means `healthspan db backup` can never be the delete-flow mechanism (a delete implies a live service)
 - **security.md**: Encryption at Rest gains the backup execution + verification paragraph; single-database-owner wording covers the new exclusivity rule
 - **testing-strategy.md**: verification-gate and contention test targets
 - **Architecture review 2026-07-06**: item 2.1 (both checkboxes) resolved
@@ -100,5 +101,6 @@ The CLI command remains for stopped-service use — the rekey flow, restores, an
 - Related: [ADR-0037](0037-core-service-concurrency-and-driver.md) — the stepped-native-backup-on-a-worker-thread primitive this ADR builds on
 - Related: [ADR-0033](0033-plaintext-artifact-disposal.md) — the verify-then-commit ordering pattern
 - Related: [ADR-0011](0011-event-bus.md) — the Core-internal scheduler and `job.*` events
+- Related: [ADR-0027](0027-audit-trail-and-corrections.md) — the delete flow's pre-delete backup offer runs through the `backup.database` job
 - Related: [specs/security.md](../security.md) — INV-1; single database owner
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.1 — scheduled backup execution locus and routine verification
