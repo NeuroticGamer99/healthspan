@@ -70,7 +70,7 @@ Exports are decrypted plaintext by default — that is the point of an export, a
 
 - Wraps the export output (any format) in a single passphrase-protected archive
 - The passphrase is a **one-time sharing passphrase** entered at export time and communicated to the recipient out-of-band — it is never the master passphrase, never stored, and never written to config or logs
-- Candidate mechanism: AES-256 encrypted ZIP (e.g. `pyzipper`) — chosen for recipient ergonomics, since a physician's office can open it with common tools (7-Zip, WinZip, macOS Archive Utility alternatives) without installing platform software. Legacy ZipCrypto is explicitly unacceptable. Stronger tools with worse recipient ergonomics (`age`, GPG) can be offered later via plugin if demand exists.
+- Candidate mechanism: AES-256 encrypted ZIP (e.g. `pyzipper`) — chosen over legacy ZipCrypto (explicitly unacceptable) because AES-256 is the correct cryptographic choice, but recipient ergonomics need an honest caveat: Windows Explorer's built-in ZIP support only opens legacy ZipCrypto archives, not AES-256 ZIPs, so a physician's office on stock Windows *will* need 7-Zip or an equivalent (macOS Archive Utility and most Linux archive managers handle AES-256 ZIP natively). The `--encrypt` output prints a one-line recipient note to this effect. Stronger tools with worse recipient ergonomics (`age`, GPG) can be offered later via plugin if demand exists.
 - The unencrypted staging files created while building the archive fall under security.md's temp-file handling rules (create with restrictive permissions, delete on completion)
 
 Final mechanism choice is part of the format specification work gating this ADR's decision outcome.

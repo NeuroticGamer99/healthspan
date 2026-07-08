@@ -136,11 +136,13 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.3 — Repo hygiene and CI gates
 
-- [ ] .gitignore: broaden to bare `*recovery-kit*` (review 2.10).
-- [ ] publish.yml: pin uv version via `with: version:` (review 2.10).
-- [ ] testing-strategy.md CI Gates: add mandatory ruff/bandit S608 gate (with the ADR-0028 sanctioned-exception annotation convention) and pinned `pip-audit` scheduled + release-blocking step (review 2.9).
-- [ ] ADR-0015: AES-ZIP recipient-ergonomics honesty note (Windows Explorer can't open AES ZIP; recipient instructions) (review 2.10).
-- [ ] ADR-0034: note MCP body-text pagination expectation, cross-ref T2.3's contract (review 2.10).
+- [x] .gitignore: broaden to bare `*recovery-kit*` (review 2.10).
+- [x] publish.yml: pin uv version via `with: version:` (review 2.10).
+- [x] testing-strategy.md CI Gates: add mandatory ruff/bandit S608 gate (with the ADR-0028 sanctioned-exception annotation convention) and pinned `pip-audit` scheduled + release-blocking step (review 2.9).
+- [x] ADR-0015: AES-ZIP recipient-ergonomics honesty note (Windows Explorer can't open AES ZIP; recipient instructions) (review 2.10).
+- [x] ADR-0034: note MCP body-text pagination expectation, cross-ref T2.3's contract (review 2.10).
+
+*Done 2026-07-07:* all five fixes landed. `.gitignore`'s recovery-kit pattern is now the bare `*recovery-kit*`, matching ADR-0033's own documented convention. `publish.yml`'s setup-uv step now pins `with: version: "0.11.28"` — the current uv release (published 2026-07-07), which also hardens ZIP parsing (relevant to ADR-0015's own AES-ZIP export path); Matthew caught that 0.11.28 had just shipped after 0.11.27 was the latest at initial research, so the pin reflects the newer release. testing-strategy.md's CI Gates section gained two new mandatory subsections: a ruff/bandit S608 lint gate (mechanizing security.md's string-interpolation rule) and a pinned pip-audit gate (daily-scheduled + release-blocking, mirroring gitleaks) — ADR-0028's own `PRAGMA key` code example now carries the `# noqa: S608 — ADR-0028 sanctioned` annotation the gate's exception describes, so the ADR's canonical example doesn't fail its own new gate (a judgment call: touches a file not literally named in this bullet, included since the annotation convention is meaningless without it). ADR-0015's AES-ZIP bullet now states plainly that Windows Explorer can't open AES-256 ZIPs and that a physician's office on stock Windows needs 7-Zip or equivalent, with the `--encrypt` output printing a one-line recipient note. ADR-0034's MCP-exposure bullet now notes `body` text is unbounded in size and subject to api-reference.md's tool output contract rule 3 (T2.3) the same as any other tool output — a bounded, cursor-paginated chunk, not one unbounded string.
 
 ### T3.4 — Governance close-out (deliberately last)
 

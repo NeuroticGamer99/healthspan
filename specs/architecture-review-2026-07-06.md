@@ -80,7 +80,7 @@ The 2026-06-10 review (item 1.H) fixed this claim in open-questions.md and ADR-0
 
 - [x] [specs/README.md](README.md) arc42 table: "9. Architecture Decisions | adr/ (24 ADRs)" — there are 36. Consider dropping the count entirely so it can't drift. — *Resolved 2026-07-07: count dropped; row now reads "[adr/](adr/)" with no number.*
 - [x] [security.md](security.md) Database Security: "The CLI holds a connection only for migrations and backup" — now also `db encrypt` (ADR-0033) and the two `keys` rotation commands (ADR-0028). Say "explicitly invoked `db`/`keys` maintenance subcommands." — *Resolved 2026-07-07: sentence now enumerates all five subcommands (`db migrate`, `db backup`, `db encrypt`, `keys change-passphrase`, `keys rotate-secret-key`) under the "explicitly invoked `db`/`keys` maintenance subcommand" phrasing, matching INV-1's reworded language.*
-- [ ] [.gitignore](../.gitignore): recovery-kit patterns are `*recovery-kit*.pdf` / `*recovery-kit*.png`; ADR-0033 says "`*recovery-kit*` patterns" and doesn't fix the render format. Broaden to bare `*recovery-kit*`.
+- [x] [.gitignore](../.gitignore): recovery-kit patterns are `*recovery-kit*.pdf` / `*recovery-kit*.png`; ADR-0033 says "`*recovery-kit*` patterns" and doesn't fix the render format. Broaden to bare `*recovery-kit*`. — *Resolved 2026-07-07: `.gitignore` now carries the bare `*recovery-kit*` pattern, matching ADR-0033's own documented convention.*
 - [x] [ADR-0019](adr/0019-multi-device-sync.md) is statused "Proposed — stub" but contains a full near-term decision (single-writer + backup-only sync) that other documents cite as settled (open-questions.md Resolved, ADR-0035, security.md). Restatus to Proposed (or Accepted, see 4.A) so the index reflects reality. — *Resolved 2026-07-07: status field changed to plain "Proposed." (Accepted-flip, if warranted, is T3.4's batch-acceptance decision, not this item's.)*
 - [ ] [ADR-0008](adr/0008-process-lifecycle.md) Option Details still describe first-run generating "a new random bearer token" and printing it — superseded by ADR-0026's token set. The `Extended by` link exists; fine under governance, but the launcher section of any future user-facing doc should be written from ADR-0026, not ADR-0008.
 
@@ -126,15 +126,15 @@ ADR-0019 prescribes "a scheduled `healthspan db backup`" as the sync-safe artifa
 
 ### 2.9 Mechanize two more review-convention requirements as CI gates
 
-- [ ] security.md's "no SQL by string interpolation… enforced by code review convention and, where possible, by linting" — make it mechanical now: ruff/bandit rule S608 (or a semgrep rule) as a mandatory CI gate, with the single sanctioned `PRAGMA key` exception annotated inline (`# noqa: S608 — ADR-0028 sanctioned`). Add alongside the canary and gitleaks gates in testing-strategy.md.
-- [ ] security.md's "run `pip-audit` … before releases" — pin it as a scheduled + release-blocking CI step, same treatment as gitleaks. Unpinned advice rots.
+- [x] security.md's "no SQL by string interpolation… enforced by code review convention and, where possible, by linting" — make it mechanical now: ruff/bandit rule S608 (or a semgrep rule) as a mandatory CI gate, with the single sanctioned `PRAGMA key` exception annotated inline (`# noqa: S608 — ADR-0028 sanctioned`). Add alongside the canary and gitleaks gates in testing-strategy.md. — *Resolved 2026-07-07: new "SQL string-interpolation lint gate (mandatory)" subsection in testing-strategy.md's CI Gates. ADR-0028's own `PRAGMA key` code example now carries the `# noqa: S608 — ADR-0028 sanctioned` annotation the gate's exception describes, so the ADR's canonical example doesn't fail the very gate it justifies an exception for.*
+- [x] security.md's "run `pip-audit` … before releases" — pin it as a scheduled + release-blocking CI step, same treatment as gitleaks. Unpinned advice rots. — *Resolved 2026-07-07: new "Dependency vulnerability audit (mandatory)" subsection in testing-strategy.md's CI Gates — a pinned `pip-audit` step runs daily-scheduled and release-blocking, mirroring the gitleaks treatment.*
 
 ### 2.10 Smaller items
 
-- [ ] Broaden `.gitignore` recovery-kit pattern (see 1.K).
-- [ ] [publish.yml](../.github/workflows/publish.yml): pin the uv *version* in the pinned setup-uv action (`with: version:`) so releases are reproducible against a known resolver; SHA-pinning the action alone doesn't pin the tool it installs at runtime.
-- [ ] ADR-0015's `--encrypt` recipient-ergonomics claim: Windows Explorer opens only legacy ZipCrypto archives, not AES-256 ZIPs — a physician's office on stock Windows *will* need 7-Zip or equivalent. Keep AES ZIP (correct choice), but the ADR and the command's output should say so and offer one-line recipient instructions; "common tools" currently overstates it.
-- [ ] ADR-0034's document BLOBs: note that MCP tools must also not expose the extracted `body` of arbitrary size unpaginated (ties into 3.G).
+- [x] Broaden `.gitignore` recovery-kit pattern (see 1.K). — *Resolved 2026-07-07 — see 1.K above.*
+- [x] [publish.yml](../.github/workflows/publish.yml): pin the uv *version* in the pinned setup-uv action (`with: version:`) so releases are reproducible against a known resolver; SHA-pinning the action alone doesn't pin the tool it installs at runtime. — *Resolved 2026-07-07: `with: version: "0.11.28"` added to the setup-uv step — the current uv release (published 2026-07-07), which happens to include a ZIP-parsing hardening fix relevant to ADR-0015's own AES-ZIP export path.*
+- [x] ADR-0015's `--encrypt` recipient-ergonomics claim: Windows Explorer opens only legacy ZipCrypto archives, not AES-256 ZIPs — a physician's office on stock Windows *will* need 7-Zip or equivalent. Keep AES ZIP (correct choice), but the ADR and the command's output should say so and offer one-line recipient instructions; "common tools" currently overstates it. — *Resolved 2026-07-07: the AES-ZIP bullet now states plainly that Windows Explorer can't open AES-256 ZIPs (ZipCrypto only) and that a physician's office on stock Windows needs 7-Zip or equivalent; `--encrypt` output prints a one-line recipient note.*
+- [x] ADR-0034's document BLOBs: note that MCP tools must also not expose the extracted `body` of arbitrary size unpaginated (ties into 3.G). — *Resolved 2026-07-07: the MCP-exposure bullet now notes `body` text is unbounded in size and subject to the same pagination/row-cap discipline (api-reference.md rule 3, from T2.3) as any other tool output — returned as a bounded, cursor-paginated chunk rather than one unbounded string.*
 
 ---
 
@@ -214,7 +214,7 @@ FastAPI + fastmcp + typer + PySide6 + sqlcipher3 + keyring + argon2-cffi remain 
 - [x] design-rationale.md stale lines (1.G)
 - [x] security.md trust-model sync qualifier (1.H)
 - [x] ADR-0019 status (1.K)
-- [ ] .gitignore recovery-kit pattern (2.10)
+- [x] .gitignore recovery-kit pattern (2.10)
 
 ---
 

@@ -212,6 +212,14 @@ Because all log output is structured JSON, a second check can assert that log en
 
 A pinned `gitleaks` step scans the full tree on every CI run for committed credentials — tokens, keys, passphrases. The hardcoded test passphrase is allowlisted. To be honest about scope: this catches *credential patterns*, not health data — there is no reliable pattern for a lab value. The personal-data containment policy ([CLAUDE.md](../CLAUDE.md)) is enforced by the `specs/personal/` gitignore and review discipline; secret scanning backstops only its credential-shaped failure modes (e.g. a Recovery Kit render or bearer token pasted into a spec).
 
+### SQL string-interpolation lint gate (mandatory)
+
+Mechanizes security.md's "No SQL statement in the codebase may be constructed by string interpolation or concatenation of user-supplied values ... enforced by code review convention and, where possible, by linting": a mandatory `ruff`/`bandit` rule `S608` runs as a CI step and fails the build on any hit. The single sanctioned exception — [ADR-0028](adr/0028-key-derivation-and-rotation.md)'s raw-hex `PRAGMA key`/`PRAGMA rekey` handoff, where only locally generated, format-validated hex is interpolated — is annotated inline at the call site (`# noqa: S608 — ADR-0028 sanctioned`) rather than exempted at the file or project level, so any other S608 hit in the same file still fails.
+
+### Dependency vulnerability audit (mandatory)
+
+A pinned `pip-audit` step runs on a schedule (daily) and as a release-blocking gate, the same treatment as the `gitleaks` step above — mechanizing security.md's "run `pip-audit` ... before releases" from workflow advice into an enforced check. A release cannot publish while a known vulnerability is open against a pinned dependency.
+
 ---
 
 ## Links

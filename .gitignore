@@ -11,8 +11,7 @@ exports/
 export/
 
 # Recovery Kit renders (contain the secret key — see ADR-0033)
-*recovery-kit*.pdf
-*recovery-kit*.png
+*recovery-kit*
 .claude/settings.local.json
 
 # Python
