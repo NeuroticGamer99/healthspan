@@ -94,6 +94,11 @@ What export options exist for each body composition device (currently InBody 120
 
 ---
 
+## Operations
+
+**Backup cadence and retention defaults ([ADR-0038](adr/0038-backup-execution-and-verification.md))**
+ADR-0038 specifies the backup *mechanism* — the Core-internal scheduler submits `backup.database` on a configured cadence, and a successful run prunes verified backups oldest-first to a configured retention count — but fixes **no default values** for either the cadence or the count. Both are `[backup]` config knobs with no defaults yet. When chosen, the defaults belong in ADR-0038 itself, following the project's pattern of recording config defaults in the owning ADR (e.g. ADR-0037's `busy_timeout = 5000ms`, ADR-0035's `synchronous = NORMAL`) — not in testing-strategy, which can only assert behavior against a configured value. Deferred deliberately; no default cadence/count is load-bearing before implementation. (Testing-strategy already covers the scheduled-trigger and retention-pruning *behavior*.)
+
 ---
 
 ## Resolved
