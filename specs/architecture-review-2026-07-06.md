@@ -26,7 +26,7 @@ Under the default token set, the flagship automation — the one ADR-0025 uses t
 
 ### B. ADR-0011's publish example uses a reserved namespace its own rules forbid
 
-- [ ] Fix the `context.events.publish("data.imported", …)` example in [ADR-0011](adr/0011-event-bus.md)'s Event API section.
+- [x] Fix the `context.events.publish("data.imported", …)` example in [ADR-0011](adr/0011-event-bus.md)'s Event API section. — *Resolved 2026-07-07: the publish-example line now reads `context.events.publish("sync.complete", {"source": "quest", "count": 42})` — `sync.*` matches the existing payload shape and the catalog's "Automation Host (sync/poller plugins)" description. The subscribe/unsubscribe examples and the event-schema envelope, which depict reacting to a Core-emitted `data.imported` event rather than a plugin publishing one, were left as-is.*
 
 The example is presented as "uniform in every host," but `data.*` is a reserved namespace that no token may publish through `/v1/events/inbound` (ADR-0011's own catalog and ADR-0026 rule 2). From an Automation Host plugin, the exact call shown is structurally rejected. Replace with a namespace a plugin can actually publish (`sync.complete` or `external.*`). Doc-example bug, not a design bug — but this is exactly the example plugin authors will copy.
 
@@ -56,9 +56,9 @@ ADR-0025's prose matrix row for `import_adapter` says "job child process (heavyw
 
 ### G. design-rationale.md contains three stale claims the ADRs have since overruled
 
-- [ ] "…or by switching to the PostgreSQL backend (ADR-0003) for true multi-master write access" — ADR-0003 (Accepted) decided **SQLite-only for v1**; PostgreSQL is explicitly *not* an available backend and requires a new ADR chain. The sentence presents it as a current option.
-- [ ] "Direct integration with the MCP server and Core Service without a network hop" and "The MCP server queries SQLite and returns focused result sets" (Why SQLite section) — the MCP server has **no** database access (ADR-0006) and reaches data over REST; the same document's MCP Server Design section says so. Rewrite the Why SQLite bullets to attribute database access to the Core Service only.
-- [ ] The Adapting This Project section references extending "MCP server tools … with additional query patterns" — fine, but consider pointing at the plugin route (ADR-0010) rather than implying core edits.
+- [x] "…or by switching to the PostgreSQL backend (ADR-0003) for true multi-master write access" — ADR-0003 (Accepted) decided **SQLite-only for v1**; PostgreSQL is explicitly *not* an available backend and requires a new ADR chain. The sentence presents it as a current option. — *Resolved 2026-07-07: rewritten to state plainly that multi-master write access is not currently available and would require a new ADR chain superseding ADR-0003, not a switch a user can make today.*
+- [x] "Direct integration with the MCP server and Core Service without a network hop" and "The MCP server queries SQLite and returns focused result sets" (Why SQLite section) — the MCP server has **no** database access (ADR-0006) and reaches data over REST; the same document's MCP Server Design section says so. Rewrite the Why SQLite bullets to attribute database access to the Core Service only. — *Resolved 2026-07-07: both bullets now attribute direct SQLite access to the Core Service only; the MCP server is described as relaying Core-Service-produced result sets to the AI client over the Core REST API, matching the document's own MCP Server Design section ("no direct database access").*
+- [ ] The Adapting This Project section references extending "MCP server tools … with additional query patterns" — fine, but consider pointing at the plugin route (ADR-0010) rather than implying core edits. *(Left open 2026-07-07: T3.2 scoped to the two stale-claim bullets above per the worklist; this one is a soft style suggestion, not a stale/false claim, so it wasn't bundled in.)*
 
 design-rationale.md is a living document, so these are ordinary edits.
 
@@ -78,10 +78,10 @@ The 2026-06-10 review (item 1.H) fixed this claim in open-questions.md and ADR-0
 
 ### K. Minor staleness and drift
 
-- [ ] [specs/README.md](README.md) arc42 table: "9. Architecture Decisions | adr/ (24 ADRs)" — there are 36. Consider dropping the count entirely so it can't drift.
+- [x] [specs/README.md](README.md) arc42 table: "9. Architecture Decisions | adr/ (24 ADRs)" — there are 36. Consider dropping the count entirely so it can't drift. — *Resolved 2026-07-07: count dropped; row now reads "[adr/](adr/)" with no number.*
 - [x] [security.md](security.md) Database Security: "The CLI holds a connection only for migrations and backup" — now also `db encrypt` (ADR-0033) and the two `keys` rotation commands (ADR-0028). Say "explicitly invoked `db`/`keys` maintenance subcommands." — *Resolved 2026-07-07: sentence now enumerates all five subcommands (`db migrate`, `db backup`, `db encrypt`, `keys change-passphrase`, `keys rotate-secret-key`) under the "explicitly invoked `db`/`keys` maintenance subcommand" phrasing, matching INV-1's reworded language.*
 - [ ] [.gitignore](../.gitignore): recovery-kit patterns are `*recovery-kit*.pdf` / `*recovery-kit*.png`; ADR-0033 says "`*recovery-kit*` patterns" and doesn't fix the render format. Broaden to bare `*recovery-kit*`.
-- [ ] [ADR-0019](adr/0019-multi-device-sync.md) is statused "Proposed — stub" but contains a full near-term decision (single-writer + backup-only sync) that other documents cite as settled (open-questions.md Resolved, ADR-0035, security.md). Restatus to Proposed (or Accepted, see 4.A) so the index reflects reality.
+- [x] [ADR-0019](adr/0019-multi-device-sync.md) is statused "Proposed — stub" but contains a full near-term decision (single-writer + backup-only sync) that other documents cite as settled (open-questions.md Resolved, ADR-0035, security.md). Restatus to Proposed (or Accepted, see 4.A) so the index reflects reality. — *Resolved 2026-07-07: status field changed to plain "Proposed." (Accepted-flip, if warranted, is T3.4's batch-acceptance decision, not this item's.)*
 - [ ] [ADR-0008](adr/0008-process-lifecycle.md) Option Details still describe first-run generating "a new random bearer token" and printing it — superseded by ADR-0026's token set. The `Extended by` link exists; fine under governance, but the launcher section of any future user-facing doc should be written from ADR-0026, not ADR-0008.
 
 ---
@@ -203,17 +203,17 @@ FastAPI + fastmcp + typer + PySide6 + sqlcipher3 + keyring + argon2-cffi remain 
 
 ### 4.B Keep the two host/scope matrices single-sourced
 
-- [ ] The host-process matrix now exists in ADR-0025 (normative) and security.md (summary), and the scope matrix in ADR-0026 (normative) and security.md (summary). Items 1.A and 1.F show these can drift. Add a one-line "summary of ADR-00XX — that ADR is authoritative" header over each security.md table, and when the enforcement code exists, generate-or-test the doc tables against `HOST_LOADABLE_TYPES` and the default-token fixture (a docs-consistency test in CI, same spirit as the ADR-0025 no-loader-import test).
+- [x] The host-process matrix now exists in ADR-0025 (normative) and security.md (summary), and the scope matrix in ADR-0026 (normative) and security.md (summary). Items 1.A and 1.F show these can drift. Add a one-line "summary of ADR-00XX — that ADR is authoritative" header over each security.md table, and when the enforcement code exists, generate-or-test the doc tables against `HOST_LOADABLE_TYPES` and the default-token fixture (a docs-consistency test in CI, same spirit as the ADR-0025 no-loader-import test). — *Resolved 2026-07-07 for the doc-header half: security.md's host-process table gained a "Summary of ADR-0025's `HOST_LOADABLE_TYPES` — that ADR is authoritative" caption. On inspection, security.md contains only one actual table matching this description — there is no scope/token table to caption; ADR-0026's scope-grants and default-token tables are only ever summarized in prose there. Added an equivalent authoritative-source clause to that prose sentence instead. The generate-or-test-in-CI half is deferred with 4.B's own text ("when the enforcement code exists") — tracked as the same forward-looking item as 4.B's CI note, not separately re-logged.*
 
 ### 4.C Small fixes list (mechanical)
 
-- [ ] specs/README.md arc42 ADR count (1.K)
-- [ ] security.md CLI direct-DB command enumeration (1.K)
-- [ ] observability.md startup order and 503 example after 1.C is decided
-- [ ] ADR-0011 publish example (1.B)
-- [ ] design-rationale.md stale lines (1.G)
-- [ ] security.md trust-model sync qualifier (1.H)
-- [ ] ADR-0019 status (1.K)
+- [x] specs/README.md arc42 ADR count (1.K)
+- [x] security.md CLI direct-DB command enumeration (1.K)
+- [x] observability.md startup order and 503 example after 1.C is decided
+- [x] ADR-0011 publish example (1.B)
+- [x] design-rationale.md stale lines (1.G)
+- [x] security.md trust-model sync qualifier (1.H)
+- [x] ADR-0019 status (1.K)
 - [ ] .gitignore recovery-kit pattern (2.10)
 
 ---

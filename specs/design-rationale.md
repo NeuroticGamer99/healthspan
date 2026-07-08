@@ -65,11 +65,11 @@ SQLite gives you:
 - A single portable file — trivial to copy, backup, and move between machines
 - Full SQL query capability with no connection layer
 - Hot backups via the SQLite Online Backup API that preserve encryption (the backup file is also encrypted ciphertext)
-- Direct integration with the MCP server and Core Service without a network hop
+- Direct in-process integration with the Core Service, with no network hop between application code and the database
 
-The MCP server queries SQLite and returns focused result sets to the AI client, keeping context window usage efficient regardless of how large the database grows.
+The Core Service queries SQLite directly and returns focused result sets; the MCP server has no direct database access (ADR-0006) and relays these result sets to the AI client over the Core REST API, keeping context window usage efficient regardless of how large the database grows.
 
-**The local-first constraint that remains real** is SQLite's single-writer model: only one Core Service instance may write at a time. Concurrent writes from multiple machines corrupt the database. This is a concurrency constraint, not a privacy constraint. It is addressed by the single-writer + cloud sync pattern (ADR-0019) for multi-device use, or by switching to the PostgreSQL backend (ADR-0003) for true multi-master write access.
+**The local-first constraint that remains real** is SQLite's single-writer model: only one Core Service instance may write at a time. Concurrent writes from multiple machines corrupt the database. This is a concurrency constraint, not a privacy constraint. It is addressed by the single-writer + cloud sync pattern (ADR-0019) for multi-device use. True multi-master write access is not a currently available option — ADR-0003 (Accepted) commits to SQLite-only for v1; supporting a multi-master backend would require a new ADR chain superseding that decision, not a switch a user can make today.
 
 ---
 

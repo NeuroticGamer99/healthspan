@@ -126,11 +126,13 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ### T3.2 — Doc-example and staleness fixes
 
-- [ ] ADR-0011 publish example → non-reserved namespace (review 1.B).
-- [ ] design-rationale.md: PostgreSQL-as-option sentence; "MCP server queries SQLite" / "without a network hop" bullets (review 1.G).
-- [ ] specs/README.md arc42 ADR count — drop the number (review 1.K).
-- [ ] ADR-0019 status: "Proposed — stub" → "Proposed" (review 1.K).
-- [ ] "Summary of ADR-00XX — that ADR is authoritative" headers over security.md's two matrix tables (review 4.B).
+- [x] ADR-0011 publish example → non-reserved namespace (review 1.B).
+- [x] design-rationale.md: PostgreSQL-as-option sentence; "MCP server queries SQLite" / "without a network hop" bullets (review 1.G).
+- [x] specs/README.md arc42 ADR count — drop the number (review 1.K).
+- [x] ADR-0019 status: "Proposed — stub" → "Proposed" (review 1.K).
+- [x] "Summary of ADR-00XX — that ADR is authoritative" headers over security.md's two matrix tables (review 4.B).
+
+*Done 2026-07-07:* all five fixes landed. ADR-0011's publish example now uses `sync.complete` (matches its existing sync-summary payload and the catalog's sync/poller description); the subscribe/unsubscribe/envelope examples, which depict reacting to a Core-emitted event rather than a plugin publishing one, were correctly left alone. design-rationale.md's PostgreSQL sentence now states plainly that multi-master write access isn't currently available (would need a new ADR chain superseding ADR-0003); the Why-SQLite bullets now attribute direct database access to the Core Service only, with the MCP server described as relaying results over the Core REST API — matching the doc's own MCP Server Design section. The doc's third 1.G bullet (Adapting-This-Project's plugin-route suggestion) was left open — it's a soft style suggestion, not a stale/false claim, and wasn't in this item's listed scope. specs/README.md's arc42 row dropped the stale ADR count entirely. ADR-0019's status is now plain "Proposed" (governance-compliant status-only edit). For 4.B: security.md turned out to contain only *one* actual table (host-process), not two — it gained the authoritative-ADR caption; the "scope matrix" has no table counterpart in security.md (only prose), so an equivalent authoritative-source clause was added to that sentence instead. 4.B's CI generate-or-test half stays deferred per its own text pending the enforcement code.
 
 ### T3.3 — Repo hygiene and CI gates
 

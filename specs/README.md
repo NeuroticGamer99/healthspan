@@ -57,7 +57,7 @@ The documentation structure is informed by [arc42](https://arc42.org/), a widely
 | 6. Runtime View | [ADR-0008](adr/0008-process-lifecycle.md) (lifecycle), [observability.md](observability.md) (startup sequence) |
 | 7. Deployment View | [ADR-0008](adr/0008-process-lifecycle.md) (launcher, Docker, systemd), [ADR-0023](adr/0023-distribution-mechanism.md) (distribution) |
 | 8. Crosscutting Concepts | [design-rationale.md](design-rationale.md) (timestamps, canonical names, versioning), [security.md](security.md), [observability.md](observability.md) |
-| 9. Architecture Decisions | [adr/](adr/) (24 ADRs) |
+| 9. Architecture Decisions | [adr/](adr/) |
 | 10. Quality Requirements | [security.md](security.md), [observability.md](observability.md), [testing-strategy.md](testing-strategy.md) |
 | 11. Risks and Technical Debt | [open-questions.md](open-questions.md) |
 | 12. Glossary | [glossary.md](glossary.md) |

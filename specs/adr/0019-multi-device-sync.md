@@ -1,7 +1,7 @@
 # ADR-0019: Multi-Device Sync
 
 ## Status
-Proposed — stub
+Proposed
 
 ## Context and Problem Statement
 A user who works on both a desktop and a laptop needs the database to stay in sync across devices. The current local-first SQLite design has no sync mechanism. ADR-0003 decided SQLite-only for v1, so a PostgreSQL backend on a shared server is not an available answer without a new ADR (which must also revisit migrations and encryption); sync semantics (conflict resolution, offline use, which device is authoritative) are unaddressed either way.

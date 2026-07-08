@@ -88,7 +88,7 @@ No plugin code runs inside the Core Service (ADR-0025), so no plugin touches the
 
 ```python
 # Publishing (uniform in every host)
-context.events.publish("data.imported", {"source": "quest", "count": 42})
+context.events.publish("sync.complete", {"source": "quest", "count": 42})
 context.events.publish("alert.triggered", {"biomarker": "insulin", "value": 18.4})
 
 # Subscribing (Automation Host plugins and Core Service internal components)
