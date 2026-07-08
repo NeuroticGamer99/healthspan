@@ -82,7 +82,7 @@ A small plaintext file created by `healthspan init` next to the database (`healt
 | `salt` | Base64; present only in passphrase-only mode |
 | `created_utc`, `rotated_utc` | Provenance timestamps |
 
-**Nothing in the sidecar is secret** — KDF parameters and salts are safe in plaintext; what they are not safe from is *loss*. The sidecar therefore lives with the database and follows it everywhere: `healthspan db backup` copies it alongside every backup, restore requires it, and new-machine setup (`healthspan init --restore`) expects the database file and its sidecar together. It still gets owner-only permissions like every platform file. It is rewritten only by `healthspan init` and the rotation commands below.
+**Nothing in the sidecar is secret** — KDF parameters and salts are safe in plaintext; what they are not safe from is *loss*. The sidecar therefore lives with the database and follows it everywhere: `healthspan db backup` copies it alongside every backup, `healthspan db restore` refuses to run without it ([ADR-0038](0038-backup-execution-and-verification.md)) and carries it back into place, and new-machine setup (`healthspan init --restore`) expects the database file and its sidecar together. It still gets owner-only permissions like every platform file. It is rewritten only by `healthspan init` and the rotation commands below.
 
 A missing sidecar fails with an error that says exactly how to recover (restore the sidecar from any backup of the same key generation; or, if parameters were never changed from the documented initial defaults, regenerate it).
 

@@ -143,6 +143,8 @@ Tests that specifically validate security properties.
 - **Encryption round-trip**: create database with SQLCipher → close → reopen with correct key → data intact; reopen with wrong key → failure
 - **Rekey (ADR-0028)**: `change-passphrase` and `rotate-secret-key` flows — old credentials fail after rotation, new credentials open, data intact; the pre-rekey backup still opens with the *old* credentials; rotation refuses to run without a verified backup unless `--no-backup`; missing `.keyparams` sidecar fails with the documented recovery guidance
 - **Recovery Kit flow**: init → generate Recovery Kit → simulate new machine → restore from kit → database unlocks
+- **Backup restore round trip ([ADR-0038](adr/0038-backup-execution-and-verification.md))**: backup → wipe the live database and sidecar → `healthspan db restore` → verification passes → database opens, data intact
+- **Restore refusal cases ([ADR-0038](adr/0038-backup-execution-and-verification.md))**: restore refuses while Core Service is up; a missing `.keyparams` sidecar fails with the documented recovery guidance; a corrupted backup fails verification and leaves the existing live file untouched; a backup with an older `schema_version` restores without implicit migration and `healthspan db migrate` then brings it current; a backup with a newer `schema_version` is refused with nothing changed
 - **Health data in logs**: mechanized by the log canary gate (see [CI Gates](#ci-gates)) — all log output captured during the full test run is scanned against the canary manifest; no fixture health value may appear
 
 ### Migration tests
