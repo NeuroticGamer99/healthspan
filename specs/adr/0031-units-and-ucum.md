@@ -6,7 +6,7 @@ Proposed
 ## Context and Problem Statement
 Health values are meaningless without units, and comparing values across units without normalization produces dangerous errors. The [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md) flagged this as a real safety bug in the reference-range sketch ([ADR-0005](0005-reference-range-frameworks.md)): an ApoB target expressed in mg/dL compared against a result in g/L silently produces garbage flags (a factor-of-100 error). The platform therefore needs (a) a standard, unambiguous way to record units, and (b) a defined path to normalize units before any comparison.
 
-Units appear in at least three places: the unit a lab reported a result in, a canonical unit per biomarker (see [ADR-0030](0030-biomarker-identity.md)'s `canonical_unit`), and the unit a reference-range framework's thresholds are expressed in ([ADR-0005](0005-reference-range-frameworks.md)). All three must speak the same units language for normalization to be possible.
+Units appear in at least four places: the unit a lab reported a result in, a canonical unit per biomarker (see [ADR-0030](0030-biomarker-identity.md)'s `canonical_unit`), the unit a reference-range framework's thresholds are expressed in ([ADR-0005](0005-reference-range-frameworks.md)), and the dose of an intervention ([data-model.md](../data-model.md) intervention dose history). All must speak the same units language for normalization to be possible.
 
 This ADR decides the units *representation* and the *normalization requirement*. The choice of a specific conversion engine/dependency is a separable question captured here as an open sub-decision, deliberately not settled ahead of research.
 
@@ -28,6 +28,7 @@ Chosen: **units are stored as UCUM strings; every biomarker has a canonical unit
 - The unit a result was reported in is stored as a UCUM string on the result row.
 - `biomarkers.canonical_unit` ([ADR-0030](0030-biomarker-identity.md)) holds the biomarker's canonical UCUM unit.
 - Reference-range framework thresholds ([ADR-0005](0005-reference-range-frameworks.md)) carry a UCUM `unit` column.
+- Intervention dose `unit` ([data-model.md](../data-model.md) intervention dose history) is a UCUM string too. A dose is not compared to a biomarker `canonical_unit`, but storing it as UCUM keeps dose-vs-lab trend correlation (e.g. `mg/wk` vs `mg/d` across a titration history) normalizable when that analysis is built, rather than stranding it behind free-text later.
 - No value is ever compared against a range, or trended against another value, without first normalizing both to the biomarker's canonical unit. A comparison whose units cannot be reconciled must fail loudly (surface an error/flag), never silently produce a result.
 
 Storing UCUM strings costs nothing today and is the prerequisite that keeps every downstream option open. It is adopted now, unconditionally.

@@ -87,7 +87,7 @@ Discrete architectural decisions that emerge from this document should be captur
 - **Schema considerations:**
   - `intervention_id` — FK to `interventions`
   - `effective_date` — when this dose took effect; timestamp quadruple (UTC + local + tz + inferred flag)
-  - `dose`, `unit` — e.g. `200`, `mg/week`
+  - `dose`, `unit` — e.g. `200`, `mg/wk` (UCUM string, [ADR-0031](adr/0031-units-and-ucum.md); `wk`, not `week`)
   - `change_type` enum: `initiation`, `increase`, `decrease`, `hold`, `resumption`, `discontinuation`
   - `authority_type` enum: `prescribing_physician`, `supervising_clinician`, `self`, `protocol` — the primary axis for distinguishing medically directed changes from self-adjustment
   - `ordered_by` — free text; name/role of the directing party (NULL when `authority_type = 'self'`)

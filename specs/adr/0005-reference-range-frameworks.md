@@ -82,7 +82,9 @@ CREATE TABLE framework_ranges (
     range_text      TEXT,           -- for non-numeric targets or notes
     effective_date  TEXT,           -- ISO-8601 date; NULL = always current, populated = point-in-time (option 3 for free)
     notes           TEXT,
-    UNIQUE (framework_id, biomarker_id, effective_date)
+    UNIQUE (framework_id, biomarker_id, effective_date),
+    CHECK (range_low IS NULL OR range_high IS NULL OR range_low <= range_high),
+    CHECK (range_low IS NOT NULL OR range_high IS NOT NULL OR range_text IS NOT NULL)
 ) STRICT;
 
 -- The UNIQUE constraint above does not constrain the dateless default: SQLite treats NULLs
@@ -99,6 +101,7 @@ Notes:
 - `unit` is `NOT NULL` by design: a numeric range with no unit is the safety bug this ADR corrects. Comparison normalizes the range and the result to the biomarker's `canonical_unit` ([ADR-0030](0030-biomarker-identity.md)) via the mechanism in [ADR-0031](0031-units-and-ucum.md).
 - **Point-in-time lookup rule (deterministic).** For a result drawn on date *D*, the applicable range for a `(framework_id, biomarker_id)` pair is the row with the greatest `effective_date ≤ D`; if no dated row qualifies, the `effective_date IS NULL` row is the dateless default. The `UNIQUE` constraint and the partial index above guarantee this resolves to at most one row — dated rows are unique per date, the dateless default is unique per pair — so point-in-time resolution is never ambiguous.
 - **STRICT tables and column types.** These tables are declared `STRICT` (real per-column type enforcement — see [ADR-0035](0035-migration-execution-semantics.md)), which is why `effective_date` is `TEXT` (ISO-8601) rather than a `DATE` affinity name: STRICT permits only `INT`/`INTEGER`/`REAL`/`TEXT`/`BLOB`/`ANY` as column types.
+- **Two integrity CHECKs guard the range itself.** `range_low <= range_high` (when both are present) rejects an inverted range — the same silently-wrong-flag family the mandatory-`unit` correction closed, one row-level typo away from flagging every result out-of-range. The second CHECK (`range_low` OR `range_high` OR `range_text` present) forbids a contentless row that would satisfy every foreign key yet carry no target. Both compose with STRICT unchanged.
 
 ## Links
 - Related: [design-rationale.md](../design-rationale.md) — original per-result reference range decision
@@ -107,3 +110,4 @@ Notes:
 - Depends on: [ADR-0031](0031-units-and-ucum.md) — UCUM unit strings and unit-normalized comparison
 - Resolves review item 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B (framework portion) — `UNIQUE(framework_id, biomarker_id, effective_date)` + partial default index + deterministic point-in-time lookup rule; STRICT-legal `effective_date TEXT`
+- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 3.C — `framework_ranges` integrity CHECKs (no inverted range; no contentless row)
