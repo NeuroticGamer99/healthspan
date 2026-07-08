@@ -1,0 +1,133 @@
+# Architecture & Security Review — 2026-07-07
+
+Full review of README, all design documents (security, design-rationale, data-model, testing-strategy, observability, api-reference, glossary, open-questions), all 42 ADRs, and the repo-level files (pyproject.toml, .gitignore, publish.yml, NOTICE). Follows the same format as [architecture-review-2026-07-06.md](architecture-review-2026-07-06.md); items are checklists for working through over time.
+
+**Remediation check:** every resolved item from the 2026-07-06 review was verified against the current documents. All are genuinely resolved — ADR-0037 through ADR-0042 exist and match their resolution notes, and the claimed edits to security.md, testing-strategy.md, api-reference.md, observability.md, ADR-0011/0012/0026/0027/0028/0036 are all present and mutually consistent. Deliberately still open from that review: the 4.A batch acceptance flip (worklist T3.4 — its gate has now cleared), 4.B's CI-generation half (deferred until enforcement code exists), 1.G's third bullet and 1.K's ADR-0008 note (soft items), and parked 3.F (CGM aggregation).
+
+**Overall verdict:** No fundamental architecture change is needed — the third review in a row to say so, and the confidence is now higher, not lower: supervision-by-key-custody (ADR-0042), the verify-then-publish backup pipeline (ADR-0038), and the launcher-owned startup sequence (ADR-0039) compose with the older decisions instead of straining them. The findings below are again seams created by the newest remediation layer — chiefly that ADR-0042's observability story depends on an event channel its own rules forbid (1.A), and that the backup-before-delete flow died when backups moved in-service (1.B). Both sit in still-Proposed ADRs; resolve them **before** the batch acceptance flip, while they are still direct edits.
+
+---
+
+## 1. Inconsistencies between documents
+
+### A. ADR-0042's supervision events cannot be emitted as specified ⚠️ most important finding
+
+- [x] Give the launcher's supervision reports a mechanism that respects the event-forgery rules, and correct the Core-down observability claims. — *Resolved 2026-07-08 per recommendation, direct edits (all targets still Proposed): ADR-0042 gains a "Supervision reporting" section — `POST /v1/system/process-reports`, from which Core itself emits `system.process.restarted`/`failed`/`recovered` and `system.core.restarted` (forgery rules intact; `/v1/events/inbound` still rejects `system.*` for every token); ADR-0026 gains an eighth scope `supervise` (that endpoint only — deliberately not `events`) and an eighth default token `launcher` (keyring `token:launcher`; ADR-0040 liveness stays credential-free). Core-down states use honest mechanisms: owner-only launcher status file `<database-path>.launcher-status.json` (diagnostics-not-correctness, read by `healthspan status` with Core down), GUI SSE-disconnect signal, and `system.core.restarted` filed via the same endpoint after a restarted Core passes readiness — the status file is the authoritative record, events the best-effort notification layer. Fan-out: ADR-0011 catalog, ADR-0025 lifecycle-bullet cite, ADR-0040 clarifying note, security.md scope list + reserved-namespace paragraph, testing-strategy (supervision-reporting security tests + supervision integration test reworded).*
+
+The contradiction, three layers deep:
+
+1. ADR-0042 has **the launcher** publishing a `system.*` event on every restart, on circuit-breaker trip, and on Core Service exit in interactive mode ("a `system.*` event, a nonzero-visible status"). [ADR-0025](adr/0025-plugin-host-process-matrix.md) makes the same assumption ("status command, `system.*` events, GUI indicator").
+2. But `system.*` is a **reserved namespace**: [ADR-0011](adr/0011-event-bus.md)'s catalog and [ADR-0026](adr/0026-named-scoped-tokens.md)'s rule 2 say reserved events are emitted only by the Core Service itself and are never accepted through `/v1/events/inbound` *for any token* — and testing-strategy.md asserts exactly that rejection. The launcher also holds **no credential at all**: ADR-0040 deliberately freed it from needing one for liveness, and ADR-0026's default token set contains no launcher entry.
+3. And the event bus lives **inside Core Service** (ADR-0011), so an event about Core Service being down structurally cannot exist until Core Service is back up. `healthspan status` and the GUI indicator likewise have no specified way to read the launcher's supervision state (restart counts, breaker state, degraded processes).
+
+**Recommendation:** mirror the job-progress pattern, which solved exactly this shape (a non-Core process needing to cause a reserved event). (a) A purpose-built authenticated endpoint (e.g. `POST /v1/system/process-reports`) accepting supervision reports; the Core Service validates and **itself emits** the reserved `system.*` event, source-stamped — forgery rules intact. (b) A new minted `launcher` token whose only grant is that endpoint (a narrow scope or the endpoint's own declaration; not `events`) — ADR-0040's liveness story is unaffected, since the probe stays credential-free and this token never appears in argv or compose files (the launcher holds it in the keyring like every other client). Keyless-child restarts always happen while Core Service is up, so this covers the load-bearing cases. (c) For Core-down states, strike the event language and state the honest mechanism: the launcher's own status surface (owner-only status file or launcher stdout/exit status) is what `healthspan status` reads; the GUI treats SSE disconnect as its Core-down signal; and Core Service can emit `system.core.restarted` itself at boot when the launcher's start signals restart-rather-than-cold-start. Fan-out: ADR-0042, ADR-0025's Automation Host lifecycle bullet, ADR-0026's default table (7 → 8 credentials) and counts, ADR-0011's catalog (new `system.*` members), testing-strategy.md.
+
+### B. The pre-delete backup offer is impossible as written — and structurally impossible for the GUI
+
+- [ ] Reconcile [ADR-0027](adr/0027-audit-trail-and-corrections.md)'s delete flow with [ADR-0038](adr/0038-backup-execution-and-verification.md)'s exclusivity rule and [ADR-0026](adr/0026-named-scoped-tokens.md)'s GUI scopes.
+
+ADR-0027's delete semantics: clients surface a confirmation that "offers to run `healthspan db backup` first." But a delete request implies Core Service is up, and ADR-0038 now makes `healthspan db backup` **refuse to run while Core Service is up**. The in-service path is the `backup.database` job, whose declared scope is `admin` — under the no-laundering rule that means `jobs` + `admin`, and the `gui` token (`read write import jobs monitor`) lacks `admin`: the GUI receives a 403 for the very backup ADR-0027 requires it to offer. The CLI's built-in delete path works only because built-ins hold `cli-admin`.
+
+**Do not lower `backup.database`'s scope to fix this.** A `jobs`-only requirement would let any jobs-holder (including `watch-import` and a prompt-injected client holding a jobs-scoped token) thrash backups — and because retention prunes oldest-first after each success, rapid successful backups would silently destroy backup-history depth. `admin` is correct. Instead: (a) reword ADR-0027's delete flow to name the real mechanism — "offers to take a backup first (the `backup.database` job, or `healthspan db backup` when the service is stopped)"; (b) specify the GUI's degraded offer honestly: with `jobs` scope it can read job history, so it shows the age of the last successful verified backup and directs the user to an admin surface (CLI) if that is stale, rather than pretending it can run one.
+
+### C. Minor staleness and drift
+
+- [ ] README: "ZeroMQ and MQTT designed as **adapter plugins**" — transport adapters are internal components, *not* loadable plugins (ADR-0025/ADR-0011; the glossary already says so). Reword to "adapters."
+- [ ] README "Authenticated API — bearer token on every endpoint" and glossary's "required in the `Authorization` header of every HTTP request" — both now have one named exemption (the credential-free liveness probe, [ADR-0040](adr/0040-health-endpoint-authentication.md)). Add the qualifier so the platform's own docs don't overstate what its tests deliberately refute.
+- [ ] README "documented across 20+ ADRs" (twice) — true but drifting (there are 42); drop the count as specs/README.md did after the last review.
+- [ ] [NOTICE](../NOTICE) first line still reads "**biocontext**" — pre-rename leftover; the copyright line should say Healthspan.
+- [ ] [ADR-0011](adr/0011-event-bus.md) envelope example: `"source": "plugin:quest_importer"` — no stamping rule produces that shape. Sources are authenticated token names (`automation-host`, `job:<uuid>`) or internal-component identities; a Quest import's `data.imported` is Core-emitted. Same class as the last review's 1.B; use a shape that can exist.
+- [ ] [ADR-0012](adr/0012-job-abstraction.md) job-state vocabulary drifts: the lifecycle diagram says `started`, the status example and query filter say `running`, the startup sweep hedges with "`started`/`running`". Pin one set (recommend `queued`, `running`, `complete`, `failed`) before it fossilizes into code and the API contract.
+- [ ] [ADR-0011](adr/0011-event-bus.md)'s Positive Consequences and architecture diagram say the MCP server and CLI "subscribe via the SSE stream," but its own Event API section makes persistent subscription Automation Host (+ GUI) only, and the "publish requires the host token to carry `events`" sentence means the *plugin-tier* credential (the CLI's process credential `cli-admin` does carry `events`). Tighten the roster and the wording.
+
+---
+
+## 2. Security specification robustness (ordered by impact)
+
+### 2.1 The recovery story's last mile is unspecified — there is no restore command
+
+- [ ] Specify `healthspan db restore` and add a backup→restore round-trip test.
+
+ADR-0038 made every backup verified; ADR-0027 made backups the entire recovery story; ADR-0019 makes restore the *only* sanctioned way to move the live database ("transfer the latest backup … restore it as the new live file"). Yet restore itself is an unspecified manual file copy: nothing verifies the artifact before it becomes the live database, nothing enforces that the `.keyparams` sidecar comes along (forgetting it is the most likely user error — ADR-0028's derive path needs it), and nothing defines behavior when the backup's `schema_version` is older than the installed code. Specify the command in ADR-0038's scope (Proposed — direct edit): exclusive access (refuses against a live service, acquires the ADR-0042 advisory lock); verifies sidecar pairing by key-open; runs `PRAGMA integrity_check`; places database + sidecar together; on an older `schema_version`, directs through the normal launcher/`db migrate` path rather than migrating implicitly. testing-strategy.md currently tests the Recovery *Kit* flow but never backup-file restore — add the round trip (backup → wipe → restore → verify → open).
+
+### 2.2 Event-stream cursors do not survive Core Service restarts detectably
+
+- [ ] Epoch the SSE stream so a stale cursor from a prior run forces a `gap`, not silence.
+
+ADR-0011's sequence IDs are explicitly *per Core Service run*; the Automation Host persists its last-processed ID across restarts (ADR-0025); and ADR-0042 now makes Core Service restarts a routine, automated event in full-auto-unlock mode. After a restart, the replay window is empty (it is memory-only) and the ID space has reset — a reconnecting subscriber presenting a prior-run cursor is indistinguishable from one presenting a valid or future ID. "Replay events after that ID" returns nothing, **no `gap` marker fires**, and the Automation Host silently resumes believing it missed nothing — precisely the silent trigger loss ADR-0025 forbids, with a missed `alert.triggered` as the safety case. Fix in ADR-0011 (Proposed, one paragraph): either (a) prefix a per-run epoch into the SSE ID (`<run-id>:<seq>`) and treat an epoch mismatch as a mandatory all-partition `gap` → reconciliation; or (b) persist the counter high-water mark (each boot resumes at max+1), so a prior-run cursor naturally falls below the window and the existing aged-out → `gap` logic fires. Add the restart-cursor case to testing-strategy.md's event tests.
+
+### 2.3 Passphrase-only mode's rotation and mode-conversion story is unspecified
+
+- [ ] One section in [ADR-0028](adr/0028-key-derivation-and-rotation.md) (Proposed — direct edit) covering three gaps:
+  - `keys rotate-secret-key` with no secret key: define behavior (error pointing at `change-passphrase`, or rotate the sidecar salt as the mode's analog — recommend the latter; it is the closest equivalent of "invalidate what an attacker may have copied").
+  - `keys change-passphrase` in passphrase-only mode should regenerate the sidecar salt while it holds exclusive access anyway — free, and it unlinks the new passphrase from any previously leaked sidecar.
+  - Mode conversion (two-factor ↔ passphrase-only) has no command and no statement. Either specify `healthspan keys convert-mode` (it is a rekey with a sidecar rewrite — all machinery exists) or state explicitly that conversion is unsupported and requires export/re-init.
+
+### 2.4 Watch-folder post-import file handling is unspecified — loop prevention and unattended disposal
+
+- [ ] Decide what happens to a watch-folder file after its import completes.
+
+The watch-folder importer is the platform's one *unattended* import flow, but both relevant policies assume a human: ADR-0034's source-disposal offer is interactive, and nothing says how the importer avoids re-triggering on a file that stays in the watched directory (dedup/conflict policy protects the data, but the trigger loop itself is unaddressed). Specify in ADR-0025's watch-folder contract (or the importer's design doc when written): a config-declared post-import action — move to a `processed/` subfolder (recommended default: solves loop prevention, keeps the user's file), keep-with-hash-tracking, or best-effort disposal per [ADR-0033](adr/0033-plaintext-artifact-disposal.md) with its honest caveat printed to the log. Note alongside it that the import directory holds plaintext health exports indefinitely under the default, with the standard FDE recommendation. Decide before the first Levels adapter — the watch folder is that adapter's primary delivery path.
+
+### 2.5 Smaller items
+
+- [ ] [ADR-0038](adr/0038-backup-execution-and-verification.md) verification runs `integrity_check` but not `foreign_key_check` — `integrity_check` validates page/b-tree structure, not referential consistency. The source database enforces FKs at runtime, so this is belt-and-suspenders, but it is one cheap statement at a step that already takes minutes, and it makes "verified" cover the property the schema actually promises.
+- [ ] [ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)'s interactive re-prompt ("if a TTY or GUI parent is attached, a re-prompt offering to restart") has no specified reverse channel for the GUI case — the launcher must ask the GUI parent to re-collect the passphrase, and ADR-0039's pipe flows the other way. One or two sentences in ADR-0042 naming the mechanism (e.g. launcher exit-with-code → GUI re-collects and re-spawns) keeps this from being improvised.
+- [ ] There is no CI workflow at all yet beyond publish.yml — the testing-strategy CI gates (canary, gitleaks, S608, pip-audit) are specs without workflows. Correct for the design phase, but flag it: the first PR that adds code or a real dependency must carry the workflow that enforces them, or the gates will be retrofitted against an existing codebase — the exact failure mode the gates exist to prevent.
+
+---
+
+## 3. Architecture, frameworks, and best practices (Python, AI, database)
+
+**No fundamental change needed.** The post-remediation architecture is the same coherent shape the last two reviews affirmed, now with its runtime story (concurrency, backups, startup, supervision) as fully specified as its security story. Everything below is polish on decided surfaces.
+
+### 3.A Mechanize code quality the way the security conventions were mechanized
+
+- [ ] Add two CI gates to testing-strategy.md's CI Gates section, effective from the first code PR:
+  - **Strict static typing (mandatory)** — `pyright` strict (or `mypy --strict`). The design leans heavily on typed contracts: the `PluginType`/`Host` enumerations and allowlists (ADR-0025), per-route scope declarations (ADR-0026), the value-model triple (ADR-0030), Pydantic models at the validation boundary, and the `SecretStr`-style key wrapper (ADR-0028). Every one of these is only as strong as enforcement; a type gate is the cheapest enforcement the platform is not yet specifying.
+  - **Full lint + format gate (mandatory)** — the S608 gate is currently the *only* specified lint rule. Adopt a full `ruff` ruleset (at minimum the correctness families plus the bandit-derived `S` rules, which subsumes the existing S608 gate) and `ruff format --check`. One config in pyproject.toml, one CI step, decided now so the first code lands pre-formatted rather than reformatted later.
+
+### 3.B FTS5 trigger precision: `AFTER UPDATE OF body`
+
+- [ ] Narrow [ADR-0041](adr/0041-clinical-document-fts.md)'s update trigger (Proposed — direct edit to the DDL).
+
+Under ADR-0027, `body` never changes in place — corrections supersede (new row), and parser re-extraction goes through `'rebuild'`. So ADR-0041's `AFTER UPDATE` trigger fires *only* for non-body updates — setting `superseded_by` on a corrected row, timezone metadata repairs — where its delete-and-reinsert of the FTS entry is pure wasted churn. `AFTER UPDATE OF body ON clinical_documents` is the standard FTS5 idiom: identical semantics, no wasted work, and still correct if an in-place body write path ever appears.
+
+### 3.C Migration-0001 schema polish (record in the owning Proposed ADRs)
+
+- [ ] `framework_ranges` ([ADR-0005](adr/0005-reference-range-frameworks.md)): add `CHECK (range_low IS NULL OR range_high IS NULL OR range_low <= range_high)` — an inverted range is the same silently-wrong-flag family the mandatory-unit correction closed — and `CHECK (range_low IS NOT NULL OR range_high IS NOT NULL OR range_text IS NOT NULL)` so a contentless range row cannot exist.
+- [ ] Intervention dose units sit outside [ADR-0031](adr/0031-units-and-ucum.md)'s stated scope (it names result units, canonical units, and framework units — not doses), and data-model.md's example `mg/week` is not valid UCUM (`wk`). Decide that dose `unit` is a UCUM string like every other unit column — dose-vs-lab trend correlation will eventually want normalization — and fix the example. One sentence in ADR-0031's scope, one in data-model.md.
+- [ ] Add `PRAGMA optimize` (on connection close, per the SQLite maintenance recommendation) to [ADR-0035](adr/0035-migration-execution-semantics.md)'s connection-factory discipline — negligible cost, keeps query planning healthy as the analytical workload and indexes grow.
+
+### 3.D Frameworks: no changes recommended
+
+Reaffirming the last review's 3.I after this pass: FastAPI + fastmcp + typer + PySide6 + `sqlcipher3` (wheels via `sqlcipher3-wheels`, ADR-0037) + keyring + argon2-cffi + psutil stands; no ORM (the repository-layer + audit/pragma discipline argument still holds); the 2026-07 Python 3.14 wheel verification in testing-strategy.md remains valid. The MCP tool output contract is written against the current spec revision (2025-11-25, checked against the 2026-07-28 RC) — nothing to update this month.
+
+---
+
+## 4. Governance and documentation hygiene
+
+### 4.A Execute the batch acceptance flip — after this review's Proposed-ADR edits land
+
+- [ ] The T3.4 gate has cleared (every Tier 1/2 task from the 2026-07-06 worklist is done), but this review adds edits to still-Proposed ADRs: 1.A (ADR-0042, 0026, 0011, 0025), 1.B (ADR-0027, 0038), 2.1 (ADR-0038), 2.2 (ADR-0011), 2.3 (ADR-0028), 3.B (ADR-0041), 3.C (ADR-0005, 0031, 0035). The same sequencing rule applies: while Proposed these are direct edits; after acceptance each costs an extension ADR. Land them, then flip the T3.4 list (0005, 0011, 0012, 0025–0030, 0033–0042; 0031 stays Proposed pending the conversion-engine sub-decision; 0015 pending format specification; 0019 stays Proposed with its TBD multi-master outcome), update the index, and refresh README's "designed, not final" caveats.
+- [ ] After the flip, the security.md invariants table and Encryption at Rest section finally rest on Accepted ADRs — worth a one-line note in the commit message, since making INV-1…5 binding before code is measured against them was the entire point (2026-07-06 review 4.A).
+
+### 4.B Carryovers, still tracked, no new action
+
+- 1.G third bullet (design-rationale "Adapting This Project" plugin-route suggestion) and 1.K's ADR-0008 Option Details note — soft items, fine to leave.
+- 3.F (ADR-0021 aggregates + CGM supersession exemption) — parked by design until the CGM importer exists; the T1.1 seam note in ADR-0027 is waiting for it.
+- 4.B's docs-consistency CI generation test — deferred until the enforcement code exists, per its own text.
+
+### 4.C Small fixes list (mechanical)
+
+- [ ] NOTICE "biocontext" → Healthspan (1.C)
+- [ ] README: adapter-plugins wording, bearer-token qualifier, ADR count (1.C)
+- [ ] glossary: bearer-token qualifier (1.C)
+- [ ] ADR-0011: envelope `source` example; subscriber-roster wording (1.C)
+- [ ] ADR-0012: job-state vocabulary (1.C)
+
+---
+
+## Strongest parts (for the record)
+
+The 2026-07-06 worklist was executed in a single day without the quality collapse that pace usually implies — the resolution notes match the documents, the cross-references hold, and the new ADRs argue their decisions rather than transcribing the review's recommendations (ADR-0042's supervision-split-by-key-custody and ADR-0037's on-the-record driver research are both better than what was asked for). Specific standouts this pass: ADR-0038's verify-then-publish pipeline makes "the backup directory is a sync target" a load-bearing design input rather than an afterthought; ADR-0039/0042 together resolve the passphrase-retention tension explicitly instead of by accident, exactly as ADR-0039 demanded; and the api-reference tool output contract remains the only spec this reviewer has seen that treats value-censoring fidelity as an AI-interface requirement. The honesty convention — every security-relevant ADR carrying a "what this does not protect" section — has now survived three review cycles as a hard norm.
