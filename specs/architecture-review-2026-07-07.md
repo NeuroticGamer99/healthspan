@@ -89,9 +89,11 @@ The watch-folder importer is the platform's one *unattended* import flow, but bo
 
 ### 3.A Mechanize code quality the way the security conventions were mechanized
 
-- [ ] Add two CI gates to testing-strategy.md's CI Gates section, effective from the first code PR:
+- [x] Add two CI gates to testing-strategy.md's CI Gates section, effective from the first code PR:
   - **Strict static typing (mandatory)** — `pyright` strict (or `mypy --strict`). The design leans heavily on typed contracts: the `PluginType`/`Host` enumerations and allowlists (ADR-0025), per-route scope declarations (ADR-0026), the value-model triple (ADR-0030), Pydantic models at the validation boundary, and the `SecretStr`-style key wrapper (ADR-0028). Every one of these is only as strong as enforcement; a type gate is the cheapest enforcement the platform is not yet specifying.
   - **Full lint + format gate (mandatory)** — the S608 gate is currently the *only* specified lint rule. Adopt a full `ruff` ruleset (at minimum the correctness families plus the bandit-derived `S` rules, which subsumes the existing S608 gate) and `ruff format --check`. One config in pyproject.toml, one CI step, decided now so the first code lands pre-formatted rather than reformatted later.
+
+  *Resolved 2026-07-08 via direct edit — testing-strategy.md gains a "Strict static typing gate" (pyright strict, `enableTypeIgnoreComments = false` so every suppression is line-level with a rule code and justification; `mypy --strict` considered and passed over) and the S608 section widens into a "Lint and format gate": `ruff check` with `E W F I N UP B C4 SIM RUF` plus the invariant-mechanizing families `S` (subsumes S608, sanctioned-exception text preserved), `DTZ` (UTC-everywhere timestamp discipline), `G`/`LOG` (structured-logging discipline feeding the canary gate), `PT`, and `PGH` (blanket-noqa ban; `RUF100` fails stale suppressions), plus `ruff format --check`. Tests exempt `S101`/`S105`/`S106`. Docstring `D` family considered and deliberately not gated. The concrete `[tool.ruff.lint]`/`[tool.pyright]` config landed in pyproject.toml now — inert until code exists; tool version pins ride with the CI workflow itself (item 2.5).*
 
 ### 3.B FTS5 trigger precision: `AFTER UPDATE OF body`
 
