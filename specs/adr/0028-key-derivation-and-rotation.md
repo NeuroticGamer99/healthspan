@@ -82,7 +82,7 @@ A small plaintext file created by `healthspan init` next to the database (`healt
 | `salt` | Base64; present only in passphrase-only mode |
 | `created_utc`, `rotated_utc` | Provenance timestamps |
 
-**Nothing in the sidecar is secret** — KDF parameters and salts are safe in plaintext; what they are not safe from is *loss*. The sidecar therefore lives with the database and follows it everywhere: `healthspan db backup` copies it alongside every backup, `healthspan db restore` refuses to run without it ([ADR-0038](0038-backup-execution-and-verification.md)) and carries it back into place, and new-machine setup (`healthspan init --restore`) expects the database file and its sidecar together. It still gets owner-only permissions like every platform file. It is rewritten only by `healthspan init` and the rotation commands below.
+**Nothing in the sidecar is secret** — KDF parameters and salts are safe in plaintext; what they are not safe from is *loss*. The sidecar therefore lives with the database and follows it everywhere: `healthspan db backup` copies it alongside every backup, `healthspan db restore` refuses to run without it ([ADR-0038](0038-backup-execution-and-verification.md)) and carries it back into place, and new-machine setup (`healthspan init --restore`) expects the database file and its sidecar together. It still gets owner-only permissions like every platform file. It is rewritten only by `healthspan init` and the rotation and mode-conversion commands below.
 
 A missing sidecar fails with an error that says exactly how to recover (restore the sidecar from any backup of the same key generation; or, if parameters were never changed from the documented initial defaults, regenerate it).
 
@@ -108,6 +108,26 @@ Shared mechanics:
 
 **Rotation is not retroactive.** Backups open with the credentials in force when they were made — an encrypted backup is ciphertext under the old key; nothing about rotating the live database re-encrypts old files. Both commands print this consequence and the choice it implies: re-create backups under the new credentials, or retain the old credentials (old Recovery Kit, old passphrase) until old backups have aged out. User documentation must carry the same warning prominently.
 
+## Passphrase-Only Rotation and Mode Conversion
+
+The commands above are written in two-factor terms; this section defines their behavior in passphrase-only mode (ADR-0013's `init --key-from-passphrase`) and adds mode conversion (review 2026-07-07, item 2.3). The organizing fact: the sidecar salt occupies the exact KDF slot the secret key occupies in two-factor mode, so the commands treat it as that mode's analog.
+
+**`rotate-secret-key` in passphrase-only mode rotates the sidecar salt**: fresh `secrets.token_bytes(32)` as the new salt, rekey under the new derived key, new salt written to the sidecar. All shared mechanics apply unchanged. Stated honestly, this is weaker than its two-factor namesake: it invalidates dictionary precomputation keyed to a leaked sidecar's salt and revokes an exfiltrated *derived key* against future copies of the file — it cannot retroactively protect a database already copied, and the mode's security still rests on the passphrase alone. The command prints exactly what it did — no keychain entry, no Recovery Kit, because no secret key exists — rather than implying a second factor now does. (A separate `keys rotate-salt` command was rejected: surface bloat for the same operation, and nobody would look for it; the command stays mode-aware, as `init` already is. The alternative of erroring toward `change-passphrase` was also rejected — it would leave the mode with no response to "artifacts may have been copied, credentials are fine" short of a forced passphrase change.)
+
+**`change-passphrase` in passphrase-only mode additionally regenerates the sidecar salt** in the same rekey — it already holds exclusive access, so the fresh salt is free, and it unlinks the new passphrase from any previously leaked sidecar. The resulting symmetry is deliberate: in this mode both commands converge on "new salt + rekey," differing only in whether the passphrase changes — `rotate-secret-key` answers leaked artifacts with credentials intact; `change-passphrase` answers a compromised passphrase.
+
+**Mode conversion** is supported in place:
+
+```
+healthspan keys convert-mode --to two-factor
+healthspan keys convert-mode --to passphrase-only
+```
+
+Declaring conversion unsupported would push users to export/re-init — a plaintext export of the entire health history, the exact artifact class [ADR-0033](0033-plaintext-artifact-disposal.md) exists to contain, versus an in-place rekey behind the mandatory-verified-backup net. And the upgrade direction is the natural user journey: start passphrase-only for simplicity, adopt two-factor once invested. Conversion is a rekey with a sidecar rewrite — shared mechanics 1–4 apply, the command refuses if the database is already in the target mode, and the passphrase is unchanged in both directions (conversion changes the second factor's existence, not the passphrase; chain `change-passphrase` if both are wanted).
+
+- **`--to two-factor`**: generates a fresh secret key (`secrets.token_bytes(32)`), creates the keychain entry, rekeys, rewrites the sidecar (`mode: two-factor`, `salt` field removed — the secret key is the salt now), then generates the Recovery Kit and prompts to print it (ADR-0033's rendering and disposal rules apply).
+- **`--to passphrase-only`**: warns explicitly that this is a downgrade to single-factor protection (ADR-0013's own comparison table) and requires confirmation. Generates a fresh random salt into the sidecar (`mode: passphrase-only`), rekeys, and deletes the keychain entry only after the rekey succeeds. Old backups are still two-factor ciphertext requiring the outgoing secret key — before removing the keychain entry, the command offers to render a final Recovery Kit for the *old* key and prints the standard non-retroactivity choice: re-create backups under the new credentials, or retain the old kit until old backups have aged out.
+
 ## Key and Connection Lifetime
 
 This section replaces ADR-0013's "Connection lifetime" implementation requirement, which was unimplementable as written:
@@ -131,6 +151,7 @@ The two-factor model is what actually carries the weight here, unchanged: keycha
 ## Consequences for Other Documents
 
 - **ADR-0013** (Accepted): navigation link only — `Extended by ADR-0028`; content untouched per governance
+- **ADR-0033** (Proposed): `healthspan keys convert-mode` added to the kit-generating pathways list — both directions can render a kit
 - **security.md**: Encryption at Rest section gains the precise construction, sidecar, rotation commands, and key-lifetime statements; the macOS asymmetry language is corrected where it appears
 - **testing-strategy.md**: already lists Argon2id determinism as a unit target; gains known-answer derivation vectors, sidecar round-trip, and rekey tests
 - **Architecture review**: items 1.C, 2.2, 2.3, 3.C resolved
@@ -162,3 +183,4 @@ The two-factor model is what actually carries the weight here, unchanged: keycha
 - Related: [specs/security.md](../security.md) — encryption requirements; no-interpolation rule and its single sanctioned exception
 - Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.C, 2.2, 2.3, 3.C
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), items 2.7, 3.H
+- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 2.3 — passphrase-only rotation semantics (the sidecar salt as the secret key's analog) and `keys convert-mode`

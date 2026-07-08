@@ -62,10 +62,12 @@ ADR-0011's sequence IDs are explicitly *per Core Service run*; the Automation Ho
 
 ### 2.3 Passphrase-only mode's rotation and mode-conversion story is unspecified
 
-- [ ] One section in [ADR-0028](adr/0028-key-derivation-and-rotation.md) (Proposed — direct edit) covering three gaps:
+- [x] One section in [ADR-0028](adr/0028-key-derivation-and-rotation.md) (Proposed — direct edit) covering three gaps:
   - `keys rotate-secret-key` with no secret key: define behavior (error pointing at `change-passphrase`, or rotate the sidecar salt as the mode's analog — recommend the latter; it is the closest equivalent of "invalidate what an attacker may have copied").
   - `keys change-passphrase` in passphrase-only mode should regenerate the sidecar salt while it holds exclusive access anyway — free, and it unlinks the new passphrase from any previously leaked sidecar.
   - Mode conversion (two-factor ↔ passphrase-only) has no command and no statement. Either specify `healthspan keys convert-mode` (it is a rekey with a sidecar rewrite — all machinery exists) or state explicitly that conversion is unsupported and requires export/re-init.
+
+  *Resolved 2026-07-08 via direct edit — new ADR-0028 section "Passphrase-Only Rotation and Mode Conversion." `rotate-secret-key` rotates the sidecar salt as the mode's analog (the recommended option), with an honest statement of what that buys — invalidates salt-keyed precomputation and an exfiltrated derived key against future copies; cannot protect already-copied files — and prints that no keychain entry or Recovery Kit exists. `change-passphrase` regenerates the salt in the same rekey. `keys convert-mode --to two-factor|passphrase-only` is specified rather than declared unsupported: export/re-init is the less safe path (a full plaintext export of the health history vs an in-place rekey behind the mandatory-verified-backup net). Converting to two-factor generates the secret key, keychain entry, and Recovery Kit; converting to passphrase-only warns of the single-factor downgrade, requires confirmation, deletes the keychain entry only after the rekey succeeds, and offers a final Recovery Kit for the outgoing key since old backups still need it. Fan-out: ADR-0033's kit-generating pathways gain `convert-mode`; security.md's Rotation paragraph and testing-strategy's Rekey bullet extended; glossary's sidecar entry notes conversion as a rewriter.*
 
 ### 2.4 Watch-folder post-import file handling is unspecified — loop prevention and unattended disposal
 

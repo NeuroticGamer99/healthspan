@@ -158,7 +158,7 @@ A printable document generated at `healthspan init` containing the secret key as
 An alternative key management mode where the encryption key is derived solely from the passphrase via Argon2id, with a random non-secret salt stored in the `.keyparams` sidecar. No secret key, no OS keychain dependency. Single-factor protection. Fully portable without a Recovery Kit. See [ADR-0013](adr/0013-encryption-at-rest.md) and [ADR-0028](adr/0028-key-derivation-and-rotation.md).
 
 **`.keyparams` sidecar**
-A small non-secret plaintext file stored next to the database recording what key re-derivation needs but must not guess: KDF name and version, Argon2id parameters in force for this database, key mode, and (passphrase-only mode) the salt. Created at init, rewritten only by rotation, and copied alongside every backup. See [ADR-0028](adr/0028-key-derivation-and-rotation.md).
+A small non-secret plaintext file stored next to the database recording what key re-derivation needs but must not guess: KDF name and version, Argon2id parameters in force for this database, key mode, and (passphrase-only mode) the salt. Created at init, rewritten only by rotation and mode conversion, and copied alongside every backup. See [ADR-0028](adr/0028-key-derivation-and-rotation.md).
 
 **Best-effort disposal**
 The platform's honest framing of plaintext file deletion: overwrite with zeroes, then unlink — useful defense-in-depth, but not guaranteed erasure on SSDs (wear leveling), copy-on-write and journaling filesystems, snapshots, or cloud-synced folders. The primary control is never writing plaintext to disk; the backstop is OS full-disk encryption. See [ADR-0033](adr/0033-plaintext-artifact-disposal.md).

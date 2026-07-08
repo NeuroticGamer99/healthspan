@@ -50,7 +50,7 @@ The migration never silently leaves plaintext behind. Sequence:
 Disposal happens only *after* verification — the safety property that motivated "retain as a backup" is preserved by ordering, not by an indefinite plaintext copy.
 
 ### Recovery Kit rendering (resolves 2.6)
-Applies to every kit-generating pathway: `healthspan init`, `healthspan keys recovery-kit`, and `healthspan keys rotate-secret-key`.
+Applies to every kit-generating pathway: `healthspan init`, `healthspan keys recovery-kit`, `healthspan keys rotate-secret-key`, and `healthspan keys convert-mode` ([ADR-0028](0028-key-derivation-and-rotation.md) — either direction can render a kit: converting to two-factor generates the new kit; converting away offers a final kit for the outgoing secret key).
 
 - **Render in memory first.** Where the OS print pathway accepts a stream (`lp`/`lpr` on macOS and Linux), the kit is printed directly from memory and no file ever exists.
 - **Temp file only where the platform requires one** (Windows shell print pathways): written with owner-only permissions to the platform's private data directory — never a shared temp directory — printed, and then, after the user confirms the printout, disposed of under the policy above. The render must not outlive the command except by the explicit choice below.
