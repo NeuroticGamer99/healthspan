@@ -101,9 +101,11 @@ The watch-folder importer is the platform's one *unattended* import flow, but bo
 
 ### 3.B FTS5 trigger precision: `AFTER UPDATE OF body`
 
-- [ ] Narrow [ADR-0041](adr/0041-clinical-document-fts.md)'s update trigger (Proposed — direct edit to the DDL).
+- [x] Narrow [ADR-0041](adr/0041-clinical-document-fts.md)'s update trigger (Proposed — direct edit to the DDL).
 
 Under ADR-0027, `body` never changes in place — corrections supersede (new row), and parser re-extraction goes through `'rebuild'`. So ADR-0041's `AFTER UPDATE` trigger fires *only* for non-body updates — setting `superseded_by` on a corrected row, timezone metadata repairs — where its delete-and-reinsert of the FTS entry is pure wasted churn. `AFTER UPDATE OF body ON clinical_documents` is the standard FTS5 idiom: identical semantics, no wasted work, and still correct if an in-place body write path ever appears.
+
+  *Resolved 2026-07-08 via direct edit to ADR-0041 (Proposed; the trigger DDL lives only in that ADR — no duplication in data-model.md or a migrations doc). The `clinical_documents_fts_au` trigger is now `AFTER UPDATE OF body`, with a sentence at the trigger block explaining the scoping is deliberate (the only `body` writers are supersession, via the insert trigger, and `'rebuild'`) and warning future editors not to broaden it back. Two existing passages were reconciled with the narrowing: the corrections section's claim that a metadata repair "causes no index churn" — false under the old bare `AFTER UPDATE`, now enforced mechanically — and the negative-consequences trigger line, which now names the metadata-only no-op as part of the test surface. A Resolves link for this review was added. No status flip, so the ADR index is untouched.*
 
 ### 3.C Migration-0001 schema polish (record in the owning Proposed ADRs)
 

@@ -46,14 +46,14 @@ CREATE VIRTUAL TABLE clinical_documents_fts USING fts5(
       INSERT INTO clinical_documents_fts(clinical_documents_fts, rowid, body)
           VALUES ('delete', old.id, old.body);
   END;
-  CREATE TRIGGER clinical_documents_fts_au AFTER UPDATE ON clinical_documents BEGIN
+  CREATE TRIGGER clinical_documents_fts_au AFTER UPDATE OF body ON clinical_documents BEGIN
       INSERT INTO clinical_documents_fts(clinical_documents_fts, rowid, body)
           VALUES ('delete', old.id, old.body);
       INSERT INTO clinical_documents_fts(rowid, body) VALUES (new.id, new.body);
   END;
   ```
 
-  The `'delete'` command must be given the *old* column values — this is a fixed FTS5 external-content idiom, not a design choice. Parser re-extraction (which [ADR-0034](0034-clinical-document-storage.md) anticipates when extractors improve) and any index corruption are handled by `INSERT INTO clinical_documents_fts(clinical_documents_fts) VALUES('rebuild');`, which regenerates the index from the content table — so the index is never a retrofit.
+  The `'delete'` command must be given the *old* column values — this is a fixed FTS5 external-content idiom, not a design choice. The `OF body` scoping is deliberate, not incidental: under [ADR-0027](0027-audit-trail-and-corrections.md) the only writers of `body` are supersession (which inserts a *new* row, handled by the insert trigger) and `'rebuild'`, so the only updates this trigger would otherwise fire on are metadata-only ones — setting `superseded_by`, a timezone repair — where re-indexing an unchanged body is pure churn. Restricting the trigger to `body` writes makes those metadata updates free, keeps identical semantics for any real body change, and stays correct if an in-place `body` write path ever appears; a future editor must not broaden it back to a bare `AFTER UPDATE`. Parser re-extraction (which [ADR-0034](0034-clinical-document-storage.md) anticipates when extractors improve) and any index corruption are handled by `INSERT INTO clinical_documents_fts(clinical_documents_fts) VALUES('rebuild');`, which regenerates the index from the content table — so the index is never a retrofit.
 
 - **Corrections: index every row, filter to current at query time.** Because `clinical_documents` carries `superseded_by` ([ADR-0027](0027-audit-trail-and-corrections.md)), a value correction inserts a new row (new `id`) and points the original at it — both bodies now exist in the table, and therefore both are in the index. Rather than teach the triggers supersession logic, the index deliberately covers **all** rows and current-state is applied at query time:
 
@@ -66,7 +66,7 @@ CREATE VIRTUAL TABLE clinical_documents_fts USING fts5(
   ORDER BY rank;
   ```
 
-  This keeps the triggers purely mechanical (index by rowid, no join to interpret), leaves superseded bodies searchable if a history view ever wants them, and composes with the `clinical_documents_current` view the correction model already defines. The designated metadata-repair carve-out ([ADR-0027](0027-audit-trail-and-corrections.md)) never touches `body`, so it causes no index churn.
+  This keeps the triggers purely mechanical (index by rowid, no join to interpret), leaves superseded bodies searchable if a history view ever wants them, and composes with the `clinical_documents_current` view the correction model already defines. The designated metadata-repair carve-out ([ADR-0027](0027-audit-trail-and-corrections.md)) never touches `body`, so it causes no index churn — a property the `AFTER UPDATE OF body` trigger scoping now enforces mechanically rather than merely predicting.
 
 - **Tokenizer: `porter unicode61 remove_diacritics 2`.** `unicode61` gives Unicode-aware tokenization with accent folding; the `porter` wrapper adds English stemming so morphological variants collapse (`trajectory` ≡ `trajectories`, `diagnosed` ≡ `diagnosis` ≡ `diagnosing`). This favors **recall** — the right bias for an AI client that asks conceptual questions and cannot know which surface form a note used. Porter targets common English suffixes and passes non-dictionary tokens through largely intact, so clinical terms and drug names (`HbA1c`, `atorvastatin`, `LDL`) are essentially unaffected; the cost is that truly exact literal matching is unavailable (query terms are stemmed too), which almost never matters for narrative search. This default is **implementation-tunable, not load-bearing**: changing it is a small migration that redefines the virtual table and runs `'rebuild'` — sub-second at personal archive scale — not a redesign.
 
@@ -83,7 +83,7 @@ Embedding-based semantic search is genuinely valuable and explicitly *not* rejec
 - Semantic/embedding search remains an open, additive path rather than a foreclosed one
 
 ### Negative Consequences / Tradeoffs
-- External-content mode requires maintenance triggers; they are mechanical but must be shipped and tested as part of the schema
+- External-content mode requires maintenance triggers; they are mechanical but must be shipped and tested as part of the schema — including the negative case that a metadata-only update (e.g. setting `superseded_by`) leaves the index untouched, which the `AFTER UPDATE OF body` scoping guarantees
 - Porter stemming precludes exact literal matching on `body` (accepted — the consumer is natural-language AI search; the MCP layer can offer phrase queries where needed)
 - The index covers superseded rows too, a small storage cost that buys mechanical triggers and optional history search
 
@@ -110,4 +110,5 @@ Embedding-based semantic search is genuinely valuable and explicitly *not* rejec
 - Related: [api-reference.md](../api-reference.md) — MCP tool output contract (review 3.G) governs returned `body` free text
 - Related: [data-model.md](../data-model.md) — Clinical Documents & Visit Notes schema
 - Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.D — FTS5 external-content over `body`, encryption inheritance, trigger mechanics, embeddings as a future in-boundary plugin layer
+- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 3.B — update trigger narrowed to `AFTER UPDATE OF body` so metadata-only updates cause no index churn
 - Resolves: [open-questions.md](../open-questions.md) — "Clinical documents — full-text search strategy"
