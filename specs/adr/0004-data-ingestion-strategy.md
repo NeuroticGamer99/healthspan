@@ -1,7 +1,7 @@
 # ADR-0004: Data Ingestion Strategy
 
 ## Status
-Accepted (partially — see open decisions below)
+Accepted (partially)
 
 ## Context and Problem Statement
 Health data arrives from multiple sources in multiple formats: patient portal exports, lab PDFs, wearable data exports (Google Takeout, Fitbit API), CGM exports, InBody printouts, and manual data entry. What is the architectural approach for getting data into the database? Should ingestion be manual-only, source-specific automated importers, or a hybrid?

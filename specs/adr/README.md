@@ -71,7 +71,7 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0016](0016-automation-plugin-type.md) | Automation Plugin Type | Proposed — stub |
 | [ADR-0017](0017-notification-channels.md) | Notification Channel Plugin Type | Proposed — stub |
 | [ADR-0018](0018-fhir-interoperability.md) | FHIR / HL7 Interoperability | Proposed — stub |
-| [ADR-0019](0019-multi-device-sync.md) | Multi-Device Sync | Proposed — stub |
+| [ADR-0019](0019-multi-device-sync.md) | Multi-Device Sync | Proposed |
 | [ADR-0020](0020-plugin-registry.md) | Plugin Registry / Marketplace | Proposed — stub |
 | [ADR-0021](0021-time-series-aggregation.md) | Time-Series Data Aggregation Strategy | Proposed — stub |
 | [ADR-0022](0022-semver.md) | Version Policy (SemVer 2.0.0) | Accepted |
@@ -97,3 +97,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Accepted |
 | [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
 | [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |
+| [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) | Repository Workflow and CI Enforcement | Proposed |

@@ -1,0 +1,76 @@
+name: CI
+
+# Enforcement mechanics decided in specs/adr/0045-repository-workflow-and-ci-enforcement.md;
+# gate content specified in specs/testing-strategy.md (CI Gates).
+#
+# Currently live: the two gates that are meaningful against a specs-only tree
+# (secret scanning, ADR-index consistency). The code gates — ruff lint+format,
+# pyright strict, the full 3-OS test matrix, the log canary scan, and pip-audit
+# (PR step + daily schedule) — MUST be added to this workflow in the same PR
+# that introduces the first code or first runtime dependency, each tool
+# version-pinned in that PR. That PR also activates the main ruleset
+# (.github/rulesets/main-protection.json). See testing-strategy.md
+# "Workflow provenance" for why retrofitting is the failure mode.
+#
+# `ci-ok` is the aggregate gate: it is the ONLY status check the ruleset
+# requires, so adding/removing/path-filtering jobs never requires touching
+# branch protection. New jobs must be added to its `needs` list.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0 # full history — the scan covers every commit, not just the tip
+
+      - name: Install gitleaks 8.30.1 (hash-verified)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+
+      - name: Scan full git history for committed credentials
+        run: ./gitleaks git --no-banner --redact .
+
+  docs-consistency:
+    name: ADR index consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Check ADR index against files and their Status fields
+        run: python3 scripts/check_adr_index.py
+
+  ci-ok:
+    name: ci-ok
+    needs: [gitleaks, docs-consistency]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All gates passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "gate results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+              echo "a required gate reported '$r'" >&2
+              exit 1
+            fi
+          done

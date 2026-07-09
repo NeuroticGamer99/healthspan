@@ -1,0 +1,22 @@
+# Keeps the SHA-pinned actions and (once they exist) Python dependencies
+# current. Pinning policy: actions are pinned to full commit SHAs with a
+# version comment (see .github/workflows/); Dependabot understands and
+# preserves that form. Decided in ADR-0045.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
