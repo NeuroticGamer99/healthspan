@@ -2,6 +2,8 @@
 
 Design-time specification of the Core REST API surface. This document consolidates the API endpoints defined across ADRs and design documents into a single reference. It does not replace the auto-generated OpenAPI documentation that FastAPI will produce at runtime — it captures the intended design before implementation begins.
 
+This document is also the **ledger for API-surface decisions made during implementation** (see [CLAUDE.md](../CLAUDE.md), Implementation decision capture): endpoint paths, request/response shapes, error formats, status codes, and per-route scopes decided while coding are recorded here in the same PR that implements them, replacing the "*Endpoints TBD during implementation*" markers below as the work happens.
+
 ---
 
 ## Conventions

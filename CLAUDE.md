@@ -44,4 +44,21 @@ Before creating or modifying any file in `specs/adr/`:
 3. **Supersede, don't edit** — if a decision changes, create a new ADR that supersedes the old one. Mark the old ADR's status as `Superseded by ADR-XXXX`.
 4. **Extend, don't modify** — if an accepted ADR needs additions (new fields, new policies that don't reverse the original decision), create a new ADR that extends it. Add an `Extended by ADR-XXXX` navigation link to the original's `## Links` section. Keep the original's status as `Accepted`.
 5. **Minor edits only for typos/links** — fixing a broken link or correcting a typo in an accepted ADR is acceptable without a new ADR. Anything that changes decision content is not.
-6. **Keep the index current** — after any ADR change (new file, status update, title change), update the `## Index` table in `specs/adr/README.md` to reflect it. The index must always match the actual files and their `## Status` fields.
+6. **Keep the index current** — after any ADR change (new file, status update, title change), update the `## Index` table in `specs/adr/README.md` to reflect it. The index must always match the actual files and their `## Status` fields. (Mechanized by CI's docs-consistency gate, `scripts/check_adr_index.py`.)
+
+## Implementation decision capture
+
+Implementing to the specs will surface decisions the specs deliberately leave open. Every such decision is recorded in the document layer that owns it, **in the same PR (or commit) that implements it**. A design decision that exists only in code is a spec bug.
+
+**Routing rules — where each kind of decision is recorded:**
+
+1. **Architectural** — a new dependency; a new process, component, scope, or table; anything touching a security invariant (INV-1…6 in `specs/security.md`); anything extending or contradicting an Accepted ADR; anything that constrains future decisions → a **new Proposed ADR**, landed with or before the implementing change. ADR governance above applies unchanged.
+2. **API surface** — endpoint paths, request/response shapes, error formats, status codes, per-route scope declarations, MCP tool signatures → **`specs/api-reference.md`**, updated in the same PR. Its "*Endpoints TBD during implementation*" markers are replaced as part of implementation, never retroactively.
+3. **Schema shapes** — columns, constraints, indexes not already fixed by an ADR → **`specs/data-model.md`** (or the owning ADR if it is still Proposed).
+4. **Config knobs and defaults** → the **owning ADR** (the ADR-0035/0037/0038 pattern). If the owning ADR is Accepted, that costs an extension ADR — an accepted consequence of acceptance; batching several accumulated defaults into one extension ADR is fine.
+5. **Questions discovered but deliberately deferred** → a **`specs/open-questions.md`** entry stating what triggers resolution.
+6. **Local implementation detail** — private module layout, internal naming, algorithm choices with no external contract → **no spec record**; code and tests are the record.
+
+**The discriminator:** Would someone building a client, plugin, or replacement component need this fact without reading the source? Record it (rules 2–4). Could it constrain or contradict a future ADR? Propose an ADR (rule 1). Neither? Rule 6.
+
+**Mechanization:** every implementing PR's description carries a **`Decisions:`** section — links to the records it created or updated, or the explicit word "none". Never omit the section.
