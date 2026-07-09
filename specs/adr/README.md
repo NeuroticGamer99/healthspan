@@ -83,7 +83,7 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0028](0028-key-derivation-and-rotation.md) | Key Derivation, Rotation, and Key Lifetime | Accepted |
 | [ADR-0029](0029-mcp-streamable-http.md) | MCP Transport Refresh — Streamable HTTP | Accepted |
 | [ADR-0030](0030-biomarker-identity.md) | Biomarker Identity and Value Representation | Accepted |
-| [ADR-0031](0031-units-and-ucum.md) | Units and UCUM | Proposed |
+| [ADR-0031](0031-units-and-ucum.md) | Units and UCUM | Accepted |
 | [ADR-0032](0032-biomarker-loinc-cardinality.md) | Biomarker–LOINC Cardinality | Proposed — stub |
 | [ADR-0033](0033-plaintext-artifact-disposal.md) | Plaintext Artifact Disposal | Accepted |
 | [ADR-0034](0034-clinical-document-storage.md) | Clinical Document Original File Storage | Accepted |

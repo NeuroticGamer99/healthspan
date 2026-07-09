@@ -66,10 +66,10 @@ The FastAPI Core Service, smallest useful surface:
 - CLI manual-entry tooling with a draw-level template — enter lab + draw date once, then results — resolving the manual-entry-efficiency question in [open-questions.md](open-questions.md).
 - Reference range **comparison** with unit-normalized evaluation ([ADR-0005](adr/0005-reference-range-frameworks.md), [ADR-0031](adr/0031-units-and-ucum.md)).
 
-**Decision gates entering this phase** (the only undecided items on the critical path; both owned by the database owner):
+**Decision gates entering this phase** (owned by the database owner):
 
-1. **The [ADR-0031](adr/0031-units-and-ucum.md) conversion-engine sub-decision** (ucumvert+pint vs. curated conversion table) — required before range *comparison* is implemented, and not before. The property-based test suite in [testing-strategy.md](testing-strategy.md) is the acceptance harness for whichever engine is chosen.
-2. **Biomarker category taxonomy** and the **name-based alias fallback** ([open-questions.md](open-questions.md), Schema) — both flagged "before bulk data entry begins."
+1. ~~The [ADR-0031](adr/0031-units-and-ucum.md) conversion-engine sub-decision~~ — **resolved 2026-07-09: `ucumvert` (+ `pint`) behind an internal units module** ([ADR-0031](adr/0031-units-and-ucum.md), now Accepted). The property-based suite in [testing-strategy.md](testing-strategy.md) is the acceptance harness. `ucumvert`/`pint` are the project's first runtime dependencies; landing them activates the pip-audit CI gate ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)).
+2. **Biomarker category taxonomy** and the **name-based alias fallback** ([open-questions.md](open-questions.md), Schema) — both flagged "before bulk data entry begins." The only decision gate remaining on the critical path.
 
 **Milestone:** real lab results entered into the encrypted database via the CLI, range-flagged correctly, queryable. Real data begins accumulating — which starts the clock on the accumulation-triggered deferrals.
 
@@ -135,7 +135,7 @@ Deliberately the vaguest phase; it will be re-planned when Phase 7 is underway.
 
 | Gate | Needed by | Owner |
 |---|---|---|
-| [ADR-0031](adr/0031-units-and-ucum.md) conversion engine | Phase 3 (range comparison) | Database owner |
+| ~~[ADR-0031](adr/0031-units-and-ucum.md) conversion engine~~ — **decided 2026-07-09: `ucumvert` + `pint`** | — | — |
 | Biomarker category taxonomy | Phase 3 (bulk entry) | Database owner |
 | Name-based alias fallback | Phase 3 (bulk entry) | Database owner |
 | [ADR-0014](adr/0014-websocket.md) disposition | Phase 4 (during SSE work) | Database owner |

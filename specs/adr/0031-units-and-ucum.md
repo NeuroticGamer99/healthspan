@@ -1,7 +1,7 @@
 # ADR-0031: Units and UCUM
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Health values are meaningless without units, and comparing values across units without normalization produces dangerous errors. The [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md) flagged this as a real safety bug in the reference-range sketch ([ADR-0005](0005-reference-range-frameworks.md)): an ApoB target expressed in mg/dL compared against a result in g/L silently produces garbage flags (a factor-of-100 error). The platform therefore needs (a) a standard, unambiguous way to record units, and (b) a defined path to normalize units before any comparison.
@@ -33,7 +33,7 @@ Chosen: **units are stored as UCUM strings; every biomarker has a canonical unit
 
 Storing UCUM strings costs nothing today and is the prerequisite that keeps every downstream option open. It is adopted now, unconditionally.
 
-### Open sub-decision — the conversion engine (to be resolved before implementation)
+### Conversion engine — resolved: `ucumvert` (+ `pint`)
 Research into the Python UCUM ecosystem (2026-07) found a thin landscape:
 
 - **ucumvert** (MIT, actively maintained, v0.3.x as of mid-2026) — implements the full UCUM 2.2 grammar via `lark` and converts UCUM → `pint`. The strongest option, but pre-1.0, **one-directional (UCUM → pint only)**, and the author cautions that the generated definitions should be reviewed before being trusted.
@@ -41,14 +41,14 @@ Research into the Python UCUM ecosystem (2026-07) found a thin landscape:
 - **ucum-lhc** — the NLM/Regenstrief reference implementation, but JavaScript, not Python.
 - **pint** alone — a capable general units library, but it does not parse UCUM grammar natively; UCUM strings would be hand-mapped.
 
-Two candidate paths remain, to be decided in a follow-up (this ADR stays Proposed until then):
+**Decision (2026-07-09): adopt `ucumvert` (+ `pint`)** as the conversion engine, wrapped behind a small internal units module, with our own verification of the specific biomarkers/units in real use. `ucumvert` and `pint` become the project's first runtime dependencies when the units module lands.
 
-1. **Adopt `ucumvert` (+ `pint`)** as the conversion engine, wrapped behind a small internal units module, with our own verification of the specific biomarkers/units in real use — accepting a 0.x dependency and providing UCUM output ourselves where round-trip is needed.
-2. **Curated conversion table** — store UCUM strings but drive conversion from a small hand-maintained table (canonical unit + factor/offset, biomarker-aware for molar conversions) covering only the biomarkers in use, deferring a general library until breadth demands it.
+The two disqualifying-sounding caveats do not obstruct any path to v1:
 
-Either path preserves the stored-as-UCUM decision above; they differ only in the engine behind normalization.
+- **One-directionality (no `pint` → UCUM serialization) is not needed on the v1 path.** Every UCUM string the system emits is one it was given and stored — a lab's reported unit, a biomarker's `canonical_unit` ([ADR-0030](0030-biomarker-identity.md)), a framework threshold's `unit` ([ADR-0005](0005-reference-range-frameworks.md)), an intervention dose `unit`. The core operation — normalize a value in unit A against canonical unit B — parses *both* endpoints UCUM → `pint`, converts numerically, and yields a scalar in the already-known canonical UCUM unit. It never asks "what UCUM string names this `pint` quantity?" The property suite's round-trip is a numeric round-trip through conversion factors, which one-directional parsing satisfies. `pint` → UCUM would only be required to name a *computed* unit never declared in UCUM (composite/derived units, or FHIR export of a derived value) — territory deferred with [ADR-0044](0044-derived-data-points.md), and even then a small hand-maintained `pint`-unit → UCUM lookup for the handful of derived units suffices.
+- **Pre-1.0 maturity is contained by the internal units module.** The module is the only code that imports `ucumvert`/`pint`; our verification layer audits the generated definitions for exactly the biomarkers/units in real use (a small set at v1), and the property-based suite is the standing regression net. Because nothing downstream depends on *which* engine runs — only on canonical-unit normalization — swapping the engine later is a contained change behind the module, at the cost of a superseding ADR.
 
-The property-based conversion suite in [testing-strategy.md](../testing-strategy.md) is the acceptance harness for this sub-decision: its properties (identity, round-trip, composition, order preservation, molar conversions with mandatory biomarker context) are written against the internal units-module API, and whichever engine is chosen must pass the suite unchanged.
+The property-based conversion suite in [testing-strategy.md](../testing-strategy.md) is the acceptance harness: its properties (identity, round-trip, composition, order preservation, molar conversions with mandatory biomarker context) are written against the internal units-module API, and the `ucumvert`-backed implementation must pass the suite unchanged.
 
 ### Positive Consequences
 - Units are standard and machine-parseable from migration 0001; the safety bug in [ADR-0005](0005-reference-range-frameworks.md) is structurally closed
@@ -56,8 +56,8 @@ The property-based conversion suite in [testing-strategy.md](../testing-strategy
 - The engine choice is decoupled and reversible — nothing downstream depends on *which* converter runs, only on canonical-unit normalization
 
 ### Negative Consequences / Tradeoffs
-- The conversion engine is left open; a follow-up decision is required before reference-range comparison is implemented
-- The best available Python UCUM library is pre-1.0 and one-directional, so whichever path is chosen needs a local verification/validation layer rather than blind trust
+- The chosen engine (`ucumvert`) is pre-1.0 and one-directional, so it is used behind an internal units module with a local verification/validation layer over the biomarkers/units in real use, rather than blind trust — the property-based suite is the regression net
+- `ucumvert` and `pint` are the project's first runtime dependencies; landing them activates the pip-audit CI gate and the release-blocking publish-time audit ([ADR-0045](0045-repository-workflow-and-ci-enforcement.md))
 
 ## Pros and Cons of the Options
 
@@ -66,14 +66,14 @@ The property-based conversion suite in [testing-strategy.md](../testing-strategy
 
 ### UCUM strings + canonical unit + normalized comparison (chosen)
 - Pro: standard, machine-parseable, FHIR-aligned, and closes the safety bug structurally
-- Pro: keeps the conversion-engine decision separable and reversible
-- Con: requires a follow-up engine decision and a local validation layer over an immature library or a curated table
+- Pro: keeps the conversion-engine decision separable and reversible (engine resolved to `ucumvert` + `pint` behind an internal units module; swappable later behind that module)
+- Con: the chosen engine is pre-1.0, so it needs a local validation layer over the units in real use rather than blind trust
 
 ## Links
 - Extends/depends on: [ADR-0030](0030-biomarker-identity.md) — the `canonical_unit` column and value model
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — framework range `unit` column and unit-normalized comparison
 - Related: [ADR-0018](0018-fhir-interoperability.md) — UCUM is FHIR's `Quantity.code` system
 - Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — method-variant LOINC codes can carry different reported units
-- External: [ucumvert](https://github.com/dalito/ucumvert) (candidate engine), [pyucum / stomioka-ucum](https://github.com/stomioka/ucum) (evaluated, rejected — remote-API-dependent), [UCUM at NLM](https://ucum.nlm.nih.gov/)
-- Related: [testing-strategy.md](../testing-strategy.md) — the property-based conversion suite is the acceptance harness for the open conversion-engine sub-decision
+- External: [ucumvert](https://github.com/dalito/ucumvert) (chosen engine), [pyucum / stomioka-ucum](https://github.com/stomioka/ucum) (evaluated, rejected — remote-API-dependent), [UCUM at NLM](https://ucum.nlm.nih.gov/)
+- Related: [testing-strategy.md](../testing-strategy.md) — the property-based conversion suite is the acceptance harness the `ucumvert`-backed units module must pass
 - Resolves review item 3.E (units portion) and supports 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
