@@ -29,6 +29,7 @@ The design documents inform ADRs; the ADRs formalize specific decisions that eme
 | [observability.md](observability.md) | Standards for health endpoints, structured logging, metrics, and request tracing across all platform processes. |
 | [glossary.md](glossary.md) | Project-specific terminology with definitions and source references. Covers architecture, data model, plugin system, security, and observability terms. |
 | [open-questions.md](open-questions.md) | Architectural and technical decisions that need resolution before or during implementation. Includes resolved items with links to their outcomes. |
+| [development-plan.md](development-plan.md) | High-level code development plan: phase sequence from empty repository to v1, with per-phase milestones and the decision gates on the critical path. |
 | [reference-home-assistant-architecture.md](reference-home-assistant-architecture.md) | Research reference documenting Home Assistant's architecture in detail. Used to inform Healthspan design decisions — HA is the closest architectural analog. Not a spec for this project. |
 
 ---
