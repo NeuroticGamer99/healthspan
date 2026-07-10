@@ -84,9 +84,7 @@ def main() -> int:
             )
 
     on_disk = {
-        p.name
-        for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md")
-        if p.name != TEMPLATE
+        p.name for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md") if p.name != TEMPLATE
     }
     for missing in sorted(on_disk - set(indexed_files)):
         errors.append(f"{missing} exists but has no index row")
@@ -95,7 +93,9 @@ def main() -> int:
         # catches rows whose filename doesn't match the NNNN-*.md pattern.
         if not (ADR_DIR / phantom).is_file():
             continue
-        errors.append(f"index row for {phantom} does not match the NNNN-*.md convention")
+        errors.append(
+            f"index row for {phantom} does not match the NNNN-*.md convention"
+        )
 
     if errors:
         print(f"ADR index inconsistent ({len(errors)} problem(s)):")

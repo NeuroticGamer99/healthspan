@@ -34,3 +34,6 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF", "S", "DTZ", "G
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
 enableTypeIgnoreComments = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
