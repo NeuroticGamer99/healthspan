@@ -3,24 +3,26 @@ name: CI
 # Enforcement mechanics decided in specs/adr/0045-repository-workflow-and-ci-enforcement.md;
 # gate content specified in specs/testing-strategy.md (CI Gates).
 #
-# Currently live: the two gates that are meaningful against a specs-only tree
-# (secret scanning, ADR-index consistency). The code gates — ruff lint+format,
-# pyright strict, the full 3-OS test matrix, the log canary scan, and pip-audit
-# (PR step + daily schedule) — MUST be added to this workflow in the same PR
-# that introduces the first code or first runtime dependency, each tool
-# version-pinned in that PR. That PR also activates the main ruleset
-# (.github/rulesets/main-protection.json). See testing-strategy.md
-# "Workflow provenance" for why retrofitting is the failure mode.
+# All gates are live as of the first code PR (specs/development-plan.md,
+# Phase 0): secret scanning, ADR-index consistency, ruff lint+format,
+# pyright strict, the 3-OS × Python 3.14 test matrix with the log canary
+# scan, and pip-audit (PR step + daily schedule). Tool versions are pinned
+# in the `env` block below per testing-strategy.md "Workflow provenance";
+# actions are SHA-pinned with version comments (Dependabot maintains those;
+# the env-block pins and the gitleaks binary pin are bumped by hand).
 #
 # `ci-ok` is the aggregate gate: it is the ONLY status check the ruleset
-# requires, so adding/removing/path-filtering jobs never requires touching
-# branch protection. New jobs must be added to its `needs` list.
+# (.github/rulesets/main-protection.json) requires, so adding/removing/
+# path-filtering jobs never requires touching branch protection. New jobs
+# must be added to its `needs` list.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "30 6 * * *" # daily pip-audit (ADR-0045 §8); other gates skip on schedule
 
 permissions:
   contents: read
@@ -29,9 +31,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Pinned gate-tool versions (testing-strategy.md "Workflow provenance").
+  RUFF_VERSION: "0.15.21"
+  PYRIGHT_VERSION: "1.1.411"
+  PYTEST_VERSION: "9.1.1"
+  PIP_AUDIT_VERSION: "2.10.1"
+  UV_VERSION: "0.11.28"
+
 jobs:
   gitleaks:
     name: Secret scan (gitleaks)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -50,6 +65,7 @@ jobs:
 
   docs-consistency:
     name: ADR index consistency
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -57,9 +73,90 @@ jobs:
       - name: Check ADR index against files and their Status fields
         run: python3 scripts/check_adr_index.py
 
+  lint:
+    name: Lint and format (ruff)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: ruff check (ruleset in pyproject.toml [tool.ruff.lint])
+        run: uvx "ruff@${RUFF_VERSION}" check .
+
+      - name: ruff format --check
+        run: uvx "ruff@${RUFF_VERSION}" format --check .
+
+  typecheck:
+    name: Strict static typing (pyright)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Install project (locked)
+        run: uv sync --locked
+
+      - name: pyright --strict (config in pyproject.toml [tool.pyright])
+        # pytest rides along so pyright can resolve the test suite's imports
+        run: uv run --with "pyright==${PYRIGHT_VERSION}" --with "pytest==${PYTEST_VERSION}" pyright
+
+  test:
+    name: Tests (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Install project (locked, editable)
+        run: uv sync --locked
+
+      - name: Run tests, capturing all output for the canary scan
+        # --capture=tee-sys passes captured test stdout/stderr through to the
+        # real streams (pytest's default capture would hide passing tests'
+        # output from tee); --log-cli-level surfaces logging-module records.
+        # E2E spawned-process capture joins this when E2E tests exist.
+        run: |
+          uv run --with "pytest==${PYTEST_VERSION}" pytest -v --capture=tee-sys --log-cli-level=DEBUG 2>&1 \
+            | tee pytest-output.log
+
+      - name: Log canary scan (testing-strategy.md CI Gates)
+        run: uv run python scripts/scan_log_canary.py pytest-output.log
+
+  pip-audit:
+    name: Dependency vulnerability audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Export locked runtime dependencies
+        run: uv export --locked --no-emit-project --format requirements-txt -o requirements-audit.txt
+
+      - name: Audit locked dependencies for known vulnerabilities
+        run: uvx "pip-audit@${PIP_AUDIT_VERSION}" -r requirements-audit.txt
+
   ci-ok:
     name: ci-ok
-    needs: [gitleaks, docs-consistency]
+    needs: [gitleaks, docs-consistency, lint, typecheck, test, pip-audit]
     if: always()
     runs-on: ubuntu-latest
     steps:
