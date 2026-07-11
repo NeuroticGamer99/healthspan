@@ -37,7 +37,7 @@ This PR executes the **entire first-code-PR checklist** from [ADR-0045](adr/0045
 
 Everything below the API line, exercisable entirely through the CLI — `healthspan db migrate` and `healthspan db backup` are the two sanctioned direct-database exceptions ([ADR-0006](adr/0006-application-architecture.md)), so no server is needed to make this phase real.
 
-- Shared TOML configuration loading ([ADR-0006](adr/0006-application-architecture.md)).
+- Shared TOML configuration loading ([ADR-0006](adr/0006-application-architecture.md), [ADR-0046](adr/0046-filesystem-layout-and-config-discovery.md)).
 - SQLCipher database provisioning, key derivation and rotation ([ADR-0013](adr/0013-encryption-at-rest.md), [ADR-0028](adr/0028-key-derivation-and-rotation.md)).
 - The migration runner ([ADR-0009](adr/0009-database-migration.md), [ADR-0035](adr/0035-migration-execution-semantics.md)).
 - **Migration 0001** — the fully-specified schema from [data-model.md](data-model.md) and its owning ADRs: supersession columns and `*_current` views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)), append-only audit triggers, the four-column timezone convention ([design-rationale.md](design-rationale.md)), FTS5 external-content table and sync triggers ([ADR-0041](adr/0041-clinical-document-fts.md)), biomarker identity and value model ([ADR-0030](adr/0030-biomarker-identity.md)), UCUM unit columns ([ADR-0031](adr/0031-units-and-ucum.md)).
@@ -68,7 +68,7 @@ The FastAPI Core Service, smallest useful surface:
 
 **Decision gates entering this phase** (owned by the database owner):
 
-1. ~~The [ADR-0031](adr/0031-units-and-ucum.md) conversion-engine sub-decision~~ — **resolved 2026-07-09: `ucumvert` (+ `pint`) behind an internal units module** ([ADR-0031](adr/0031-units-and-ucum.md), now Accepted). The property-based suite in [testing-strategy.md](testing-strategy.md) is the acceptance harness. `ucumvert`/`pint` are the project's first runtime dependencies; landing them activates the pip-audit CI gate ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)).
+1. ~~The [ADR-0031](adr/0031-units-and-ucum.md) conversion-engine sub-decision~~ — **resolved 2026-07-09: `ucumvert` (+ `pint`) behind an internal units module** ([ADR-0031](adr/0031-units-and-ucum.md), now Accepted). The property-based suite in [testing-strategy.md](testing-strategy.md) is the acceptance harness. `ucumvert`/`pint` land as new runtime dependencies here (the pip-audit CI gate has covered the dependency tree since Phase 1's first runtime dependencies — [ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)).
 2. **Biomarker category taxonomy** and the **name-based alias fallback** ([open-questions.md](open-questions.md), Schema) — both flagged "before bulk data entry begins." The only decision gate remaining on the critical path.
 
 **Milestone:** real lab results entered into the encrypted database via the CLI, range-flagged correctly, queryable. Real data begins accumulating — which starts the clock on the accumulation-triggered deferrals.

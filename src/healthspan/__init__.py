@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from healthspan!")
+"""Healthspan: local-first personal health data platform."""

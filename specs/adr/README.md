@@ -98,3 +98,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
 | [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |
 | [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) | Repository Workflow and CI Enforcement | Proposed |
+| [ADR-0046](0046-filesystem-layout-and-config-discovery.md) | Filesystem Layout and Configuration Discovery | Proposed |
