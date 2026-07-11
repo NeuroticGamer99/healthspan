@@ -1,0 +1,50 @@
+{
+  "cgm_readings": [
+    {
+      "id": 1,
+      "source": "levels.glucose",
+      "reading_utc": "2024-03-14T12:00:00Z",
+      "reading_local_recorded": "2024-03-14T08:00:00",
+      "reading_local_tz": "America/New_York",
+      "reading_tz_inferred": 0,
+      "glucose_mg_dl": 93.184072,
+      "import_batch_id": 1
+    },
+    {
+      "id": 2,
+      "source": "levels.glucose",
+      "reading_utc": "2024-03-14T13:00:00Z",
+      "reading_local_recorded": "2024-03-14T09:00:00",
+      "reading_local_tz": "America/New_York",
+      "reading_tz_inferred": 0,
+      "glucose_mg_dl": 128.905613,
+      "import_batch_id": 1
+    },
+    {
+      "id": 3,
+      "source": "levels.glucose",
+      "reading_utc": "2024-03-14T14:00:00Z",
+      "reading_local_recorded": "2024-03-14T10:00:00",
+      "reading_local_tz": "America/New_York",
+      "reading_tz_inferred": 0,
+      "glucose_mg_dl": 111.627384,
+      "import_batch_id": 1
+    }
+  ],
+  "body_composition": [
+    {
+      "id": 1,
+      "source": "InBody 580 (fictional export)",
+      "measured_utc": "2024-03-15T15:00:00Z",
+      "measured_local_recorded": "2024-03-15T11:00:00",
+      "measured_local_tz": "America/New_York",
+      "measured_tz_inferred": 0,
+      "weight_kg": 82.617394,
+      "body_fat_pct": 18.427516,
+      "skeletal_muscle_mass_kg": 39.842057,
+      "phase_angle_deg": 6.284915,
+      "visceral_fat_area_cm2": 74.318629,
+      "import_batch_id": 1
+    }
+  ]
+}

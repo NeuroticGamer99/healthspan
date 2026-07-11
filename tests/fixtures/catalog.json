@@ -1,0 +1,44 @@
+{
+  "import_batches": [
+    {
+      "id": 1,
+      "source": "manual",
+      "created_utc": "2024-03-14T13:35:00Z",
+      "note": "synthetic fixture batch"
+    }
+  ],
+  "biomarkers": [
+    {
+      "id": 1,
+      "canonical_name": "Glucose",
+      "loinc_code": "2345-7",
+      "canonical_unit": "mg/dL",
+      "category": "metabolic"
+    },
+    {
+      "id": 2,
+      "canonical_name": "HDL Cholesterol",
+      "loinc_code": "2085-9",
+      "canonical_unit": "mg/dL",
+      "category": "lipids"
+    },
+    {
+      "id": 3,
+      "canonical_name": "Apolipoprotein B",
+      "loinc_code": "1884-6",
+      "canonical_unit": "mg/dL",
+      "category": "lipids"
+    }
+  ],
+  "labs": [
+    {"id": 1, "name": "Synthetic Labs Co", "description": "fictional lab source for tests"}
+  ],
+  "range_frameworks": [
+    {"id": 1, "name": "Synthetic Standard", "description": "fictional reference framework"}
+  ],
+  "framework_ranges": [
+    {"id": 1, "framework_id": 1, "biomarker_id": 1, "range_low": 70, "range_high": 99, "unit": "mg/dL"},
+    {"id": 2, "framework_id": 1, "biomarker_id": 2, "range_low": 40, "range_high": 90, "unit": "mg/dL"},
+    {"id": 3, "framework_id": 1, "biomarker_id": 3, "range_low": 40, "range_high": 100, "unit": "mg/dL"}
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "events": [
+    {
+      "id": 1,
+      "event_utc": "2023-11-02T16:00:00Z",
+      "event_local_recorded": "2023-11-02T12:00:00",
+      "event_local_tz": "America/New_York",
+      "event_tz_inferred": 0,
+      "event_type": "procedure",
+      "title": "CANARY-procedure-alpha (fictional)",
+      "description": "Synthetic procedure record, CANARY-eventdesc-alpha.",
+      "import_batch_id": 1
+    }
+  ],
+  "interventions": [
+    {
+      "id": 1,
+      "name": "CANARY-CompoundQ (fictional)",
+      "intervention_type": "medication",
+      "route": "IM",
+      "start_utc": "2024-01-05T14:00:00Z",
+      "start_local_recorded": "2024-01-05T09:00:00",
+      "start_local_tz": "America/New_York",
+      "start_tz_inferred": 0,
+      "notes": "CANARY-intnote-titration",
+      "import_batch_id": 1
+    }
+  ],
+  "intervention_dose_history": [
+    {
+      "id": 1,
+      "intervention_id": 1,
+      "effective_utc": "2024-01-05T14:00:00Z",
+      "effective_local_recorded": "2024-01-05T09:00:00",
+      "effective_local_tz": "America/New_York",
+      "effective_tz_inferred": 0,
+      "dose": 12.573948,
+      "unit": "mg/wk",
+      "change_type": "initiation",
+      "authority_type": "self",
+      "import_batch_id": 1
+    }
+  ],
+  "clinical_documents": [
+    {
+      "id": 1,
+      "encounter_utc": "2024-03-20T17:00:00Z",
+      "encounter_local_recorded": "2024-03-20T13:00:00",
+      "encounter_local_tz": "America/New_York",
+      "encounter_tz_inferred": 0,
+      "provider_name": "Dr. Fictional (synthetic)",
+      "provider_role": "PCP",
+      "document_type": "visit_note",
+      "body": "Visit summary. Patient reports CANARY-flurgle and intermittent CANARY-blorptide over the interval. Plan discussed.",
+      "source_format": "manual_entry",
+      "author_type": "clinician",
+      "import_batch_id": 1
+    }
+  ],
+  "subjective_observations": [
+    {
+      "id": 1,
+      "observed_utc": "2024-03-18T23:00:00Z",
+      "observed_local_recorded": "2024-03-18T19:00:00",
+      "observed_local_tz": "America/New_York",
+      "observed_tz_inferred": 0,
+      "body": "Felt CANARY-zibbly today; better sleep after a CANARY-morningwalk.",
+      "import_batch_id": 1
+    }
+  ],
+  "analyses": [
+    {
+      "id": 1,
+      "analysis_utc": "2024-03-25T18:00:00Z",
+      "analysis_local_recorded": "2024-03-25T14:00:00",
+      "analysis_local_tz": "America/New_York",
+      "analysis_tz_inferred": 0,
+      "author_type": "self",
+      "title": "Quarterly lipid trend",
+      "body": "Trend review: CANARY-apob-trend improving quarter over quarter.",
+      "result_data": "{\"marker\": \"CANARY-homair-estimate\", \"synthetic\": true}",
+      "import_batch_id": 1
+    }
+  ],
+  "document_lab_draws": [
+    {"document_id": 1, "lab_draw_id": 1}
+  ],
+  "analysis_lab_draws": [
+    {"analysis_id": 1, "lab_draw_id": 1}
+  ],
+  "observation_interventions": [
+    {"observation_id": 1, "intervention_id": 1}
+  ]
+}

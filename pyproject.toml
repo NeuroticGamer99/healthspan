@@ -41,8 +41,10 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF", "S", "DTZ", "G
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
 enableTypeIgnoreComments = false
-# scripts/ is importable in tests via tests/conftest.py's sys.path entry.
-extraPaths = ["scripts"]
+# scripts/ is importable in tests via tests/conftest.py's sys.path entry;
+# tests/ hosts the fixture loader that scripts/scan_log_canary.py imports as
+# the canary-manifest owner (WI-3b).
+extraPaths = ["scripts", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
