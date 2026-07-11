@@ -9,7 +9,11 @@ authors = [
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
+    "argon2-cffi>=25.1.0",
+    "keyring>=25.6",
     "platformdirs>=4.10.0",
+    "qrcode>=8.0",
+    "sqlcipher3-wheels>=0.5.7",
     "typer>=0.26.8",
 ]
 
@@ -42,3 +46,8 @@ extraPaths = ["scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.140",
+]

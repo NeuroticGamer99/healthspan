@@ -95,6 +95,7 @@ The *printed* kit remains governed by ADR-0013's existing physical-custody warni
 
 ## Links
 - Extends: [ADR-0013](0013-encryption-at-rest.md) — Recovery Kit digital artifact handling; honest-limits standard
+- Extended by: [ADR-0047](0047-crypto-surface-implementation-decisions.md) — WI-2 kit-render scope; print pathways and orphan sweep deferral
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — kit regeneration on secret-key rotation; the verify-before-destructive-step pattern
 - Related: [ADR-0019](0019-multi-device-sync.md) — sync version history as one of the disposal defeats
 - Related: [ADR-0015](0015-data-export.md) — deliberate plaintext exports are user custody, out of scope here

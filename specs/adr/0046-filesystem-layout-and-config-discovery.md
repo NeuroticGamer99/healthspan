@@ -102,6 +102,7 @@ The first source that yields a path wins; if the resolved file does not exist, t
 
 - Extends: [ADR-0006](0006-application-architecture.md) — supplies the location and discovery rules for the shared TOML file it defined
 - Extends: [ADR-0038](0038-backup-execution-and-verification.md) — concrete default for the `[backup]` destination directory and its key names
+- Extended by: [ADR-0047](0047-crypto-surface-implementation-decisions.md) — `init`'s skeleton-config creation and Windows ACL mechanics
 - Related: [ADR-0028](0028-key-derivation-and-rotation.md) — sidecar adjacency rule; this ADR places the database it follows
 - Related: [ADR-0019](0019-multi-device-sync.md) — the backup directory is the designated sync target; the default deliberately requires opt-in to sync
 - Related: [ADR-0008](0008-process-lifecycle.md) — config file creation on first run (launcher); `healthspan init` covers the CLI-only phases

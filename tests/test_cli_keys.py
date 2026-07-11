@@ -1,0 +1,218 @@
+"""CLI surface: init, keys commands, advisory policy, Recovery Kit output."""
+
+from pathlib import Path
+
+import pytest
+from conftest import InMemoryKeyring
+from typer.testing import CliRunner
+
+from healthspan.cli import app
+from healthspan.keyparams import KeyMode, read_keyparams
+
+runner = CliRunner()
+
+PASSPHRASE = "a perfectly reasonable passphrase"
+SHORT = "tiny pass"
+
+
+@pytest.fixture
+def config_file(tmp_path: Path) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'config_version = 1\n\n[database]\npath = "healthspan.db"\n\n'
+        '[backup]\ndirectory = "backups"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+def _invoke(config_file: Path, args: list[str], input_text: str):
+    return runner.invoke(app, ["--config", str(config_file), *args], input=input_text)
+
+
+def _init(config_file: Path, *extra: str, passphrase: str = PASSPHRASE):
+    return _invoke(config_file, ["init", *extra], f"{passphrase}\n{passphrase}\n")
+
+
+def test_init_two_factor_creates_db_and_shows_kit(config_file: Path) -> None:
+    result = _init(config_file)
+    assert result.exit_code == 0, result.output
+    assert "Encrypted database created" in result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+    db_path = config_file.parent / "healthspan.db"
+    assert db_path.exists()
+    assert read_keyparams(config_file.parent / "healthspan.db.keyparams").mode is (
+        KeyMode.TWO_FACTOR
+    )
+    # The kit's Base32 secret key never lands in any file init writes.
+    assert db_path.read_bytes()[:16] != b"SQLite format 3\x00"
+
+
+def test_init_passphrase_only_creates_salted_sidecar(config_file: Path) -> None:
+    result = _init(config_file, "--key-from-passphrase")
+    assert result.exit_code == 0, result.output
+    assert "HEALTHSPAN RECOVERY KIT" not in result.output  # no kit: no secret key
+    params = read_keyparams(config_file.parent / "healthspan.db.keyparams")
+    assert params.mode is KeyMode.PASSPHRASE_ONLY
+    assert params.salt is not None
+
+
+def test_init_refuses_when_database_exists(config_file: Path) -> None:
+    assert _init(config_file).exit_code == 0
+    result = _init(config_file)
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+
+
+def test_short_passphrase_warns_and_requires_confirmation(config_file: Path) -> None:
+    # Decline the short passphrase once, then provide a long one.
+    result = _invoke(
+        config_file,
+        ["init", "--key-from-passphrase"],
+        f"{SHORT}\n{SHORT}\nn\n{PASSPHRASE}\n{PASSPHRASE}\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "easier to guess" in result.output
+
+
+def test_short_passphrase_accepted_on_explicit_confirmation(
+    config_file: Path,
+) -> None:
+    result = _invoke(
+        config_file,
+        ["init", "--key-from-passphrase"],
+        f"{SHORT}\n{SHORT}\ny\n",
+    )
+    assert result.exit_code == 0, result.output  # advisory: warn, never refuse
+
+
+def test_recovery_kit_command_renders_from_keychain(
+    config_file: Path, fake_keychain: InMemoryKeyring
+) -> None:
+    assert _init(config_file).exit_code == 0
+    result = _invoke(config_file, ["keys", "recovery-kit"], "")
+    assert result.exit_code == 0, result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+
+
+def test_recovery_kit_fails_cleanly_in_passphrase_only_mode(
+    config_file: Path,
+) -> None:
+    assert _init(config_file, "--key-from-passphrase").exit_code == 0
+    result = _invoke(config_file, ["keys", "recovery-kit"], "")
+    assert result.exit_code == 1
+    assert "no Recovery Kit exists" in result.output
+
+
+def test_recovery_kit_output_writes_recognizably_named_file(
+    config_file: Path, tmp_path: Path
+) -> None:
+    assert _init(config_file).exit_code == 0
+    out_dir = tmp_path / "kit-out"
+    out_dir.mkdir()
+    result = _invoke(
+        config_file, ["keys", "recovery-kit", "--output", str(out_dir)], ""
+    )
+    assert result.exit_code == 0, result.output
+    written = list(out_dir.glob("healthspan-recovery-kit-*.txt"))
+    assert len(written) == 1
+    assert "encrypted storage" in result.output  # ADR-0033 digital-copy warning
+
+
+def test_change_passphrase_cli_round_trip(config_file: Path) -> None:
+    assert _init(config_file, "--key-from-passphrase").exit_code == 0
+    new = "an entirely different phrase"
+    result = _invoke(
+        config_file,
+        ["keys", "change-passphrase"],
+        f"{PASSPHRASE}\n{new}\n{new}\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "Verified backup created" in result.output
+    assert "not retroactive" in result.output
+    # New passphrase unlocks; old fails.
+    ok = _invoke(
+        config_file, ["keys", "change-passphrase"], f"{new}\n{new}2x!\n{new}2x!\n"
+    )
+    assert ok.exit_code == 0, ok.output
+    bad = _invoke(config_file, ["keys", "change-passphrase"], f"{PASSPHRASE}\n")
+    assert bad.exit_code == 1
+
+
+def test_rotate_secret_key_cli_requires_confirmation_and_prints_new_kit(
+    config_file: Path,
+) -> None:
+    assert _init(config_file).exit_code == 0
+    declined = _invoke(config_file, ["keys", "rotate-secret-key"], f"{PASSPHRASE}\nn\n")
+    assert declined.exit_code != 0  # aborted before any change
+    result = _invoke(config_file, ["keys", "rotate-secret-key"], f"{PASSPHRASE}\ny\n")
+    assert result.exit_code == 0, result.output
+    assert "INVALID" in result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+
+
+def test_rotate_secret_key_no_backup_warns(config_file: Path) -> None:
+    assert _init(config_file, "--key-from-passphrase").exit_code == 0
+    result = _invoke(
+        config_file, ["keys", "rotate-secret-key", "--no-backup"], f"{PASSPHRASE}\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert "--no-backup skips" in result.output
+    assert not (config_file.parent / "backups").exists()
+
+
+def test_convert_mode_downgrade_warns_confirms_and_offers_final_kit(
+    config_file: Path,
+) -> None:
+    assert _init(config_file).exit_code == 0
+    result = _invoke(
+        config_file,
+        ["keys", "convert-mode", "--to", "passphrase-only"],
+        f"{PASSPHRASE}\ny\ny\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "DOWNGRADES" in result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output  # final kit for the old key
+    params = read_keyparams(config_file.parent / "healthspan.db.keyparams")
+    assert params.mode is KeyMode.PASSPHRASE_ONLY
+
+
+def test_convert_mode_upgrade_generates_kit(config_file: Path) -> None:
+    assert _init(config_file, "--key-from-passphrase").exit_code == 0
+    result = _invoke(
+        config_file,
+        ["keys", "convert-mode", "--to", "two-factor"],
+        f"{PASSPHRASE}\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+    params = read_keyparams(config_file.parent / "healthspan.db.keyparams")
+    assert params.mode is KeyMode.TWO_FACTOR
+    assert params.salt is None
+
+
+def test_convert_mode_rejects_unknown_target(config_file: Path) -> None:
+    assert _init(config_file).exit_code == 0
+    result = _invoke(
+        config_file, ["keys", "convert-mode", "--to", "sideways"], f"{PASSPHRASE}\n"
+    )
+    assert result.exit_code == 1
+    assert "unknown mode" in result.output
+
+
+def test_init_creates_skeleton_config_at_default_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from healthspan import paths
+
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("HEALTHSPAN_CONFIG", raising=False)
+    result = runner.invoke(
+        app, ["init", "--key-from-passphrase"], input=f"{PASSPHRASE}\n{PASSPHRASE}\n"
+    )
+    assert result.exit_code == 0, result.output
+    config_path = tmp_path / "cfg" / "config.toml"
+    assert config_path.exists()
+    assert "config_version = 1" in config_path.read_text(encoding="utf-8")
+    assert (tmp_path / "data" / "healthspan.db").exists()
