@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from healthspan import db, keychain
-from healthspan.config import Config, ConfigSource
+from healthspan.config import Config, ConfigSource, toml_quote
 from healthspan.fsperm import set_owner_only
 from healthspan.kdf import derive_db_key, generate_secret_key
 from healthspan.keyparams import (
@@ -58,6 +58,12 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
         secret_key: bytes | None = generate_secret_key()
         salt = secret_key
         params = KeyParams(mode=mode, created_utc=utc_now_iso())
+        # Store BEFORE creating files: if the keychain is unavailable, init
+        # aborts with nothing on disk. The reverse order could create an
+        # encrypted database whose secret key was never stored or shown.
+        # An orphaned entry from a later failure is harmless - the next
+        # successful init overwrites it.
+        keychain.store_secret_key(secret_key)
     else:
         secret_key = None
         salt = generate_secret_key()  # a salt, not a secret (ADR-0028)
@@ -67,13 +73,20 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
     try:
         db.provision(database_path, key)
         write_keyparams(sidecar, params)
+    except BaseException:
+        # The database is empty at this point; removing the partial files
+        # is safe and leaves init re-runnable instead of wedged on the
+        # "already exists" guard.
+        for leftover in (
+            sidecar,
+            database_path,
+            database_path.with_name(database_path.name + "-wal"),
+            database_path.with_name(database_path.name + "-shm"),
+        ):
+            leftover.unlink(missing_ok=True)
+        raise
     finally:
         key.zeroize()
-
-    if secret_key is not None:
-        # After the database exists: an orphaned keychain entry from a
-        # failed init would otherwise shadow nothing but confuse recovery.
-        keychain.store_secret_key(secret_key)
 
     return InitResult(
         database_path=database_path,
@@ -85,11 +98,13 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
 
 _CONFIG_TEMPLATE = """\
 # Healthspan configuration (created by 'healthspan init').
+# The database path is pinned to where init created it, so a future
+# change in platform-default locations can never orphan the file.
 # Commented values show the defaults in force; uncomment to override.
 config_version = 1
 
-# [database]
-# path = {db_path}
+[database]
+path = {db_path}
 
 # [backup]
 # directory = {backup_dir}
@@ -112,14 +127,10 @@ def _ensure_config_file(cfg: Config) -> None:
         return
     cfg.path.parent.mkdir(parents=True, exist_ok=True)
     set_owner_only(cfg.path.parent)
-
-    def toml_str(p: Path) -> str:
-        return '"' + str(p).replace("\\", "\\\\") + '"'
-
     cfg.path.write_text(
         _CONFIG_TEMPLATE.format(
-            db_path=toml_str(cfg.database.path),
-            backup_dir=toml_str(cfg.backup.directory),
+            db_path=toml_quote(str(cfg.database.path)),
+            backup_dir=toml_quote(str(cfg.backup.directory)),
         ),
         encoding="utf-8",
     )

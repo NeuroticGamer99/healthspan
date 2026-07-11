@@ -28,9 +28,26 @@ OUTPUT_WARNING = (
 )
 
 
-def render_kit(secret_key: bytes) -> str:
-    """Render the full Recovery Kit as text (in memory, ADR-0033)."""
+def render_kit(secret_key: bytes, *, include_qr: bool = True) -> str:
+    """Render the full Recovery Kit as text (in memory, ADR-0033).
+
+    ``include_qr=False`` substitutes a note for the QR block — used when
+    the output stream's encoding cannot carry the Unicode half-block
+    cells (e.g. stdout redirected under a legacy Windows code page).
+    """
     b32 = encode_secret_key(secret_key)
+    if include_qr:
+        qr_lines = [
+            "QR code (encodes the Base32 secret key above):",
+            "",
+            _qr_text(b32),
+        ]
+    else:
+        qr_lines = [
+            "[QR code omitted: this output stream cannot render it. Run",
+            "'healthspan keys recovery-kit' in a terminal to scan it.]",
+            "",
+        ]
     lines = [
         "=" * 68,
         "HEALTHSPAN RECOVERY KIT",
@@ -46,9 +63,7 @@ def render_kit(secret_key: bytes) -> str:
         "",
         "    " + "_" * 48,
         "",
-        "QR code (encodes the Base32 secret key above):",
-        "",
-        _qr_text(b32),
+        *qr_lines,
         "Keep this kit in a safe or safety-deposit box. Anyone holding it",
         "has your secret key; with your passphrase it opens your entire",
         "health history. To set up a new machine: healthspan init --restore",

@@ -59,7 +59,7 @@ def test_change_passphrase_two_factor_keeps_secret_key(
     secret_before = keychain.load_secret_key()
     unlocked = rotation.unlock(cfg, PASSPHRASE)
     new_pass = "an entirely different phrase"
-    result = rotation.change_passphrase(cfg, unlocked, PASSPHRASE, new_pass)
+    result = rotation.change_passphrase(cfg, unlocked, new_pass)
     assert keychain.load_secret_key() == secret_before
     assert result.backup_database is not None
     assert result.backup_database.exists()
@@ -81,7 +81,7 @@ def test_change_passphrase_passphrase_only_regenerates_salt(
     salt_before = read_keyparams(sidecar_path(cfg.database.path)).salt
     unlocked = rotation.unlock(cfg, PASSPHRASE)
     new_pass = "an entirely different phrase"
-    rotation.change_passphrase(cfg, unlocked, PASSPHRASE, new_pass)
+    rotation.change_passphrase(cfg, unlocked, new_pass)
     params_after = read_keyparams(sidecar_path(cfg.database.path))
     assert params_after.salt != salt_before
     assert params_after.rotated_utc
@@ -169,7 +169,7 @@ def test_failed_backup_aborts_rekey_leaving_database_unchanged(
 
     monkeypatch.setattr(rotation, "create_verified_backup", _boom)
     with pytest.raises(BackupError):
-        rotation.change_passphrase(cfg, unlocked, PASSPHRASE, "would-be new passphrase")
+        rotation.change_passphrase(cfg, unlocked, "would-be new passphrase")
     assert sidecar_path(cfg.database.path).read_bytes() == sidecar_before
     _open_with(cfg, PASSPHRASE)  # old credentials still open the live file
 
@@ -183,3 +183,51 @@ def test_rotation_without_backup_skips_backup_dir(
     result = rotation.rotate_secret_key(cfg, unlocked, PASSPHRASE, backup=False)
     assert result.backup_database is None
     assert not cfg.backup.directory.exists()
+
+
+def test_keychain_store_failure_after_rekey_returns_key_with_warning(
+    make_config: Callable[[], Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A keychain failure must never discard the only copy of the new key."""
+    cfg = make_config()
+    initialize(cfg, PASSPHRASE, KeyMode.TWO_FACTOR)
+    unlocked = rotation.unlock(cfg, PASSPHRASE)
+
+    def _boom(secret: bytes) -> None:
+        raise keychain.KeychainError("simulated keychain outage")
+
+    monkeypatch.setattr(keychain, "store_secret_key", _boom)
+    result = rotation.rotate_secret_key(cfg, unlocked, PASSPHRASE)
+    assert result.new_secret_key is not None  # the key is still handed back
+    assert result.keychain_warning is not None
+    assert "ONLY copy" in result.keychain_warning
+    # The returned key (destined for the Recovery Kit) opens the database.
+    params = read_keyparams(sidecar_path(cfg.database.path))
+    key = derive_db_key(PASSPHRASE, result.new_secret_key, params)
+    conn = db.connect(cfg.database.path, key)
+    db.close(conn)
+
+
+def test_sidecar_write_failure_aborts_before_rekey(
+    make_config: Callable[[], Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pending sidecar is staged BEFORE the rekey: a write failure
+    leaves the database untouched and no .pending file behind."""
+    import healthspan.keyparams as keyparams_mod
+    from healthspan.fsperm import PermissionSetError
+
+    cfg = make_config()
+    initialize(cfg, PASSPHRASE, KeyMode.PASSPHRASE_ONLY)
+    sidecar = sidecar_path(cfg.database.path)
+    sidecar_before = sidecar.read_bytes()
+    unlocked = rotation.unlock(cfg, PASSPHRASE)
+
+    def _deny(path: object) -> None:
+        raise PermissionSetError("simulated ACL failure")
+
+    monkeypatch.setattr(keyparams_mod, "set_owner_only", _deny)
+    with pytest.raises(PermissionSetError):
+        rotation.change_passphrase(cfg, unlocked, "a new passphrase here")
+    assert sidecar.read_bytes() == sidecar_before
+    assert not sidecar.with_name(sidecar.name + ".pending").exists()
+    _open_with(cfg, PASSPHRASE)  # old credentials still open the live file

@@ -30,6 +30,8 @@ The secret key is stored under service **`healthspan`**, entry name **`secret-ke
 ### 4. Recovery Kit rendering: WI-2 scope and the qrcode dependency
 The kit renders **in memory to text** (ADR-0033's avoidance-first rule): grouped Base32 secret key, a handwritten-passphrase line, custody instructions, and a **QR code drawn with Unicode half-block characters** encoding the Base32 string — scannable from the terminal screen and from a monospace printout. Rendering uses the **`qrcode`** library (new dependency; pure-Python, no image stack — the half-block render needs no Pillow/pypng). Display is the default; a deliberate digital copy exists only via `--output <path>` with ADR-0033's encrypted-storage warning, owner-only permissions, and the `healthspan-recovery-kit-<date>.txt` naming matched by the repository's existing `*recovery-kit*` gitignore pattern.
 
+**Kit display can never be lost to I/O.** When the output stream's encoding cannot carry the half-block cells (stdout redirected under a legacy Windows code page), the kit renders QR-free with a note instead of crashing; a `--output` file-write failure warns and keeps the terminal render as the user's copy. The terminal render always precedes the file write.
+
 **Deferred, explicitly:** ADR-0033's OS print pathways (`lp`/`lpr` streaming, Windows temp-file shell print with verified disposal) and the orphan startup sweep. The sweep's natural home is the startup failure-cleanup that arrives with the Core Service (Phase 2); the print pathways land with it or with the user-documentation milestone, whichever comes first (tracked in [open-questions.md](../open-questions.md), Operations).
 
 ### 5. Pre-rekey backup: internal primitive in WI-2, CLI in WI-4
@@ -37,12 +39,20 @@ ADR-0028 mandates a verified backup before every rekey, but `healthspan db backu
 
 ### 6. `healthspan init` surface
 - **Creates an empty encrypted database** (keyed file, `journal_mode=WAL` and `application_id` set per ADR-0035) and the sidecar; the schema arrives via `healthspan db migrate` (WI-3). Init prints that next step. Rationale: credentials and provisioning are independent of the schema, and WI ordering should not force users through a half-specified combined flow.
-- **Creates a skeleton config file** at the platform-default location if none exists (creation is the writer's job, ADR-0046): `config_version = 1` plus the effective defaults as comments, so defaults keep applying until a value is deliberately uncommented.
+- **Creates a skeleton config file** at the platform-default location if none exists (creation is the writer's job, ADR-0046): `config_version = 1`, the **database path pinned as an active value** to the location init actually created the file (so a future change in platform-default resolution can never orphan the encrypted database), and the remaining defaults as comments.
+- **Two-factor ordering: keychain first.** The secret key is stored in the OS keychain *before* any file is created — a keychain outage aborts init with nothing on disk, instead of leaving an encrypted database whose key was never stored or shown. An orphaned entry from a later failure is harmless (the next successful init overwrites it). If file creation fails after that, init removes the partial database/sidecar (safe: the database is empty at init) so a re-run is not wedged on the overwrite guard.
 - **Owner-only protection on everything it writes** (config, database, sidecar, kit renders, backup directory): POSIX `0600`/`0700`; on Windows, ACL replacement via `icacls` — inheritance removed, a single full-control grant to the current user (ADR-0046's write-side enforcement).
 - **Refuses to overwrite**: an existing database or sidecar aborts init with guidance, never silently re-keys.
 - **`init --restore`** (adopt an existing database + sidecar + kit on a new machine, ADR-0013) is **deferred to WI-4** with `db restore`, which owns the verify-then-install mechanics it needs.
 
-### 7. Exclusive-access guard timing
+### 7. Rekey durability ordering
+ADR-0028's rotation mechanics list the sidecar update after `PRAGMA rekey` as a sequence of effects; realized naively, a write failure after the rekey leaves the database encrypted under parameters no file on disk records (in passphrase-only mode the new salt would exist only in memory). The implementation therefore orders for durability:
+
+1. **Stage first**: the new sidecar is written to `<sidecar>.pending` *before* the rekey — every refusable write (disk full, ACLs) fires while the old credentials still open the database, and the operation aborts cleanly with the pending file removed.
+2. **Rekey**, then **install atomically**: `os.replace(pending, sidecar)` — a same-directory atomic swap. A crash in the narrow window between rekey and install leaves the new parameters on disk in the pending file; the unlock error path detects a stray `.pending` and says how to recover.
+3. **Keychain writes never outrank the kit**: after a successful rekey, a failure storing the new secret key (or deleting the old one on downgrade) is downgraded to a prominent warning on the result — the Recovery Kit is always rendered, so a keychain outage can never discard the only copy of a live key.
+
+### 8. Exclusive-access guard timing
 ADR-0028 requires rekey commands to refuse while the Core Service is up. No Core Service exists in Phase 1; the enforceable check arrives with ADR-0042's single-instance lock (Phase 2), and the rekey commands adopt it then. Until that lands, protection is what SQLite provides: the rekey's write transaction fails against a concurrent writer rather than corrupting.
 
 ### Positive Consequences

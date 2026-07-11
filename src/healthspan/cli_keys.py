@@ -5,15 +5,18 @@ and rendering live here; the mechanics live in :mod:`healthspan.provisioning`
 and :mod:`healthspan.rotation`.
 """
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from healthspan import keychain, recovery_kit, rotation
+from healthspan import db, keychain, recovery_kit, rotation
 from healthspan.backup import BackupError
-from healthspan.config import Config, ConfigError, load_config
+from healthspan.cli_support import fail, load_config_or_exit
+from healthspan.config import Config
+from healthspan.fsperm import PermissionSetError
 from healthspan.keyparams import KeyMode, KeyParamsError
 from healthspan.provisioning import (
     PASSPHRASE_ADVISORY_MIN,
@@ -31,20 +34,6 @@ _NON_RETROACTIVITY_WARNING = (
     "credentials. Either re-create backups under the new credentials, or "
     "retain the old credentials until old backups have aged out (ADR-0028)."
 )
-
-
-def _fail(message: str) -> typer.Exit:
-    typer.echo(f"error: {message}", err=True)
-    return typer.Exit(code=1)
-
-
-def _load_config_or_exit(ctx: typer.Context) -> Config:
-    from healthspan.cli import state  # local import to avoid a cycle
-
-    try:
-        return load_config(flag=state(ctx).config_flag)
-    except ConfigError as exc:
-        raise _fail(str(exc)) from exc
 
 
 def _prompt_new_passphrase() -> str:
@@ -65,15 +54,41 @@ def _prompt_new_passphrase() -> str:
 
 
 def _echo_kit(secret_key: bytes, output: Path | None) -> None:
-    typer.echo(recovery_kit.render_kit(secret_key))
+    """Show the kit, degrading gracefully — never lose the key to I/O.
+
+    The terminal render comes first so a later file-write failure can
+    never discard the only copy of a secret key; a stdout encoding that
+    cannot carry the QR's half-block cells gets a QR-free render instead
+    of a UnicodeEncodeError.
+    """
+    kit = recovery_kit.render_kit(secret_key)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        kit.encode(encoding)
+    except UnicodeEncodeError:
+        kit = recovery_kit.render_kit(secret_key, include_qr=False)
+    typer.echo(kit)
     typer.echo(
         "Print this kit and store it in a safe place; it is shown only on "
         "request ('healthspan keys recovery-kit')."
     )
     if output is not None:
-        written = recovery_kit.write_kit(secret_key, output)
+        try:
+            written = recovery_kit.write_kit(secret_key, output)
+        except (OSError, PermissionSetError) as exc:
+            typer.echo(
+                f"warning: could not write the Recovery Kit file ({exc}); "
+                "the kit printed above is your copy.",
+                err=True,
+            )
+            return
         typer.echo(f"Recovery Kit written to {written}")
         typer.echo(f"warning: {recovery_kit.OUTPUT_WARNING}")
+
+
+def _echo_keychain_warning(warning: str | None) -> None:
+    if warning is not None:
+        typer.echo(f"WARNING: {warning}", err=True)
 
 
 def _announce_backup(backup_database: Path | None, skipped: bool) -> None:
@@ -109,13 +124,13 @@ _NoBackup = Annotated[
 @keys_app.command("change-passphrase")
 def keys_change_passphrase(ctx: typer.Context, no_backup: _NoBackup = False) -> None:
     """Set a new master passphrase; the secret key is unchanged."""
-    cfg = _load_config_or_exit(ctx)
+    cfg = load_config_or_exit(ctx)
     old_passphrase = typer.prompt("Current master passphrase", hide_input=True)
     unlocked = _unlock_or_exit(cfg, old_passphrase)
     new_passphrase = _prompt_new_passphrase()
     result = _run(
         lambda: rotation.change_passphrase(
-            cfg, unlocked, old_passphrase, new_passphrase, backup=not no_backup
+            cfg, unlocked, new_passphrase, backup=not no_backup
         )
     )
     _announce_backup(result.backup_database, skipped=no_backup)
@@ -138,7 +153,7 @@ def keys_rotate_secret_key(
     ctx: typer.Context, output: _KitOutput = None, no_backup: _NoBackup = False
 ) -> None:
     """Generate a new secret key; the passphrase is unchanged."""
-    cfg = _load_config_or_exit(ctx)
+    cfg = load_config_or_exit(ctx)
     passphrase = typer.prompt("Master passphrase", hide_input=True)
     unlocked = _unlock_or_exit(cfg, passphrase)
     if unlocked.params.mode is KeyMode.TWO_FACTOR:
@@ -154,7 +169,8 @@ def keys_rotate_secret_key(
     )
     _announce_backup(result.backup_database, skipped=no_backup)
     if result.new_secret_key is not None:
-        typer.echo("Secret key rotated; the OS keychain entry was replaced.")
+        typer.echo("Secret key rotated.")
+        _echo_keychain_warning(result.keychain_warning)
         _echo_kit(result.new_secret_key, output)
     else:
         typer.echo(
@@ -179,11 +195,11 @@ def keys_convert_mode(
     no_backup: _NoBackup = False,
 ) -> None:
     """Convert between two-factor and passphrase-only in place."""
-    cfg = _load_config_or_exit(ctx)
+    cfg = load_config_or_exit(ctx)
     try:
         target = KeyMode(to)
     except ValueError:
-        raise _fail(
+        raise fail(
             f"unknown mode {to!r}; expected 'two-factor' or 'passphrase-only'"
         ) from None
     passphrase = typer.prompt("Master passphrase", hide_input=True)
@@ -201,6 +217,7 @@ def keys_convert_mode(
     )
     _announce_backup(result.backup_database, skipped=no_backup)
     typer.echo(f"Database converted to {target.value} mode; passphrase unchanged.")
+    _echo_keychain_warning(result.keychain_warning)
     if result.new_secret_key is not None:
         _echo_kit(result.new_secret_key, output)
     if result.old_secret_key is not None:
@@ -208,9 +225,17 @@ def keys_convert_mode(
             "Old backups are still two-factor ciphertext requiring the "
             "outgoing secret key, which has been removed from the keychain."
         )
-        if typer.confirm(
-            "Render a final Recovery Kit for the OLD secret key?", default=True
-        ):
+        # The conversion is already committed; an unanswered prompt (EOF in
+        # a scripted run) must not discard the old key - default to showing.
+        try:
+            render_final = typer.confirm(
+                "Render a final Recovery Kit for the OLD secret key?",
+                default=True,
+            )
+        except typer.Abort:
+            typer.echo("(no answer; rendering the final kit for safety)")
+            render_final = True
+        if render_final:
             _echo_kit(result.old_secret_key, output)
     typer.echo(_NON_RETROACTIVITY_WARNING)
 
@@ -218,11 +243,11 @@ def keys_convert_mode(
 @keys_app.command("recovery-kit")
 def keys_recovery_kit(ctx: typer.Context, output: _KitOutput = None) -> None:
     """Render the Recovery Kit for the secret key in the OS keychain."""
-    _load_config_or_exit(ctx)  # validates config; kit needs only the keychain
+    load_config_or_exit(ctx)  # validates config; kit needs only the keychain
     try:
         secret_key = keychain.load_secret_key()
     except keychain.KeychainError as exc:
-        raise _fail(
+        raise fail(
             f"{exc} (in passphrase-only mode no Recovery Kit exists - "
             "no secret key does)"
         ) from exc
@@ -244,7 +269,7 @@ def init_command(
     output: _KitOutput = None,
 ) -> None:
     """Initialize Healthspan: credentials, encrypted database, sidecar."""
-    cfg = _load_config_or_exit(ctx)
+    cfg = load_config_or_exit(ctx)
     mode = KeyMode.PASSPHRASE_ONLY if key_from_passphrase else KeyMode.TWO_FACTOR
     typer.echo(f"Initializing in {mode.value} mode.")
     if mode is KeyMode.PASSPHRASE_ONLY:
@@ -274,5 +299,8 @@ def _run[T](operation: Callable[[], T]) -> T:
         KeyParamsError,
         BackupError,
         keychain.KeychainError,
+        db.DatabaseError,
+        PermissionSetError,
+        OSError,
     ) as exc:
-        raise _fail(str(exc)) from exc
+        raise fail(str(exc)) from exc
