@@ -104,6 +104,9 @@ What export options exist for each body composition device (currently InBody 120
 
 ~~**Backup cadence and retention defaults ([ADR-0038](adr/0038-backup-execution-and-verification.md))**~~ → Resolved (daily, retain 14) — see Resolved section and [ADR-0038](adr/0038-backup-execution-and-verification.md).
 
+**Recovery Kit OS print pathways and orphan sweep ([ADR-0033](adr/0033-plaintext-artifact-disposal.md), [ADR-0047](adr/0047-crypto-surface-implementation-decisions.md))**
+WI-2 shipped kit rendering as terminal display plus explicit `--output` file (ADR-0047 §4); ADR-0033's OS print integration (`lp`/`lpr` streaming, Windows temp-file shell print with verified disposal) and the orphan startup sweep are deferred. The sweep's home is the Core Service startup failure-cleanup (Phase 2); the print pathways land with it or with the user-documentation milestone, whichever comes first. Trigger: Core Service startup sequence implementation (Phase 2).
+
 ---
 
 ## Testing

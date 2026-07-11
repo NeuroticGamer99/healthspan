@@ -1,8 +1,8 @@
 """Typer CLI entry point (ADR-0006) and config inspection (ADR-0046).
 
-Phase-1 skeleton: global ``--config``/``--version`` plus the ``config``
-inspection group. The ``db`` and ``keys`` command groups arrive with the
-work items that implement them.
+Global ``--config``/``--version``, the ``config`` inspection group,
+``init`` and the ``keys`` group (WI-2, ADR-0028/0033). The ``db`` command
+group arrives with the work items that implement it.
 """
 
 import json
@@ -33,6 +33,13 @@ config_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(config_app, name="config")
+
+# Imported below the app definitions: cli_keys reaches back into this
+# module for the per-invocation state helper.
+from healthspan.cli_keys import init_command, keys_app  # noqa: E402
+
+app.command("init")(init_command)
+app.add_typer(keys_app, name="keys")
 
 
 @dataclass
@@ -74,7 +81,7 @@ def root(
     ctx.obj = AppState(config_flag=config)
 
 
-def _state(ctx: typer.Context) -> AppState:
+def state(ctx: typer.Context) -> AppState:
     obj = ctx.obj
     if not isinstance(obj, AppState):  # pragma: no cover - Typer wiring invariant
         raise RuntimeError("CLI state missing; root callback did not run")
@@ -84,7 +91,7 @@ def _state(ctx: typer.Context) -> AppState:
 @config_app.command("path")
 def config_path(ctx: typer.Context) -> None:
     """Print the resolved config file path and which source resolved it."""
-    path, source = resolve_config_path(_state(ctx).config_flag)
+    path, source = resolve_config_path(state(ctx).config_flag)
     typer.echo(f"{path} (from {source.value}; {path_status(path, source)})")
 
 
@@ -92,7 +99,7 @@ def config_path(ctx: typer.Context) -> None:
 def config_show(ctx: typer.Context) -> None:
     """Print the effective configuration (file values merged over defaults)."""
     try:
-        cfg = load_config(flag=_state(ctx).config_flag)
+        cfg = load_config(flag=state(ctx).config_flag)
     except ConfigError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
