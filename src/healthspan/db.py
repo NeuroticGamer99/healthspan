@@ -50,14 +50,17 @@ def connect(database_path: Path, key: DbKey) -> sqlcipher3.Connection:
         raise DatabaseError(f"database {database_path} does not exist")
     conn = _open(database_path, key)
     try:
-        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
-    except sqlcipher3.DatabaseError as exc:
+        try:
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except sqlcipher3.DatabaseError as exc:
+            raise DatabaseError(
+                f"could not unlock {database_path}: wrong passphrase/secret "
+                f"key, or the file is not a Healthspan database ({exc})"
+            ) from exc
+        _apply_runtime_pragmas(conn)
+    except BaseException:
         conn.close()
-        raise DatabaseError(
-            f"could not unlock {database_path}: wrong passphrase/secret key, "
-            f"or the file is not a Healthspan database ({exc})"
-        ) from exc
-    _apply_runtime_pragmas(conn)
+        raise
     return conn
 
 
@@ -78,6 +81,8 @@ def provision(database_path: Path, key: DbKey) -> None:
         conn.execute(f"PRAGMA application_id = {APPLICATION_ID}")
         # Force the header (and hence the file) to be written out.
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except sqlcipher3.Error as exc:
+        raise DatabaseError(f"could not provision {database_path}: {exc}") from exc
     finally:
         conn.close()
     set_owner_only(database_path)
@@ -92,19 +97,28 @@ def open_backup_target(target_path: Path, key: DbKey) -> sqlcipher3.Connection:
     a future caller runs through this handle meets the same discipline.
     """
     conn = _open(target_path, key)
-    _apply_runtime_pragmas(conn)
+    try:
+        _apply_runtime_pragmas(conn)
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
 def rekey(conn: sqlcipher3.Connection, new_key: DbKey) -> None:
     """Re-encrypt every page under a new key (ADR-0028 rotation step 3)."""
-    conn.execute(key_pragma("rekey", new_key))
+    try:
+        conn.execute(key_pragma("rekey", new_key))
+    except sqlcipher3.Error as exc:
+        raise DatabaseError(f"rekey failed: {exc}") from exc
 
 
 def close(conn: sqlcipher3.Connection) -> None:
     """Close a factory connection, running ``PRAGMA optimize`` first."""
     try:
         conn.execute("PRAGMA optimize")
+    except sqlcipher3.Error:
+        pass  # a failed optimize never outranks closing the connection
     finally:
         conn.close()
 
@@ -128,12 +142,22 @@ def schema_version(conn: sqlcipher3.Connection) -> int | None:
 
 
 def _open(database_path: Path, key: DbKey) -> sqlcipher3.Connection:
-    conn = sqlcipher3.connect(
-        str(database_path),
-        isolation_level=None,  # explicit transactions only (ADR-0035)
-        check_same_thread=True,  # thread-affinity enforcement (ADR-0037)
-    )
-    conn.execute(key_pragma("key", key))
+    try:
+        conn = sqlcipher3.connect(
+            str(database_path),
+            isolation_level=None,  # explicit transactions only (ADR-0035)
+            check_same_thread=True,  # thread-affinity enforcement (ADR-0037)
+        )
+    except sqlcipher3.Error as exc:
+        raise DatabaseError(f"could not open {database_path}: {exc}") from exc
+    try:
+        conn.execute(key_pragma("key", key))
+    except sqlcipher3.Error as exc:
+        conn.close()
+        raise DatabaseError(f"could not key {database_path}: {exc}") from exc
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 

@@ -5,20 +5,19 @@ Global ``--config``/``--version``, the ``config`` inspection group,
 group arrives with the work items that implement it.
 """
 
-import json
-from dataclasses import dataclass
 from importlib.metadata import version as _dist_version
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from healthspan.cli_keys import init_command, keys_app
+from healthspan.cli_support import AppState, load_config_or_exit, state
 from healthspan.config import (
     Config,
-    ConfigError,
-    load_config,
     path_status,
     resolve_config_path,
+    toml_quote,
 )
 from healthspan.paths import APP_NAME
 
@@ -33,20 +32,8 @@ config_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(config_app, name="config")
-
-# Imported below the app definitions: cli_keys reaches back into this
-# module for the per-invocation state helper.
-from healthspan.cli_keys import init_command, keys_app  # noqa: E402
-
 app.command("init")(init_command)
 app.add_typer(keys_app, name="keys")
-
-
-@dataclass
-class AppState:
-    """Per-invocation state shared from the root callback to subcommands."""
-
-    config_flag: Path | None
 
 
 def _version_callback(value: bool) -> None:
@@ -81,13 +68,6 @@ def root(
     ctx.obj = AppState(config_flag=config)
 
 
-def state(ctx: typer.Context) -> AppState:
-    obj = ctx.obj
-    if not isinstance(obj, AppState):  # pragma: no cover - Typer wiring invariant
-        raise RuntimeError("CLI state missing; root callback did not run")
-    return obj
-
-
 @config_app.command("path")
 def config_path(ctx: typer.Context) -> None:
     """Print the resolved config file path and which source resolved it."""
@@ -98,20 +78,10 @@ def config_path(ctx: typer.Context) -> None:
 @config_app.command("show")
 def config_show(ctx: typer.Context) -> None:
     """Print the effective configuration (file values merged over defaults)."""
-    try:
-        cfg = load_config(flag=state(ctx).config_flag)
-    except ConfigError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    typer.echo(_render_toml(cfg))
+    typer.echo(_render_toml(load_config_or_exit(ctx)))
 
 
 def _render_toml(cfg: Config) -> str:
-    # TOML basic strings share JSON's escape rules, so json.dumps produces
-    # valid TOML string literals (Windows path backslashes included).
-    def s(value: str) -> str:
-        return json.dumps(value)
-
     provenance = (
         f"effective configuration from {cfg.path} (from {cfg.source.value})"
         if cfg.loaded_from_file
@@ -123,15 +93,15 @@ def _render_toml(cfg: Config) -> str:
             f"config_version = {cfg.config_version}",
             "",
             "[database]",
-            f"path = {s(str(cfg.database.path))}",
+            f"path = {toml_quote(str(cfg.database.path))}",
             "",
             "[backup]",
-            f"directory = {s(str(cfg.backup.directory))}",
-            f"schedule = {s(cfg.backup.schedule)}",
+            f"directory = {toml_quote(str(cfg.backup.directory))}",
+            f"schedule = {toml_quote(cfg.backup.schedule)}",
             f"retention_count = {cfg.backup.retention_count}",
             "",
             "[logging]",
-            f"level = {s(cfg.logging.level)}",
+            f"level = {toml_quote(cfg.logging.level)}",
         ]
     )
 

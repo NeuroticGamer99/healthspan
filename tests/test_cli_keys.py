@@ -216,3 +216,111 @@ def test_init_creates_skeleton_config_at_default_location(
     assert config_path.exists()
     assert "config_version = 1" in config_path.read_text(encoding="utf-8")
     assert (tmp_path / "data" / "healthspan.db").exists()
+    # The database path is pinned (active, not commented) to where init
+    # actually created the file, and the skeleton re-parses cleanly.
+    from healthspan.config import load_config
+
+    cfg = load_config(flag=config_path)
+    assert cfg.database.path == tmp_path / "data" / "healthspan.db"
+
+
+def test_init_keychain_failure_leaves_nothing_on_disk(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two-factor init stores the secret key BEFORE creating files, so a
+    keychain outage aborts cleanly and init stays re-runnable."""
+    from healthspan import keychain
+
+    def _boom(secret: bytes) -> None:
+        raise keychain.KeychainError("simulated keychain outage")
+
+    monkeypatch.setattr(keychain, "store_secret_key", _boom)
+    result = _init(config_file)
+    assert result.exit_code == 1
+    assert "keychain outage" in result.output
+    assert "Traceback" not in result.output
+    assert not (config_file.parent / "healthspan.db").exists()
+    assert not (config_file.parent / "healthspan.db.keyparams").exists()
+    monkeypatch.undo()
+    assert _init(config_file).exit_code == 0  # re-run succeeds
+
+
+def test_keychain_store_failure_cli_still_prints_kit(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _init(config_file).exit_code == 0
+    from healthspan import keychain
+
+    def _boom(secret: bytes) -> None:
+        raise keychain.KeychainError("simulated keychain outage")
+
+    monkeypatch.setattr(keychain, "store_secret_key", _boom)
+    result = _invoke(config_file, ["keys", "rotate-secret-key"], f"{PASSPHRASE}\ny\n")
+    assert result.exit_code == 0, result.output
+    assert "ONLY copy" in result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+
+
+def test_permission_error_is_reported_cleanly_not_a_traceback(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import healthspan.keyparams as keyparams_mod
+    from healthspan.fsperm import PermissionSetError
+
+    assert _init(config_file, "--key-from-passphrase").exit_code == 0
+
+    def _deny(path: Path) -> None:
+        raise PermissionSetError("simulated ACL failure")
+
+    monkeypatch.setattr(keyparams_mod, "set_owner_only", _deny)
+    new = "an entirely different phrase"
+    result = _invoke(
+        config_file, ["keys", "change-passphrase"], f"{PASSPHRASE}\n{new}\n{new}\n"
+    )
+    assert result.exit_code == 1
+    assert "error: simulated ACL failure" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_convert_downgrade_renders_final_kit_on_prompt_eof(
+    config_file: Path,
+) -> None:
+    """An exhausted stdin after the committed downgrade must default to
+    rendering the old key's final kit, not abort with a failure."""
+    assert _init(config_file).exit_code == 0
+    result = _invoke(
+        config_file,
+        ["keys", "convert-mode", "--to", "passphrase-only"],
+        f"{PASSPHRASE}\ny\n",  # no answer for the final-kit confirm
+    )
+    assert result.exit_code == 0, result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output
+
+
+def test_kit_output_write_failure_keeps_terminal_copy(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _init(config_file).exit_code == 0
+    from healthspan import recovery_kit
+
+    def _boom(secret: bytes, output: Path) -> Path:
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr(recovery_kit, "write_kit", _boom)
+    result = _invoke(
+        config_file,
+        ["keys", "recovery-kit", "--output", str(config_file.parent)],
+        "",
+    )
+    assert result.exit_code == 0, result.output
+    assert "HEALTHSPAN RECOVERY KIT" in result.output  # terminal copy intact
+    assert "could not write the Recovery Kit file" in result.output
+
+
+def test_render_kit_without_qr_carries_note() -> None:
+    from healthspan.kdf import generate_secret_key
+    from healthspan.recovery_kit import render_kit
+
+    text = render_kit(generate_secret_key(), include_qr=False)
+    assert "QR code omitted" in text
+    assert "█" not in text  # no half-block cells

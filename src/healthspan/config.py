@@ -8,6 +8,7 @@ defaults apply; a missing file behind an explicit ``--config`` flag or
 ``HEALTHSPAN_CONFIG`` is an error.
 """
 
+import json
 import os
 import stat
 import sys
@@ -27,6 +28,16 @@ _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 class ConfigError(Exception):
     """A configuration file could not be resolved, parsed, or validated."""
+
+
+def toml_quote(value: str) -> str:
+    """Render a string as a TOML basic string literal.
+
+    TOML basic strings share JSON's escape rules, so json.dumps produces
+    valid TOML (Windows path backslashes included). The single writer-side
+    escaper — every module emitting TOML uses this.
+    """
+    return json.dumps(value)
 
 
 class ConfigSource(Enum):

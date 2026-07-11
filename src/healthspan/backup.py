@@ -98,7 +98,7 @@ def _copy_database(database_path: Path, key: DbKey, target_path: Path) -> int | 
             source.backup(target)
         finally:
             target.close()
-    except sqlcipher3.Error as exc:
+    except (sqlcipher3.Error, db.DatabaseError) as exc:
         raise BackupError(f"backup copy failed: {exc}") from exc
     finally:
         source.close()

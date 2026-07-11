@@ -2,18 +2,21 @@
 
 The shared mechanics all rekey operations follow: verify the current
 credentials by opening the database, take a mandatory verified backup
-(skippable only by explicit expert flag), derive the new key, ``PRAGMA
-rekey``, rewrite the sidecar — with the parameter-upgrade ride-along and
-the mode-aware salt semantics ADR-0028 specifies.
+(skippable only by explicit expert flag), stage the new sidecar durably,
+``PRAGMA rekey``, then atomically install the staged sidecar — with the
+parameter-upgrade ride-along and the mode-aware salt semantics ADR-0028
+specifies. The staging order means no failure can leave the database
+encrypted under credentials no file on disk records.
 """
 
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from healthspan import db, keychain
 from healthspan.backup import create_verified_backup
 from healthspan.config import Config
-from healthspan.kdf import derive_db_key, generate_secret_key
+from healthspan.kdf import DbKey, derive_db_key, generate_secret_key
 from healthspan.keyparams import (
     KeyMode,
     KeyParams,
@@ -30,12 +33,17 @@ class RotationError(Exception):
 
 @dataclass(frozen=True)
 class Unlocked:
-    """Current credentials, verified against the live database."""
+    """Current credentials, verified against the live database.
+
+    Carries the verified derived key so the rekey step does not pay a
+    second Argon2id run; the rekey flow zeroizes it when done.
+    """
 
     database_path: Path
     sidecar: Path
     params: KeyParams
     salt: bytes  # secret key (two-factor) or sidecar salt (passphrase-only)
+    key: DbKey
 
 
 @dataclass(frozen=True)
@@ -44,6 +52,9 @@ class RotationResult:
     new_secret_key: bytes | None  # set when a new Recovery Kit is due
     old_secret_key: bytes | None  # set when a final kit for the old key is offered
     backup_database: Path | None
+    # Non-fatal keychain trouble the CLI must surface prominently; when set
+    # alongside new_secret_key, the rendered kit is the ONLY copy of the key.
+    keychain_warning: str | None = None
 
 
 def unlock(cfg: Config, passphrase: str) -> Unlocked:
@@ -62,18 +73,28 @@ def unlock(cfg: Config, passphrase: str) -> Unlocked:
         conn = db.connect(database_path, key)
         db.close(conn)
     except db.DatabaseError as exc:
-        raise RotationError(str(exc)) from exc
-    finally:
         key.zeroize()
+        message = str(exc)
+        pending = sidecar.with_name(sidecar.name + ".pending")
+        if pending.is_file():
+            message += (
+                f" Note: {pending} exists - an interrupted rotation may have "
+                "rekeyed the database without installing its new sidecar; "
+                "if so, replace the sidecar with the pending file and retry."
+            )
+        raise RotationError(message) from exc
     return Unlocked(
-        database_path=database_path, sidecar=sidecar, params=params, salt=salt
+        database_path=database_path,
+        sidecar=sidecar,
+        params=params,
+        salt=salt,
+        key=key,
     )
 
 
 def change_passphrase(
     cfg: Config,
     unlocked: Unlocked,
-    old_passphrase: str,
     new_passphrase: str,
     *,
     backup: bool = True,
@@ -82,18 +103,11 @@ def change_passphrase(
     the sidecar salt regenerates in the same rekey (ADR-0028)."""
     if unlocked.params.mode is KeyMode.TWO_FACTOR:
         new_salt = unlocked.salt
-        new_params = _rotated(unlocked.params)
     else:
         new_salt = generate_secret_key()
-        new_params = replace(_rotated(unlocked.params), salt=new_salt)
+    new_params = _next_params(unlocked.params, new_salt)
     backup_path = _rekey(
-        cfg,
-        unlocked,
-        old_passphrase,
-        new_passphrase,
-        new_salt,
-        new_params,
-        backup=backup,
+        cfg, unlocked, new_passphrase, new_salt, new_params, backup=backup
     )
     return RotationResult(
         mode=new_params.mode,
@@ -109,22 +123,21 @@ def rotate_secret_key(
     """New secret key (two-factor) or new sidecar salt (passphrase-only);
     passphrase unchanged."""
     new_salt = generate_secret_key()
-    if unlocked.params.mode is KeyMode.TWO_FACTOR:
-        new_params = _rotated(unlocked.params)
-    else:
-        new_params = replace(_rotated(unlocked.params), salt=new_salt)
-    backup_path = _rekey(
-        cfg, unlocked, passphrase, passphrase, new_salt, new_params, backup=backup
-    )
-    new_secret: bytes | None = None
-    if new_params.mode is KeyMode.TWO_FACTOR:
-        keychain.store_secret_key(new_salt)
-        new_secret = new_salt
+    new_params = _next_params(unlocked.params, new_salt)
+    backup_path = _rekey(cfg, unlocked, passphrase, new_salt, new_params, backup=backup)
+    if new_params.mode is not KeyMode.TWO_FACTOR:
+        return RotationResult(
+            mode=new_params.mode,
+            new_secret_key=None,
+            old_secret_key=None,
+            backup_database=backup_path,
+        )
     return RotationResult(
         mode=new_params.mode,
-        new_secret_key=new_secret,
+        new_secret_key=new_salt,
         old_secret_key=None,
         backup_database=backup_path,
+        keychain_warning=_store_secret(new_salt),
     )
 
 
@@ -140,64 +153,112 @@ def convert_mode(
     if unlocked.params.mode is target:
         raise RotationError(f"database is already in {target.value} mode")
     new_salt = generate_secret_key()
+    new_params = _next_params(unlocked.params, new_salt, mode=target)
+    backup_path = _rekey(cfg, unlocked, passphrase, new_salt, new_params, backup=backup)
     if target is KeyMode.TWO_FACTOR:
-        new_params = replace(_rotated(unlocked.params), mode=target, salt=None)
-    else:
-        new_params = replace(_rotated(unlocked.params), mode=target, salt=new_salt)
-    backup_path = _rekey(
-        cfg, unlocked, passphrase, passphrase, new_salt, new_params, backup=backup
-    )
-    if target is KeyMode.TWO_FACTOR:
-        keychain.store_secret_key(new_salt)
         return RotationResult(
             mode=target,
             new_secret_key=new_salt,
             old_secret_key=None,
             backup_database=backup_path,
+            keychain_warning=_store_secret(new_salt),
         )
     # Downgrade: the keychain entry goes only after the rekey succeeded;
     # the old secret key is offered back for a final Recovery Kit render
     # (old backups are still ciphertext under it).
-    keychain.delete_secret_key()
+    warning: str | None = None
+    try:
+        keychain.delete_secret_key()
+    except keychain.KeychainError as exc:
+        warning = (
+            f"could not remove the old keychain entry ({exc}); the stale "
+            "entry is harmless but should be deleted by hand (service "
+            f"'{keychain.SERVICE}', name '{keychain.SECRET_KEY_ENTRY}')."
+        )
     return RotationResult(
         mode=target,
         new_secret_key=None,
         old_secret_key=unlocked.salt,
         backup_database=backup_path,
+        keychain_warning=warning,
     )
 
 
-def _rotated(params: KeyParams) -> KeyParams:
-    # Parameter upgrades ride along with every rotation (ADR-0028).
-    return replace(params.with_upgraded_parameters(), rotated_utc=utc_now_iso())
+def _store_secret(new_salt: bytes) -> str | None:
+    """Store the new secret key; a failure must never hide the key.
+
+    By the time this runs the database is already rekeyed, so the caller
+    always renders the Recovery Kit from the returned result — a store
+    failure downgrades to a prominent warning instead of an exception
+    that would discard the only copy of the key.
+    """
+    try:
+        keychain.store_secret_key(new_salt)
+    except keychain.KeychainError as exc:
+        return (
+            f"the OS keychain store FAILED ({exc}). The Recovery Kit below "
+            "is the ONLY copy of the new secret key - print or save it NOW, "
+            "then either add the keychain entry by hand (service "
+            f"'{keychain.SERVICE}', name '{keychain.SECRET_KEY_ENTRY}', the "
+            "Base32 string from the kit) or repair the keychain and run "
+            "'healthspan keys rotate-secret-key' again."
+        )
+    return None
+
+
+def _next_params(
+    params: KeyParams, new_salt: bytes, mode: KeyMode | None = None
+) -> KeyParams:
+    """The post-rotation sidecar record: mode-aware salt semantics
+    (ADR-0028) plus the parameter-upgrade ride-along."""
+    target = mode if mode is not None else params.mode
+    stored_salt = new_salt if target is KeyMode.PASSPHRASE_ONLY else None
+    return replace(
+        params.with_upgraded_parameters(),
+        mode=target,
+        salt=stored_salt,
+        rotated_utc=utc_now_iso(),
+    )
 
 
 def _rekey(
     cfg: Config,
     unlocked: Unlocked,
-    old_passphrase: str,
     new_passphrase: str,
     new_salt: bytes,
     new_params: KeyParams,
     *,
     backup: bool,
 ) -> Path | None:
-    old_key = derive_db_key(old_passphrase, unlocked.salt, unlocked.params)
+    """Shared rekey mechanics, ordered for durability.
+
+    The new sidecar is staged to ``<sidecar>.pending`` BEFORE the rekey:
+    every failure mode that can refuse a write (disk full, ACLs) fires
+    while the database still opens with the old credentials, and a crash
+    between the rekey and the atomic install leaves the new parameters on
+    disk in the pending file rather than only in memory.
+    """
     new_key = derive_db_key(new_passphrase, new_salt, new_params)
+    pending = unlocked.sidecar.with_name(unlocked.sidecar.name + ".pending")
     try:
         backup_path: Path | None = None
         if backup:
             result = create_verified_backup(
-                unlocked.database_path, old_key, cfg.backup.directory
+                unlocked.database_path, unlocked.key, cfg.backup.directory
             )
             backup_path = result.database
-        conn = db.connect(unlocked.database_path, old_key)
         try:
-            db.rekey(conn, new_key)
-        finally:
-            db.close(conn)
-        write_keyparams(unlocked.sidecar, new_params)
+            write_keyparams(pending, new_params)
+            conn = db.connect(unlocked.database_path, unlocked.key)
+            try:
+                db.rekey(conn, new_key)
+            finally:
+                db.close(conn)
+        except BaseException:
+            pending.unlink(missing_ok=True)  # nothing rekeyed; no trace
+            raise
+        os.replace(pending, unlocked.sidecar)  # atomic same-directory swap
         return backup_path
     finally:
-        old_key.zeroize()
+        unlocked.key.zeroize()
         new_key.zeroize()

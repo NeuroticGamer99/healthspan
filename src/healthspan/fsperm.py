@@ -3,13 +3,22 @@
 POSIX: mode bits (0600 files, 0700 directories). Windows: mode bits carry
 no ACL information, so the writer replaces the ACL outright — inheritance
 removed, a single full-control grant to the current user (``icacls``, the
-supported command-line surface for DACL edits).
+supported command-line surface for DACL edits), then removal of any
+explicit grant other principals already held (some environments stamp
+SYSTEM/Administrators explicitly on new files).
 """
 
+import functools
 import os
 import stat
 import subprocess
 from pathlib import Path
+
+# Console tools (whoami, icacls) emit the OEM code page when piped, not the
+# ANSI code page subprocess's text=True would assume; decoding with the
+# wrong one mangles non-ASCII principal names (localized well-known SIDs,
+# accented usernames) and breaks the grant-removal pass.
+_CONSOLE_ENCODING = "oem"
 
 
 class PermissionSetError(Exception):
@@ -31,8 +40,7 @@ def _set_owner_only_windows(path: Path) -> None:
     # explicit grant with full control.
     _icacls(path, "/inheritance:r", "/grant:r", f"{user}:(F)")
     # /inheritance:r leaves *explicit* entries other principals may already
-    # hold (some environments stamp SYSTEM/Administrators explicitly on new
-    # files); remove every grant that is not the current user's.
+    # hold; remove every grant that is not the current user's.
     for principal in _explicit_principals(path):
         if principal.lower() != user.lower():
             _icacls(path, "/remove:g", principal)
@@ -42,7 +50,8 @@ def _icacls(path: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path), *args],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding=_CONSOLE_ENCODING,
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
@@ -67,11 +76,15 @@ def _explicit_principals(path: Path) -> list[str]:
     return principals
 
 
+@functools.cache
 def _current_windows_user() -> str:
+    # Process-invariant; cached so multi-file operations (init, backup)
+    # spawn whoami once, not once per file.
     result = subprocess.run(
         ["whoami"],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding=_CONSOLE_ENCODING,
+        errors="replace",
         check=False,
     )
     user = result.stdout.strip()
