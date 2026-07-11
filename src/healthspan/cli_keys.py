@@ -22,6 +22,7 @@ from healthspan.provisioning import (
     PASSPHRASE_ADVISORY_MIN,
     InitError,
     initialize,
+    restore_credentials,
 )
 
 keys_app = typer.Typer(
@@ -254,6 +255,28 @@ def keys_recovery_kit(ctx: typer.Context, output: _KitOutput = None) -> None:
     _echo_kit(secret_key, output)
 
 
+def _init_restore(cfg: Config, key_from_passphrase: bool) -> None:
+    """Store a Recovery Kit secret key on a new machine (ADR-0038)."""
+    if key_from_passphrase:
+        raise fail(
+            "--restore and --key-from-passphrase are incompatible: "
+            "passphrase-only mode has no secret key to restore, and its "
+            "backups carry their salt in the sidecar."
+        )
+    typer.echo("Restoring two-factor credentials from your Recovery Kit.")
+    secret_key_text = typer.prompt("Secret key from the Recovery Kit (Base32)")
+    result = _run(lambda: restore_credentials(cfg, secret_key_text))
+    if result.replaced_existing:
+        typer.echo("warning: an existing secret key in the keychain was replaced.")
+    typer.echo("Secret key stored in the OS keychain.")
+    if result.config_created:
+        typer.echo(f"Config file created: {result.config_path}")
+    typer.echo(
+        "Next: 'healthspan db restore <backup-file>' (or --latest) to "
+        "install your data from a backup."
+    )
+
+
 def init_command(
     ctx: typer.Context,
     key_from_passphrase: Annotated[
@@ -266,10 +289,24 @@ def init_command(
             ),
         ),
     ] = False,
+    restore: Annotated[
+        bool,
+        typer.Option(
+            "--restore",
+            help=(
+                "New-machine credential recovery: store the secret key from a "
+                "Recovery Kit in the OS keychain (then 'healthspan db restore' "
+                "installs the data). Provisions no database."
+            ),
+        ),
+    ] = False,
     output: _KitOutput = None,
 ) -> None:
     """Initialize Healthspan: credentials, encrypted database, sidecar."""
     cfg = load_config_or_exit(ctx)
+    if restore:
+        _init_restore(cfg, key_from_passphrase)
+        return
     mode = KeyMode.PASSPHRASE_ONLY if key_from_passphrase else KeyMode.TWO_FACTOR
     typer.echo(f"Initializing in {mode.value} mode.")
     if mode is KeyMode.PASSPHRASE_ONLY:

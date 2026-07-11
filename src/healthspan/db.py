@@ -156,6 +156,16 @@ def integrity_ok(conn: sqlcipher3.Connection) -> bool:
     return rows == [("ok",)]
 
 
+def foreign_key_ok(conn: sqlcipher3.Connection) -> bool:
+    """``PRAGMA foreign_key_check`` returns no rows (ADR-0038 verification).
+
+    The referential-consistency half of the "verified" definition that
+    ``integrity_check`` does not cover; it runs independent of the
+    ``foreign_keys`` enforcement pragma.
+    """
+    return conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def schema_version(conn: sqlcipher3.Connection) -> int | None:
     """Latest applied migration number, or None before the runner exists."""
     row = conn.execute(

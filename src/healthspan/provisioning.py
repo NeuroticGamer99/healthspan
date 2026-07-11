@@ -13,7 +13,7 @@ from pathlib import Path
 from healthspan import db, keychain
 from healthspan.config import Config, ConfigSource, toml_quote
 from healthspan.fsperm import set_owner_only
-from healthspan.kdf import derive_db_key, generate_secret_key
+from healthspan.kdf import decode_secret_key, derive_db_key, generate_secret_key
 from healthspan.keyparams import (
     KeyMode,
     KeyParams,
@@ -37,6 +37,46 @@ class InitResult:
     sidecar_path: Path
     mode: KeyMode
     secret_key: bytes | None  # two-factor only; caller renders the Recovery Kit
+
+
+@dataclass(frozen=True)
+class RestoreCredentialsResult:
+    config_path: Path
+    config_created: bool
+    replaced_existing: bool  # a secret key was already in the keychain
+
+
+def restore_credentials(cfg: Config, secret_key_text: str) -> RestoreCredentialsResult:
+    """Re-establish two-factor credentials on a new machine (ADR-0038).
+
+    Stores the Recovery Kit's secret key in the OS keychain and ensures a
+    skeleton config exists — the credential half of new-machine setup. The
+    data half is ``healthspan db restore``; the ADR sequences ``init
+    --restore`` first, this command, then ``db restore``. It provisions no
+    database and derives no key: the passphrase is not needed until the
+    restored data file is opened.
+    """
+    try:
+        secret_key = decode_secret_key(secret_key_text)
+    except ValueError as exc:
+        raise InitError(f"that is not a valid Recovery Kit secret key: {exc}") from exc
+
+    replaced_existing = _keychain_has_secret_key()
+    keychain.store_secret_key(secret_key)
+    config_created = _ensure_config_file(cfg)
+    return RestoreCredentialsResult(
+        config_path=cfg.path,
+        config_created=config_created,
+        replaced_existing=replaced_existing,
+    )
+
+
+def _keychain_has_secret_key() -> bool:
+    try:
+        keychain.load_secret_key()
+    except keychain.KeychainError:
+        return False
+    return True
 
 
 def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
@@ -116,15 +156,16 @@ path = {db_path}
 """
 
 
-def _ensure_config_file(cfg: Config) -> None:
+def _ensure_config_file(cfg: Config) -> bool:
     """Create a skeleton config at the platform default if none exists.
 
     Readers never write (ADR-0046); creation belongs to init. An explicit
     ``--config``/env path must already exist (load_config enforces it), so
-    only the platform-default location can be missing here.
+    only the platform-default location can be missing here. Returns whether
+    a file was created.
     """
     if cfg.loaded_from_file or cfg.source is not ConfigSource.DEFAULT:
-        return
+        return False
     cfg.path.parent.mkdir(parents=True, exist_ok=True)
     set_owner_only(cfg.path.parent)
     cfg.path.write_text(
@@ -135,3 +176,4 @@ def _ensure_config_file(cfg: Config) -> None:
         encoding="utf-8",
     )
     set_owner_only(cfg.path)
+    return True

@@ -1,5 +1,6 @@
 """CLI surface: init, keys commands, advisory policy, Recovery Kit output."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -324,3 +325,50 @@ def test_render_kit_without_qr_carries_note() -> None:
     text = render_kit(generate_secret_key(), include_qr=False)
     assert "QR code omitted" in text
     assert "█" not in text  # no half-block cells
+
+
+# --- init --restore: new-machine credential recovery (ADR-0038) ----------
+
+
+def _kit_secret_key(config_file: Path) -> str:
+    """The grouped Base32 secret key from the rendered Recovery Kit."""
+    kit = _invoke(config_file, ["keys", "recovery-kit"], "").output
+    match = re.search(r"Secret key \(Base32\):\s*\n\s*\n\s*([A-Z2-7-]+)", kit)
+    assert match is not None, kit
+    return match.group(1)
+
+
+def test_init_restore_stores_secret_key_in_keychain(
+    config_file: Path, fake_keychain: InMemoryKeyring
+) -> None:
+    assert _init(config_file).exit_code == 0
+    b32 = _kit_secret_key(config_file)
+    fake_keychain.store.clear()  # a brand-new machine has an empty keychain
+
+    result = _invoke(config_file, ["init", "--restore"], f"{b32}\n")
+    assert result.exit_code == 0, result.output
+    assert "Secret key stored in the OS keychain" in result.output
+    # The same key is now retrievable — db restore will derive from it.
+    assert _kit_secret_key(config_file) == b32
+
+
+def test_init_restore_warns_when_replacing_an_existing_key(
+    config_file: Path,
+) -> None:
+    assert _init(config_file).exit_code == 0
+    b32 = _kit_secret_key(config_file)  # keychain still holds a key
+    result = _invoke(config_file, ["init", "--restore"], f"{b32}\n")
+    assert result.exit_code == 0, result.output
+    assert "existing secret key in the keychain was replaced" in result.output
+
+
+def test_init_restore_rejects_an_invalid_key(config_file: Path) -> None:
+    result = _invoke(config_file, ["init", "--restore"], "not-a-real-key\n")
+    assert result.exit_code == 1
+    assert "not a valid Recovery Kit secret key" in result.output
+
+
+def test_init_restore_incompatible_with_passphrase_only(config_file: Path) -> None:
+    result = _invoke(config_file, ["init", "--restore", "--key-from-passphrase"], "")
+    assert result.exit_code == 1
+    assert "incompatible" in result.output

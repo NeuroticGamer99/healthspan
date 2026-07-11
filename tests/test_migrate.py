@@ -46,6 +46,21 @@ def test_discover_orders_by_version(tmp_path: Path) -> None:
     assert migrations[0].filename == "0001_first.sql"
 
 
+def test_target_version_is_the_highest_shipped() -> None:
+    assert migrate.target_version() == 1
+
+
+def test_target_version_from_an_explicit_corpus(tmp_path: Path) -> None:
+    (tmp_path / "0001_a.sql").write_text("SELECT 1;", encoding="utf-8")
+    (tmp_path / "0003_c.sql").write_text("SELECT 3;", encoding="utf-8")
+    migrations = migrate.discover_migrations(tmp_path)
+    assert migrate.target_version(migrations) == 3
+
+
+def test_target_version_of_empty_corpus_is_none(tmp_path: Path) -> None:
+    assert migrate.target_version(migrate.discover_migrations(tmp_path)) is None
+
+
 def test_discover_rejects_malformed_filename(tmp_path: Path) -> None:
     (tmp_path / "oops.sql").write_text("SELECT 1;", encoding="utf-8")
     with pytest.raises(migrate.MigrationError, match="naming convention"):

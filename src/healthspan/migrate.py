@@ -106,6 +106,18 @@ def discover_migrations(root: Traversable | Path | None = None) -> list[Migratio
     return migrations
 
 
+def target_version(migrations: list[Migration] | None = None) -> int | None:
+    """The highest schema version this build ships (``None`` if none exist).
+
+    The reference point for ``db restore``'s version policy (ADR-0038): a
+    backup newer than this was made by a newer build and must not be
+    installed under the current code.
+    """
+    if migrations is None:
+        migrations = discover_migrations()
+    return max((m.version for m in migrations), default=None)
+
+
 def migrate_database(
     database_path: Path, key: DbKey, migrations: list[Migration] | None = None
 ) -> MigrationRun:
