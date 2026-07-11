@@ -107,6 +107,9 @@ What export options exist for each body composition device (currently InBody 120
 **Recovery Kit OS print pathways and orphan sweep ([ADR-0033](adr/0033-plaintext-artifact-disposal.md), [ADR-0047](adr/0047-crypto-surface-implementation-decisions.md))**
 WI-2 shipped kit rendering as terminal display plus explicit `--output` file (ADR-0047 §4); ADR-0033's OS print integration (`lp`/`lpr` streaming, Windows temp-file shell print with verified disposal) and the orphan startup sweep are deferred. The sweep's home is the Core Service startup failure-cleanup (Phase 2); the print pathways land with it or with the user-documentation milestone, whichever comes first. Trigger: Core Service startup sequence implementation (Phase 2).
 
+**`db backup` / `db restore` exclusive-access enforcement ([ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md))**
+WI-4 shipped the offline `healthspan db backup` (verify-then-publish + retention pruning) and `healthspan db restore` (verify-then-install) CLI commands and the verified-backup/verify pipelines they run. ADR-0038 requires both to *refuse while Core Service is up*, and `db restore` to hold the ADR-0042 advisory lock on `<database-path>.lock` for its duration. Neither guard ships in Phase 1: there is no Core Service to detect and no launcher lock yet (both ADR-0042 machinery), and in Phase 1 the CLI is the sole database opener, so exclusivity holds by construction. Trigger: single-instance locking / Core Service startup implementation (Phase 2) — the `.lock` acquisition and the service-up refusal land with ADR-0042's advisory lock. Also then: the in-service scheduled `backup.database` job (ADR-0038's scheduled producer), of which the WI-4 CLI is the offline counterpart.
+
 ---
 
 ## Testing

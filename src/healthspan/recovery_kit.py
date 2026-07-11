@@ -67,7 +67,7 @@ def render_kit(secret_key: bytes, *, include_qr: bool = True) -> str:
         "Keep this kit in a safe or safety-deposit box. Anyone holding it",
         "has your secret key; with your passphrase it opens your entire",
         "health history. To set up a new machine: healthspan init --restore",
-        "(arrives with backup/restore) with this kit at hand.",
+        "with this kit at hand, then healthspan db restore.",
         "=" * 68,
     ]
     return "\n".join(lines)

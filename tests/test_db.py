@@ -100,3 +100,22 @@ def test_schema_version_is_none_before_migrations(tmp_path: Path) -> None:
         assert db.integrity_ok(conn)
     finally:
         db.close(conn)
+
+
+def test_foreign_key_ok_passes_clean_and_flags_violations(tmp_path: Path) -> None:
+    path = tmp_path / "healthspan.db"
+    db.provision(path, KEY_A)
+    conn = db.connect(path, KEY_A)
+    try:
+        conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY) STRICT")
+        conn.execute(
+            "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id)) STRICT"
+        )
+        assert db.foreign_key_ok(conn)  # no rows yet
+        # Insert an orphan with enforcement off, as the migration runner does;
+        # foreign_key_check must still catch it independent of that pragma.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("INSERT INTO child VALUES (999)")
+        assert not db.foreign_key_ok(conn)
+    finally:
+        db.close(conn)

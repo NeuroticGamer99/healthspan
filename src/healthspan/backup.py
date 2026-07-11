@@ -38,8 +38,9 @@ def create_verified_backup(
     1. Native backup API into a ``.partial`` file (handles WAL correctly).
     2. Sidecar copied alongside, byte-compared against the original.
     3. Verify the copy: opens with the current key, full
-       ``PRAGMA integrity_check`` passes, ``schema_version`` matches the
-       source (ADR-0038's definition, adopted by ADR-0028's pre-rekey check).
+       ``PRAGMA integrity_check`` and ``PRAGMA foreign_key_check`` pass, and
+       ``schema_version`` matches the source (ADR-0038's definition, adopted
+       by ADR-0028's pre-rekey check).
     4. Atomic rename to the final timestamped names.
     On any failure the partial files are deleted and nothing is published.
     """
@@ -57,7 +58,9 @@ def create_verified_backup(
     partial_sidecar = backup_dir / f"{stem}.db{SIDECAR_SUFFIX}.partial"
     try:
         source_version = _copy_database(database_path, key, partial_db)
+        set_owner_only(partial_db)
         shutil.copyfile(source_sidecar, partial_sidecar)
+        set_owner_only(partial_sidecar)
         if partial_sidecar.read_bytes() != source_sidecar.read_bytes():
             raise BackupError("sidecar copy does not match the original")
         _verify_copy(partial_db, key, source_version)
@@ -73,6 +76,50 @@ def create_verified_backup(
     set_owner_only(final_db)
     set_owner_only(final_sidecar)
     return BackupResult(database=final_db, sidecar=final_sidecar)
+
+
+def list_backups(backup_dir: Path) -> list[Path]:
+    """Published backup database files in the directory, oldest first.
+
+    A published backup is a ``healthspan-<stamp>.db`` file; the timestamped
+    stem sorts chronologically, so a name sort is a time sort. ``.partial``
+    files (a run in flight or a crashed one) and the ``.keyparams`` sidecars
+    are excluded — only fully published database files are returned.
+    """
+    if not backup_dir.is_dir():
+        return []
+    return sorted(p for p in backup_dir.glob("healthspan-*.db") if p.is_file())
+
+
+def latest_backup(backup_dir: Path) -> Path:
+    """The newest published backup database (``db restore --latest``)."""
+    backups = list_backups(backup_dir)
+    if not backups:
+        raise BackupError(
+            f"no published backups found in {backup_dir}; nothing to restore "
+            "(give an explicit backup file instead of --latest)"
+        )
+    return backups[-1]
+
+
+def prune_backups(backup_dir: Path, retention_count: int) -> list[Path]:
+    """Delete verified backups beyond ``retention_count``, oldest first.
+
+    Each pruned database takes its ``.keyparams`` sidecar with it. Runs only
+    after a successful publish (ADR-0038: a failing pipeline must never eat
+    the good copies it is failing to replace), so the caller sequences it
+    after :func:`create_verified_backup` returns. Returns the pruned database
+    paths (empty when nothing aged out).
+    """
+    backups = list_backups(backup_dir)
+    if len(backups) <= retention_count:
+        return []
+    pruned: list[Path] = []
+    for database in backups[: len(backups) - retention_count]:
+        database.unlink(missing_ok=True)
+        sidecar_path(database).unlink(missing_ok=True)
+        pruned.append(database)
+    return pruned
 
 
 def _backup_stem(backup_dir: Path) -> str:
@@ -113,6 +160,8 @@ def _verify_copy(copy_path: Path, key: DbKey, source_version: int | None) -> Non
     try:
         if not db.integrity_ok(conn):
             raise BackupError("backup failed PRAGMA integrity_check")
+        if not db.foreign_key_ok(conn):
+            raise BackupError("backup failed PRAGMA foreign_key_check")
         copy_version = db.schema_version(conn)
         if copy_version != source_version:
             raise BackupError(
