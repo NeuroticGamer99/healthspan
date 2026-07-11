@@ -105,6 +105,7 @@ See [ADR-0010](0010-cli-plugin-model.md) for the full plugin architecture.
 ## Links
 - Extended by: [ADR-0025](0025-plugin-host-process-matrix.md) — the fourth client process is the Automation Host; the "Import Pipeline" drawn here is a data path, not a daemon (imports run as jobs, [ADR-0012](0012-job-abstraction.md))
 - Extended by: [ADR-0026](0026-named-scoped-tokens.md) — the shared configuration no longer carries a bearer token; each client holds its own named, scoped token
+- Extended by: [ADR-0046](0046-filesystem-layout-and-config-discovery.md) — location and discovery rules for the shared TOML file
 - Related: [ADR-0001](0001-mcp-server-language.md) — implementation language
 - Related: [ADR-0002](0002-ai-provider-interface.md) — AI client pluggability
 - Related: [ADR-0003](0003-database-backend.md) — database pluggability

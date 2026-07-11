@@ -123,6 +123,7 @@ The pipeline is the backup pipeline mirrored — **verify-then-install**, so not
 ## Links
 - Extends: [ADR-0012](0012-job-abstraction.md) — first-party lightweight job; corrects the lightweight threading definition post-ADR-0037
 - Extends: [ADR-0028](0028-key-derivation-and-rotation.md) — verification definition adopted by the pre-rekey backup; CLI exclusive-access discipline extended to `db backup`
+- Extended by: [ADR-0046](0046-filesystem-layout-and-config-discovery.md) — concrete default for the `[backup]` destination directory and its key names
 - Related: [ADR-0019](0019-multi-device-sync.md) — backup output as the only sync-safe artifact; the destination directory is the sync target
 - Related: [ADR-0037](0037-core-service-concurrency-and-driver.md) — the stepped-native-backup-on-a-worker-thread primitive this ADR builds on
 - Related: [ADR-0033](0033-plaintext-artifact-disposal.md) — the verify-then-commit ordering pattern
