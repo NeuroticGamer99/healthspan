@@ -27,10 +27,20 @@ def set_owner_only(path: Path) -> None:
 
 def _set_owner_only_windows(path: Path) -> None:
     user = _current_windows_user()
-    # /inheritance:r drops inherited entries; /grant:r replaces any explicit
-    # grant with full control for the owner alone.
+    # /inheritance:r drops inherited entries; /grant:r replaces the user's
+    # explicit grant with full control.
+    _icacls(path, "/inheritance:r", "/grant:r", f"{user}:(F)")
+    # /inheritance:r leaves *explicit* entries other principals may already
+    # hold (some environments stamp SYSTEM/Administrators explicitly on new
+    # files); remove every grant that is not the current user's.
+    for principal in _explicit_principals(path):
+        if principal.lower() != user.lower():
+            _icacls(path, "/remove:g", principal)
+
+
+def _icacls(path: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603 - fixed executable, no shell
-        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(F)"],  # noqa: S607
+        ["icacls", str(path), *args],  # noqa: S607
         capture_output=True,
         text=True,
         check=False,
@@ -39,6 +49,22 @@ def _set_owner_only_windows(path: Path) -> None:
         raise PermissionSetError(
             f"could not set owner-only ACL on {path}: {result.stderr.strip()}"
         )
+    return result.stdout
+
+
+def _explicit_principals(path: Path) -> list[str]:
+    """Principals holding ACL entries on ``path``, per ``icacls`` listing."""
+    listing = _icacls(path)
+    principals: list[str] = []
+    prefix = str(path)
+    for raw in listing.splitlines():
+        line = raw.strip()
+        if line.startswith(prefix):
+            line = line[len(prefix) :].strip()
+        if ":(" not in line:
+            continue
+        principals.append(line.split(":(", 1)[0].strip())
+    return principals
 
 
 def _current_windows_user() -> str:

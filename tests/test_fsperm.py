@@ -31,6 +31,15 @@ def test_posix_directory_gets_owner_only_mode(tmp_path: Path) -> None:
 def test_windows_acl_grants_only_the_current_user(tmp_path: Path) -> None:
     path = tmp_path / "secret.txt"
     path.write_text("x", encoding="utf-8")
+    # Stamp an explicit non-owner grant first (SID S-1-1-0 = Everyone) —
+    # /inheritance:r alone would not remove it, which is exactly the CI-
+    # runner condition (explicit SYSTEM/Administrators ACEs on temp files).
+    subprocess.run(  # noqa: S603 - fixed executable, no shell
+        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     set_owner_only(path)
     listing = subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path)],  # noqa: S607
