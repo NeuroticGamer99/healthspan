@@ -106,6 +106,13 @@ What export options exist for each body composition device (currently InBody 120
 
 ---
 
+## Testing
+
+**Canary manifest derivation — interim script vs. fixture loader ([testing-strategy.md](testing-strategy.md), Canary rule)**
+The spec assigns canary-manifest derivation to the fixture loader ("the fixture loader derives the canary manifest … programmatically from the fixture files themselves"). The loader does not exist yet, so the log canary gate shipped (Phase 0) with an interim standalone derivation — `scripts/scan_log_canary.py` regex-scans raw fixture text for `CANARY-` tokens and high-entropy decimals. Once the loader parses typed fixture records, two independent definitions of "canary value" will coexist and can drift (values reachable only through parsing — SQL parameter binding, numeric normalization — are invisible to the raw-text regex). Resolution: when the fixture loader lands (Phase 1), either the loader emits the manifest and the script consumes it, or the loader's tests assert the two derivations agree. Trigger: fixture loader implementation.
+
+---
+
 ## Resolved
 
 - **Backup cadence and retention defaults** → Daily schedule, retention count 14. Recorded in [ADR-0038](adr/0038-backup-execution-and-verification.md)'s `[backup]` configuration section per the config-defaults-in-the-owning-ADR pattern; decided 2026-07-08 as a direct edit while ADR-0038 was still Proposed, immediately before the batch acceptance flip. Both knobs remain user-configurable.

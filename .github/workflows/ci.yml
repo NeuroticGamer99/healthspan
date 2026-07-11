@@ -27,8 +27,11 @@ on:
 permissions:
   contents: read
 
+# The event name is part of the group so the daily scheduled run and
+# push-to-main runs can never cancel each other (a cancelled scheduled
+# pip-audit would send no failure email — the ADR-0045 §8 alert channel).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -36,6 +39,10 @@ defaults:
     shell: bash
 
 env:
+  # Piped stdout on Windows Python 3.14 defaults to the legacy code page
+  # (PEP 686 lands in 3.15); without this, the first non-ASCII character a
+  # test prints crashes the windows-latest leg with UnicodeEncodeError.
+  PYTHONUTF8: "1"
   # Pinned gate-tool versions (testing-strategy.md "Workflow provenance").
   RUFF_VERSION: "0.15.21"
   PYRIGHT_VERSION: "1.1.411"
@@ -123,10 +130,11 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Install project (locked, editable)
+      - name: Install project (locked)
         run: uv sync --locked
 
       - name: Run tests, capturing all output for the canary scan
+        id: pytest
         # --capture=tee-sys passes captured test stdout/stderr through to the
         # real streams (pytest's default capture would hide passing tests'
         # output from tee); --log-cli-level surfaces logging-module records.
@@ -136,6 +144,9 @@ jobs:
             | tee pytest-output.log
 
       - name: Log canary scan (testing-strategy.md CI Gates)
+        # Must run on test FAILURE too — a failing test's traceback is the
+        # likeliest place for a leaked value ("scans everything captured").
+        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
         run: uv run python scripts/scan_log_canary.py pytest-output.log
 
   pip-audit:
@@ -157,7 +168,9 @@ jobs:
   ci-ok:
     name: ci-ok
     needs: [gitleaks, docs-consistency, lint, typecheck, test, pip-audit]
-    if: always()
+    # Nothing consumes ci-ok on schedule runs (the ruleset gates only PRs);
+    # a failing scheduled pip-audit surfaces directly as a failed workflow.
+    if: always() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: All gates passed
