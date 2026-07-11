@@ -114,12 +114,13 @@ WI-4 shipped the offline `healthspan db backup` (verify-then-publish + retention
 
 ## Testing
 
-**Canary manifest derivation — interim script vs. fixture loader ([testing-strategy.md](testing-strategy.md), Canary rule)**
-The spec assigns canary-manifest derivation to the fixture loader ("the fixture loader derives the canary manifest … programmatically from the fixture files themselves"). The loader does not exist yet, so the log canary gate shipped (Phase 0) with an interim standalone derivation — `scripts/scan_log_canary.py` regex-scans raw fixture text for `CANARY-` tokens and high-entropy decimals. Once the loader parses typed fixture records, two independent definitions of "canary value" will coexist and can drift (values reachable only through parsing — SQL parameter binding, numeric normalization — are invisible to the raw-text regex). Resolution: when the fixture loader lands (Phase 1), either the loader emits the manifest and the script consumes it, or the loader's tests assert the two derivations agree. Trigger: fixture loader implementation.
+~~**Canary manifest derivation — interim script vs. fixture loader**~~ → Resolved (Phase 1 WI-3b) — see Resolved section.
 
 ---
 
 ## Resolved
+
+- **Canary manifest derivation — interim script vs. fixture loader** → The fixture loader owns it. `tests/fixture_loader.py` derives the manifest from the parsed typed fixture records (a declared per-column registry of owner health fields), and `scripts/scan_log_canary.py` imports and consumes it — the Phase-0 interim raw-text regex derivation is retired, eliminating the two-definition drift. Deriving from parsed records covers values reachable only through parsing, and the loader enforces the numeric grep-distinctness rule at derivation time. Fixture format narrowed from "JSON or SQL" to JSON only (raw SQL is not parseable into typed records). Resolved 2026-07-11 in the WI-3b PR; see [testing-strategy.md](testing-strategy.md) (Synthetic Test Data, CI Gates). No ADR: test infrastructure, no external contract, no new dependency, no security invariant touched.
 
 - **Backup cadence and retention defaults** → Daily schedule, retention count 14. Recorded in [ADR-0038](adr/0038-backup-execution-and-verification.md)'s `[backup]` configuration section per the config-defaults-in-the-owning-ADR pattern; decided 2026-07-08 as a direct edit while ADR-0038 was still Proposed, immediately before the batch acceptance flip. Both knobs remain user-configurable.
 

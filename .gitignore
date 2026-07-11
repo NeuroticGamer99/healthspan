@@ -19,3 +19,6 @@ export/
 __pycache__/
 *.py[cod]
 .claude/settings.json
+
+# Local pytest capture for the log-canary scan (CI regenerates it)
+pytest-output.log
