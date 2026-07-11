@@ -11,6 +11,7 @@ from typing import Annotated
 
 import typer
 
+from healthspan.cli_db import db_app
 from healthspan.cli_keys import init_command, keys_app
 from healthspan.cli_support import AppState, load_config_or_exit, state
 from healthspan.config import (
@@ -34,6 +35,7 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 app.command("init")(init_command)
 app.add_typer(keys_app, name="keys")
+app.add_typer(db_app, name="db")
 
 
 def _version_callback(value: bool) -> None:

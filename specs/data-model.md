@@ -212,3 +212,41 @@ Topics that affect multiple data types and need consistent treatment:
 - **Longitudinal data correction** — decided ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): `superseded_by` self-FK on every data table; value corrections supersede (never mutate in place), designated metadata repairs (timezone workflow) update in place with full audit; current state via per-table `*_current` views
 - **Audit trail** — decided ([ADR-0027](adr/0027-audit-trail-and-corrections.md)): platform-wide append-only `audit_log`, written in the same transaction as every mutation, in the schema from migration 0001; per-row image audit for mutations of existing data, batch-level audit for bulk-import inserts; event sourcing was considered and rejected
 - **Multiple reference range frameworks** — results need to be comparable against more than one set of ranges: the lab's own range (already stored per result row), longevity-optimized ranges (e.g. Function Health), and practitioner-specific optimal ranges (e.g. Attia, Brewer, Hyman). Requires a named framework table separate from per-result lab ranges. See [ADR-0005](adr/0005-reference-range-frameworks.md).
+
+---
+
+## Migration 0001 — Realized Schema
+
+The data types above are realized as concrete tables by **migration 0001**, the initial schema, in [`src/healthspan/migrations/0001_initial_schema.sql`](../src/healthspan/migrations/0001_initial_schema.sql) (Phase 1 WI-3). Per [design-rationale.md](design-rationale.md), the migration scripts are the authoritative source of truth for database structure; this section records the design decisions that shaped 0001 and are not obvious from the DDL, not a second copy of the column list.
+
+### Table inventory
+
+- **Provenance** (FK targets, minimal in Phase 1; extended additively later): `import_batches` ([ADR-0004](adr/0004-data-ingestion-strategy.md) owns the full shape), `jobs` ([ADR-0012](adr/0012-job-abstraction.md) owns it).
+- **Audit**: `audit_log` with its append-only `BEFORE UPDATE`/`BEFORE DELETE` immutability triggers ([ADR-0027](adr/0027-audit-trail-and-corrections.md)).
+- **Catalog** (reference data): `biomarkers` ([ADR-0030](adr/0030-biomarker-identity.md)), `labs`, `range_frameworks` + `framework_ranges` ([ADR-0005](adr/0005-reference-range-frameworks.md)).
+- **Lab results**: `lab_draws` (the draw-level container) + `lab_results` (the value rows, with the [ADR-0030](adr/0030-biomarker-identity.md) value-model CHECKs).
+- **Measurements**: `body_composition`, `cgm_readings`, `wearable_daily`.
+- **Clinical timeline**: `events`, `interventions`, `intervention_dose_history`.
+- **Narrative** (FTS5-indexed `body`, per [ADR-0041](adr/0041-clinical-document-fts.md)): `clinical_documents`, `subjective_observations`, `analyses` — each with its external-content FTS virtual table and three sync triggers, plus the two-column link tables (`document_*`, `observation_*`, `analysis_*`).
+
+### Conventions realized uniformly
+
+- **STRICT** on every table ([ADR-0035](adr/0035-migration-execution-semantics.md)); dates/timestamps are `TEXT` (ISO-8601), booleans `INTEGER` 0/1 guarded by `CHECK (col IN (0,1))`.
+- **Timestamp quadruple** (`*_utc` / `*_local_recorded` / `*_local_tz` / `*_tz_inferred`) on every clinically meaningful time (design-rationale.md).
+- **Correction model**: the *content* tables (lab draws/results, measurements, events, interventions, dose history, documents, observations, analyses) each carry `superseded_by`, a companion `<table>_current` view, and a partial index `WHERE superseded_by IS NULL` ([ADR-0027](adr/0027-audit-trail-and-corrections.md)). Catalog, provenance, audit, and junction tables deliberately **do not** — corrections there are catalog edits or insert/delete link changes, not value supersession (link rows are audited insert/delete and never supersession-chained).
+- **Provenance**: every content row carries a nullable `import_batch_id` (NULL for manual entry).
+
+### Decisions the DDL leaves implicit
+
+- **Lab identity lives on the draw.** `lab_results` references `lab_draws`, and the `lab_id` sits on `lab_draws`. This satisfies design-rationale's "lab is not optional on a result" transitively (a draw is one blood-draw event at one lab) without denormalizing `lab_id` onto every result row. `lab_draws` was introduced by [ADR-0027](adr/0027-audit-trail-and-corrections.md)'s lab-panel example.
+- **Device-metric units are fixed in column names** (`weight_kg`, `glucose_mg_dl`, `resting_heart_rate` bpm, …) for `body_composition`/`cgm_readings`/`wearable_daily`. These are single-device fixed-unit metrics, not biomarker results, so the UCUM per-value + canonical-unit normalization model ([ADR-0031](adr/0031-units-and-ucum.md)) — which exists for cross-lab result comparison against framework ranges — does not apply to them.
+- **Migration files ship as package data** under `src/healthspan/migrations/`, discovered at runtime via `importlib.resources` so an installed distribution can locate them — the decision to relocate from [ADR-0009](adr/0009-database-migration.md)'s repo-root `sql/migrations/` (while preserving its numbering/plain-SQL/`schema_version` convention) is recorded in [ADR-0048](adr/0048-migration-file-packaging.md), which extends ADR-0009.
+- **Catalog display names are `UNIQUE`.** `biomarkers.canonical_name` and `labs.name` carry `UNIQUE` (as [ADR-0005](adr/0005-reference-range-frameworks.md) already specifies for `range_frameworks.name`). [ADR-0030](adr/0030-biomarker-identity.md) declares `canonical_name` a human display label and keeps the surrogate `id` as identity — the `UNIQUE` here is a data-integrity guard against two catalog rows claiming the same display name, not a second identity key (`loinc_code` remains the interoperability attribute, `id` the join target). `loinc_code` is separately `UNIQUE` per ADR-0030.
+- **Audit is schema-only in Phase 1.** 0001 ships the `audit_log` table, its immutability triggers, the `superseded_by` columns, and every integrity constraint. The application-layer audit *capture* (writing `audit_log` rows inside each mutation transaction) and the mutation-matrix test are the Core Service write path's job and arrive in Phase 2 — the only Phase-1 database writers are `db migrate` and (WI-4) `db backup`.
+
+### Deferred, with triggers
+
+- `biomarker_aliases` → **Phase 3**, landing with the taxonomy + name-alias-fallback gate ([open-questions.md](open-questions.md)); additive migration.
+- Levels **zones / activity / nutrition** tables → **Phase 7**; they are "Not yet designed" pending inspection of a real Levels export, so 0001 does not invent their shape.
+- Clinical-document **original-binary storage** (content-addressed BLOBs) → **Phase 5** ([ADR-0034](adr/0034-clinical-document-storage.md)); 0001 records only the `source_file_hash` dedup key on `clinical_documents`. The FTS-indexed `body` text ships now because [ADR-0041](adr/0041-clinical-document-fts.md) requires the index in 0001.
+- The lab's **reported LOINC per result** → deferred to [ADR-0032](adr/0032-biomarker-loinc-cardinality.md) (one concept, many codes); `lab_results` carries no `reported_loinc` column yet.

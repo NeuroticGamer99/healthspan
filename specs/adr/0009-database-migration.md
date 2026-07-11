@@ -84,6 +84,7 @@ If the database layer is extended to support PostgreSQL (ADR-0003), evaluate Ale
 
 ## Links
 - Extended by: [ADR-0035](0035-migration-execution-semantics.md) — replaces the runner's execution semantics (explicit transaction discipline) and the file convention's idempotency rule; corrects the `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` citation (no such SQLite syntax)
+- Extended by: [ADR-0048](0048-migration-file-packaging.md) — relocates the migration files from repo-root `sql/migrations/` to package data at `src/healthspan/migrations/` so an installed distribution (ADR-0023) can discover them; the numbering, plain-SQL, and `schema_version` convention is unchanged
 - Related: [ADR-0003](0003-database-backend.md) — database pluggability
 - Related: [ADR-0006](0006-application-architecture.md) — CLI as the entry point for migrations
 - Related: [ADR-0008](0008-process-lifecycle.md) — migration runner invoked on startup
