@@ -182,7 +182,7 @@ Wearable data (Fitbit, Apple Watch, etc.) is stored as **daily aggregates** rath
 
 ## Schema Versioning
 
-A `schema_version` table tracks applied migrations. All schema changes should be written as migration scripts in `sql/migrations/` rather than modifying `schema.sql` directly after initial deployment. This allows:
+A `schema_version` table tracks applied migrations. All schema changes should be written as numbered migration scripts (shipped as package data in `src/healthspan/migrations/` so an installed distribution can discover them — [ADR-0048](adr/0048-migration-file-packaging.md)) rather than modifying a monolithic `schema.sql` directly after initial deployment. This allows:
 - Reproducible database reconstruction from scratch
 - A test database with synthetic data that can be migrated in parallel
 - Clear history of when the schema changed and why

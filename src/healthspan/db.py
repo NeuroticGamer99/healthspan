@@ -64,6 +64,33 @@ def connect(database_path: Path, key: DbKey) -> sqlcipher3.Connection:
     return conn
 
 
+def connect_for_migration(database_path: Path, key: DbKey) -> sqlcipher3.Connection:
+    """Open a keyed connection for the migration runner (ADR-0035).
+
+    The runner is the sole documented exception to the runtime pragma set:
+    it manages ``foreign_keys`` itself (OFF during a migration, with a
+    ``foreign_key_check`` before commit), so the runtime pragmas are *not*
+    applied here. The driver still issues no implicit BEGIN/COMMIT
+    (``isolation_level=None`` from :func:`_open`), which is what makes the
+    runner's explicit ``BEGIN IMMEDIATE`` genuinely atomic.
+    """
+    if not database_path.is_file():
+        raise DatabaseError(f"database {database_path} does not exist")
+    conn = _open(database_path, key)
+    try:
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except sqlcipher3.DatabaseError as exc:
+        conn.close()
+        raise DatabaseError(
+            f"could not unlock {database_path}: wrong passphrase/secret "
+            f"key, or the file is not a Healthspan database ({exc})"
+        ) from exc
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def provision(database_path: Path, key: DbKey) -> None:
     """Create a new, empty, encrypted database file (``healthspan init``).
 
