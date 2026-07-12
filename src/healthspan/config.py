@@ -66,6 +66,15 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class ServiceConfig:
+    """Core Service HTTP listener and passphrase-channel settings (ADR-0049)."""
+
+    host: str
+    port: int
+    passphrase_file: Path | None
+
+
+@dataclass(frozen=True)
 class Config:
     """Effective configuration: file values merged over defaults."""
 
@@ -73,6 +82,7 @@ class Config:
     database: DatabaseConfig
     backup: BackupConfig
     logging: LoggingConfig
+    service: ServiceConfig
     path: Path
     source: ConfigSource
     loaded_from_file: bool
@@ -144,6 +154,9 @@ def _defaults(path: Path, source: ConfigSource) -> Config:
             retention_count=14,
         ),
         logging=LoggingConfig(level="INFO"),
+        # Core Service defaults (ADR-0049): loopback-only binding, a port
+        # clear of the common-collision range, no OS-secret passphrase file.
+        service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
         path=path,
         source=source,
         loaded_from_file=False,
@@ -184,7 +197,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
 
     _reject_unknown_keys(
         data,
-        {"config_version", "database", "backup", "logging"},
+        {"config_version", "database", "backup", "logging", "service"},
         path,
         where="top level",
     )
@@ -243,15 +256,44 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
             )
         logging_cfg = LoggingConfig(level=raw_level)
 
+    service = _parse_service(data, defaults.service, base, path)
+
     return Config(
         config_version=version,
         database=database,
         backup=backup,
         logging=logging_cfg,
+        service=service,
         path=path,
         source=source,
         loaded_from_file=True,
     )
+
+
+def _parse_service(
+    data: dict[str, Any], default: ServiceConfig, base: Path, path: Path
+) -> ServiceConfig:
+    """Parse the optional ``[service]`` table (ADR-0049)."""
+    table = _section(data, "service", {"host", "port", "passphrase_file"}, path)
+    if table is None:
+        return default
+    host = default.host
+    if "host" in table:
+        host = _expect_str(table["host"], path, "service.host")
+        if not host:
+            raise ConfigError(f"{path}: service.host must not be empty")
+    port = default.port
+    if "port" in table:
+        port = _expect_int(table["port"], path, "service.port")
+        if not 1 <= port <= 65535:
+            raise ConfigError(
+                f"{path}: service.port must be between 1 and 65535, got {port}"
+            )
+    passphrase_file = default.passphrase_file
+    if "passphrase_file" in table:
+        raw = _expect_str(table["passphrase_file"], path, "service.passphrase_file")
+        passphrase_file = _resolve_path(raw, base, path, "service.passphrase_file")
+    return ServiceConfig(host=host, port=port, passphrase_file=passphrase_file)
 
 
 def _reject_unknown_keys(

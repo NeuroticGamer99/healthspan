@@ -4,10 +4,11 @@
 paths besides the Core Service allowed to open the database directly
 (ADR-0006). Backup and restore run the verify-then-publish and
 verify-then-install pipelines from :mod:`healthspan.backup` and
-:mod:`healthspan.restore`; ADR-0038's rule that these refuse while Core
-Service is up is enforced by the ADR-0042 advisory lock, which arrives
-with process supervision in a later phase (in Phase 1 the CLI is the sole
-database opener).
+:mod:`healthspan.restore`. Each command holds the single-instance advisory
+lock (ADR-0042) for its duration via
+:func:`~healthspan.cli_support.exclusive_database_access`, so it refuses to
+run while the Core Service (or another instance) holds the database — the
+ADR-0033/0038 exclusive-access rule (Phase 2 WI-1, ADR-0049).
 """
 
 from collections.abc import Callable
@@ -23,7 +24,11 @@ from healthspan.backup import (
     latest_backup,
     prune_backups,
 )
-from healthspan.cli_support import fail, load_config_or_exit
+from healthspan.cli_support import (
+    exclusive_database_access,
+    fail,
+    load_config_or_exit,
+)
 from healthspan.fsperm import PermissionSetError
 from healthspan.keyparams import KeyParamsError
 
@@ -37,14 +42,15 @@ db_app = typer.Typer(
 def db_migrate(ctx: typer.Context) -> None:
     """Apply pending schema migrations to bring the database current."""
     cfg = load_config_or_exit(ctx)
-    passphrase = typer.prompt("Master passphrase", hide_input=True)
-    unlocked = _run(lambda: rotation.unlock(cfg, passphrase))
-    try:
-        run = _run(
-            lambda: migrate.migrate_database(unlocked.database_path, unlocked.key)
-        )
-    finally:
-        unlocked.key.zeroize()
+    with exclusive_database_access(cfg):
+        passphrase = typer.prompt("Master passphrase", hide_input=True)
+        unlocked = _run(lambda: rotation.unlock(cfg, passphrase))
+        try:
+            run = _run(
+                lambda: migrate.migrate_database(unlocked.database_path, unlocked.key)
+            )
+        finally:
+            unlocked.key.zeroize()
 
     if not run.applied:
         if run.final_version is None:
@@ -65,16 +71,17 @@ def db_migrate(ctx: typer.Context) -> None:
 def db_backup(ctx: typer.Context) -> None:
     """Create a verified backup of the database and prune old ones."""
     cfg = load_config_or_exit(ctx)
-    passphrase = typer.prompt("Master passphrase", hide_input=True)
-    unlocked = _run(lambda: rotation.unlock(cfg, passphrase))
-    try:
-        result = _run(
-            lambda: create_verified_backup(
-                unlocked.database_path, unlocked.key, cfg.backup.directory
+    with exclusive_database_access(cfg):
+        passphrase = typer.prompt("Master passphrase", hide_input=True)
+        unlocked = _run(lambda: rotation.unlock(cfg, passphrase))
+        try:
+            result = _run(
+                lambda: create_verified_backup(
+                    unlocked.database_path, unlocked.key, cfg.backup.directory
+                )
             )
-        )
-    finally:
-        unlocked.key.zeroize()
+        finally:
+            unlocked.key.zeroize()
     typer.echo(f"Verified backup created:  {result.database}")
     typer.echo(f"Sidecar copied alongside: {result.sidecar}")
     pruned = _run(
@@ -110,22 +117,23 @@ def db_restore(
         raise fail("give either a backup file or --latest, not both")
     if not latest and backup_file is None:
         raise fail("specify a backup file to restore, or --latest")
-    source = backup_file or _run(lambda: latest_backup(cfg.backup.directory))
 
-    typer.echo(f"Restoring {source} to {cfg.database.path}.")
-    passphrase = typer.prompt("Master passphrase", hide_input=True)
-    key = _run(lambda: restore.derive_backup_key(source, passphrase))
-    try:
-        result = _run(
-            lambda: restore.restore_database(
-                source,
-                cfg.database.path,
-                key,
-                target_version=migrate.target_version(),
+    with exclusive_database_access(cfg):
+        source = backup_file or _run(lambda: latest_backup(cfg.backup.directory))
+        typer.echo(f"Restoring {source} to {cfg.database.path}.")
+        passphrase = typer.prompt("Master passphrase", hide_input=True)
+        key = _run(lambda: restore.derive_backup_key(source, passphrase))
+        try:
+            result = _run(
+                lambda: restore.restore_database(
+                    source,
+                    cfg.database.path,
+                    key,
+                    target_version=migrate.target_version(),
+                )
             )
-        )
-    finally:
-        key.zeroize()
+        finally:
+            key.zeroize()
 
     version = "none" if result.restored_version is None else result.restored_version
     typer.echo(f"Restored database at schema version {version}: {result.database}")

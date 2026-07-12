@@ -1,8 +1,9 @@
 """Typer CLI entry point (ADR-0006) and config inspection (ADR-0046).
 
 Global ``--config``/``--version``, the ``config`` inspection group,
-``init`` and the ``keys`` group (WI-2, ADR-0028/0033). The ``db`` command
-group arrives with the work items that implement it.
+``init`` and the ``keys`` group (WI-2, ADR-0028/0033), the ``db`` group
+(migrate/backup/restore), and the ``service`` group (``service start`` —
+the Core Service direct-start entry, Phase 2 WI-1, ADR-0039/0049).
 """
 
 from importlib.metadata import version as _dist_version
@@ -13,6 +14,7 @@ import typer
 
 from healthspan.cli_db import db_app
 from healthspan.cli_keys import init_command, keys_app
+from healthspan.cli_service import service_app
 from healthspan.cli_support import AppState, load_config_or_exit, state
 from healthspan.config import (
     Config,
@@ -36,6 +38,7 @@ app.add_typer(config_app, name="config")
 app.command("init")(init_command)
 app.add_typer(keys_app, name="keys")
 app.add_typer(db_app, name="db")
+app.add_typer(service_app, name="service")
 
 
 def _version_callback(value: bool) -> None:
@@ -104,6 +107,17 @@ def _render_toml(cfg: Config) -> str:
             "",
             "[logging]",
             f"level = {toml_quote(cfg.logging.level)}",
+            "",
+            "[service]",
+            f"host = {toml_quote(cfg.service.host)}",
+            f"port = {cfg.service.port}",
+            (
+                f"passphrase_file = {toml_quote(str(cfg.service.passphrase_file))}"
+                if cfg.service.passphrase_file is not None
+                # Commented when unset — it stays a valid, round-trippable TOML
+                # document (an empty path would be rejected on reload).
+                else '# passphrase_file = ""  (unset; an OS-secret file path)'
+            ),
         ]
     )
 

@@ -8,6 +8,7 @@ until then the kit is displayed and, only by explicit ``--output``
 choice, written to a warned-about file.
 """
 
+import contextlib
 import io
 import os
 from pathlib import Path
@@ -20,6 +21,8 @@ from healthspan.keyparams import utc_now_iso
 
 # ADR-0033: recognizable naming, matched by the repo .gitignore pattern.
 KIT_FILENAME_TEMPLATE = "healthspan-recovery-kit-{date}.txt"
+# The same pattern the orphan sweep and .gitignore recognize.
+KIT_FILENAME_GLOB = "*recovery-kit*"
 
 OUTPUT_WARNING = (
     "This file contains the secret key. Store it only on encrypted storage "
@@ -92,6 +95,53 @@ def write_kit(secret_key: bytes, output: Path) -> Path:
         fh.write(render_kit(secret_key))
     set_owner_only(output)
     return output
+
+
+def sweep_orphans(private_dir: Path) -> list[Path]:
+    """Dispose orphaned Recovery Kit plaintext at startup (ADR-0033).
+
+    A crash between a kit render and its disposal — the Windows shell-print
+    pathway is the only producer, still deferred (ADR-0047) — could leave a
+    plaintext kit in the platform's private data directory. The Core Service
+    sweeps it on startup so an interrupted render is caught at the next
+    start. Disposal is best-effort (overwrite-then-unlink): honest about
+    what modern storage can and cannot erase (ADR-0033's disposal policy).
+
+    Scans only ``private_dir`` (non-recursive) for the recognizable kit
+    naming; a deliberate ``--output`` copy the user placed elsewhere is
+    their custody and is untouched. Returns the paths disposed of.
+    """
+    disposed: list[Path] = []
+    try:
+        candidates = sorted(private_dir.glob(KIT_FILENAME_GLOB))
+    except OSError:
+        return disposed
+    for path in candidates:
+        if not path.is_file():
+            continue
+        _best_effort_dispose(path)
+        disposed.append(path)
+    return disposed
+
+
+def _best_effort_dispose(path: Path) -> None:
+    """Overwrite with zeroes, then unlink (ADR-0033 best-effort disposal).
+
+    Best-effort by the honest standard: SSD wear leveling, copy-on-write
+    and journaling filesystems, snapshots, and sync history all defeat it.
+    Retained because it still raises the bar where it works, and it is
+    nearly free. Never raises — a sweep failure must not block startup.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("r+b") as fh:
+            fh.write(b"\x00" * size)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError:
+        pass
+    with contextlib.suppress(OSError):
+        path.unlink(missing_ok=True)
 
 
 def _qr_text(data: str) -> str:
