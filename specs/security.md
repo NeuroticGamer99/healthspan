@@ -75,7 +75,7 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 **Credential tiers for plugins.** Directory-loaded plugins receive their host process's plugin-tier token via `context.api` — never a credential carrying `admin`. Package-shipped first-party plugins receive the process credential. See ADR-0026 and INV-3.
 
-**Lifecycle.** `healthspan token create | list | revoke | rotate` (admin scope; `list` shows names and scopes, never values). Revocation is immediate; there is no grace overlap.
+**Lifecycle.** `healthspan token create | list | revoke | rotate`, `healthspan auth reset-limits`, and `healthspan mcp rotate-client-secret` (all admin scope; `list` shows names and scopes, never values) — thin REST clients over the Core Service's `admin`-scoped endpoints, so every lifecycle act is scope-checked and lands in the auth audit log ([ADR-0051](adr/0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md)). Revocation is immediate; there is no grace overlap; revoking the token that authenticates the request is refused (rotate instead — self-lockout guard).
 
 **Rate limiting and audit.** Failed authentication attempts are rate-limited with bounded exponential backoff, including from localhost — keyed on (source address, advisory token-name prefix) with a per-address aggregate cap, and throttling failures only: a valid credential is never delayed, so one misconfigured client cannot lock out the other local clients (ADR-0026). Auth events (token *name*, endpoint, outcome — never token values, never health data) are recorded in an append-only audit log; all `admin`-scoped actions are always audited. See ADR-0026.
 

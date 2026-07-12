@@ -240,6 +240,7 @@ source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "keyring" },
     { name = "platformdirs" },
     { name = "qrcode" },
@@ -251,7 +252,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "hypothesis" },
     { name = "pytest" },
 ]
@@ -260,6 +260,7 @@ dev = [
 requires-dist = [
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "fastapi", specifier = ">=0.139.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "keyring", specifier = ">=25.6" },
     { name = "platformdirs", specifier = ">=4.10.0" },
     { name = "qrcode", specifier = ">=8.0" },
@@ -271,7 +272,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "hypothesis", specifier = ">=6.140" },
     { name = "pytest", specifier = ">=9.1.1" },
 ]

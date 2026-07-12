@@ -2,8 +2,10 @@
 
 Global ``--config``/``--version``, the ``config`` inspection group,
 ``init`` and the ``keys`` group (WI-2, ADR-0028/0033), the ``db`` group
-(migrate/backup/restore), and the ``service`` group (``service start`` —
-the Core Service direct-start entry, Phase 2 WI-1, ADR-0039/0049).
+(migrate/backup/restore), the ``service`` group (``service start`` — the
+Core Service direct-start entry, Phase 2 WI-1, ADR-0039/0049), and the
+``token``/``auth``/``mcp`` lifecycle groups (REST clients over the
+``admin``-scoped endpoints, Phase 2 WI-2b, ADR-0026/0051).
 """
 
 from importlib.metadata import version as _dist_version
@@ -16,6 +18,7 @@ from healthspan.cli_db import db_app
 from healthspan.cli_keys import init_command, keys_app
 from healthspan.cli_service import service_app
 from healthspan.cli_support import AppState, load_config_or_exit, state
+from healthspan.cli_token import auth_app, mcp_app, token_app
 from healthspan.config import (
     Config,
     path_status,
@@ -39,6 +42,9 @@ app.command("init")(init_command)
 app.add_typer(keys_app, name="keys")
 app.add_typer(db_app, name="db")
 app.add_typer(service_app, name="service")
+app.add_typer(token_app, name="token")
+app.add_typer(auth_app, name="auth")
+app.add_typer(mcp_app, name="mcp")
 
 
 def _version_callback(value: bool) -> None:
@@ -118,6 +124,10 @@ def _render_toml(cfg: Config) -> str:
                 # document (an empty path would be rejected on reload).
                 else '# passphrase_file = ""  (unset; an OS-secret file path)'
             ),
+            "",
+            "[auth]",
+            f"failure_threshold = {cfg.auth.failure_threshold}",
+            f"max_backoff_seconds = {cfg.auth.max_backoff_seconds}",
         ]
     )
 

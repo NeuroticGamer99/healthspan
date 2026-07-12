@@ -31,12 +31,18 @@ from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from healthspan import db, migrate, recovery_kit, rotation
+from healthspan import db, keychain, migrate, recovery_kit, rotation, token_bootstrap
+from healthspan import tokens as tokens_module
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_health import router as health_router
 from healthspan.api_metrics import MetricsCounters, MetricsMiddleware
 from healthspan.api_metrics import router as metrics_router
-from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
+from healthspan.api_security import (
+    AuthFailureRateLimiter,
+    LivenessRateLimiter,
+    assert_all_routes_declared,
+)
+from healthspan.api_tokens import router as tokens_router
 from healthspan.config import Config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock, InstanceLockHeldError
@@ -257,11 +263,16 @@ def create_app(runtime: ServiceRuntime) -> FastAPI:
     )
     app.state.runtime = runtime
     app.state.liveness_limiter = LivenessRateLimiter()
+    app.state.auth_limiter = AuthFailureRateLimiter(
+        failure_threshold=runtime.cfg.auth.failure_threshold,
+        max_backoff_seconds=float(runtime.cfg.auth.max_backoff_seconds),
+    )
     app.state.metrics = MetricsCounters()
     app.add_middleware(MetricsMiddleware, counters=app.state.metrics)
     app.add_middleware(RequestIDMiddleware)
     app.include_router(health_router)
     app.include_router(metrics_router)
+    app.include_router(tokens_router)
 
     public_paths = assert_all_routes_declared(app)
     if public_paths != [LIVENESS_PATH]:
@@ -288,8 +299,42 @@ def start_service(cfg: Config, passphrase_file_flag: Path | None = None) -> None
     """Direct-start the Core Service in the foreground (blocks until shutdown)."""
     configure_logging(cfg.logging.level, PROCESS_CORE_SERVICE)
     runtime = build_runtime(cfg, passphrase_file_flag)
-    app = create_app(runtime)
+    try:
+        bootstrap_tokens(runtime)
+        app = create_app(runtime)
+    except BaseException:
+        runtime.pool.close_all()
+        runtime.lock.release()
+        runtime.key.zeroize()
+        raise
     _run_uvicorn(app, cfg)
+
+
+def bootstrap_tokens(runtime: ServiceRuntime) -> bool:
+    """Mint the default token set on first start (ADR-0050 §1).
+
+    Runs on the main thread before the app serves, over its own short-lived
+    connection. The one-time MCP-secret printout goes to stderr — the
+    operator's console under direct-start, never the stdout JSON log
+    stream. Failure aborts startup with the table still empty, so the next
+    start mints afresh.
+    """
+    conn = db.connect(runtime.cfg.database.path, runtime.key)
+    try:
+        minted = token_bootstrap.bootstrap_default_tokens(conn, _console)
+    except (keychain.KeychainError, tokens_module.TokenError) as exc:
+        raise ServiceStartupError(
+            f"could not mint the default token set: {exc}"
+        ) from exc
+    finally:
+        db.close(conn)
+    if minted:
+        _log.info("default token set minted (first start, ADR-0050)")
+    return minted
+
+
+def _console(line: str) -> None:
+    print(line, file=sys.stderr)
 
 
 def _run_uvicorn(app: FastAPI, cfg: Config) -> None:  # pragma: no cover - real socket

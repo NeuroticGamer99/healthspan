@@ -103,3 +103,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0048](0048-migration-file-packaging.md) | Migration File Packaging and Discovery | Accepted |
 | [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) | Core-Service-Skeleton Implementation Decisions (Phase 2 WI-1) | Proposed |
 | [ADR-0050](0050-token-store-and-auth-implementation-decisions.md) | Token-Store and Auth-Enforcement Implementation Decisions (Phase 2 WI-2) | Proposed |
+| [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) | Auth Lifecycle, Rate-Limiting, and Bootstrap Implementation Decisions (Phase 2 WI-2b) | Proposed |

@@ -2,7 +2,9 @@
 
 ``healthspan init`` and the ``healthspan keys`` group. Prompting, warnings,
 and rendering live here; the mechanics live in :mod:`healthspan.provisioning`
-and :mod:`healthspan.rotation`.
+and :mod:`healthspan.rotation`. The rekeying commands (change-passphrase,
+rotate-secret-key, convert-mode) hold the single-instance lock for their
+duration — they refuse while the Core Service is up (ADR-0033/0038/0042).
 """
 
 import sys
@@ -14,7 +16,7 @@ import typer
 
 from healthspan import db, keychain, recovery_kit, rotation
 from healthspan.backup import BackupError
-from healthspan.cli_support import fail, load_config_or_exit
+from healthspan.cli_support import exclusive_database_access, fail, load_config_or_exit
 from healthspan.config import Config
 from healthspan.fsperm import PermissionSetError
 from healthspan.keyparams import KeyMode, KeyParamsError
@@ -149,14 +151,17 @@ _NoBackup = Annotated[
 def keys_change_passphrase(ctx: typer.Context, no_backup: _NoBackup = False) -> None:
     """Set a new master passphrase; the secret key is unchanged."""
     cfg = load_config_or_exit(ctx)
-    old_passphrase = typer.prompt("Current master passphrase", hide_input=True)
-    unlocked = _unlock_or_exit(cfg, old_passphrase)
-    new_passphrase = _prompt_new_passphrase()
-    result = _run(
-        lambda: rotation.change_passphrase(
-            cfg, unlocked, new_passphrase, backup=not no_backup
+    # Rekey needs exclusive database access (ADR-0033/0038/0042): refuse
+    # fail-fast, before any prompt, while the Core Service holds the lock.
+    with exclusive_database_access(cfg):
+        old_passphrase = typer.prompt("Current master passphrase", hide_input=True)
+        unlocked = _unlock_or_exit(cfg, old_passphrase)
+        new_passphrase = _prompt_new_passphrase()
+        result = _run(
+            lambda: rotation.change_passphrase(
+                cfg, unlocked, new_passphrase, backup=not no_backup
+            )
         )
-    )
     _announce_backup(result.backup_database, skipped=no_backup)
     typer.echo("Passphrase changed.")
     if result.mode is KeyMode.TWO_FACTOR:
@@ -178,21 +183,22 @@ def keys_rotate_secret_key(
 ) -> None:
     """Generate a new secret key; the passphrase is unchanged."""
     cfg = load_config_or_exit(ctx)
-    passphrase = typer.prompt("Master passphrase", hide_input=True)
-    unlocked = _unlock_or_exit(cfg, passphrase)
-    if unlocked.params.mode is KeyMode.TWO_FACTOR:
-        typer.echo(
-            "This generates a new secret key and a new Recovery Kit. Keep your "
-            "current kit too: its secret key stops opening the live database, "
-            "but still opens backups made before this rotation (ADR-0028 "
-            "non-retroactivity)."
+    with exclusive_database_access(cfg):
+        passphrase = typer.prompt("Master passphrase", hide_input=True)
+        unlocked = _unlock_or_exit(cfg, passphrase)
+        if unlocked.params.mode is KeyMode.TWO_FACTOR:
+            typer.echo(
+                "This generates a new secret key and a new Recovery Kit. Keep "
+                "your current kit too: its secret key stops opening the live "
+                "database, but still opens backups made before this rotation "
+                "(ADR-0028 non-retroactivity)."
+            )
+            typer.confirm("Continue?", default=False, abort=True)
+        result = _run(
+            lambda: rotation.rotate_secret_key(
+                cfg, unlocked, passphrase, backup=not no_backup
+            )
         )
-        typer.confirm("Continue?", default=False, abort=True)
-    result = _run(
-        lambda: rotation.rotate_secret_key(
-            cfg, unlocked, passphrase, backup=not no_backup
-        )
-    )
     _announce_backup(result.backup_database, skipped=no_backup)
     if result.new_secret_key is not None:
         typer.echo("Secret key rotated.")
@@ -228,19 +234,20 @@ def keys_convert_mode(
         raise fail(
             f"unknown mode {to!r}; expected 'two-factor' or 'passphrase-only'"
         ) from None
-    passphrase = typer.prompt("Master passphrase", hide_input=True)
-    unlocked = _unlock_or_exit(cfg, passphrase)
-    if target is KeyMode.PASSPHRASE_ONLY:
-        typer.echo(
-            "This DOWNGRADES protection to a single factor: the passphrase "
-            "alone will unlock the database on any machine (ADR-0013)."
+    with exclusive_database_access(cfg):
+        passphrase = typer.prompt("Master passphrase", hide_input=True)
+        unlocked = _unlock_or_exit(cfg, passphrase)
+        if target is KeyMode.PASSPHRASE_ONLY:
+            typer.echo(
+                "This DOWNGRADES protection to a single factor: the passphrase "
+                "alone will unlock the database on any machine (ADR-0013)."
+            )
+            typer.confirm("Continue?", default=False, abort=True)
+        result = _run(
+            lambda: rotation.convert_mode(
+                cfg, unlocked, passphrase, target, backup=not no_backup
+            )
         )
-        typer.confirm("Continue?", default=False, abort=True)
-    result = _run(
-        lambda: rotation.convert_mode(
-            cfg, unlocked, passphrase, target, backup=not no_backup
-        )
-    )
     _announce_backup(result.backup_database, skipped=no_backup)
     typer.echo(f"Database converted to {target.value} mode; passphrase unchanged.")
     _echo_keychain_warning(result.keychain_warning)

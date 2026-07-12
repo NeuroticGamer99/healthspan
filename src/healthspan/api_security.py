@@ -20,15 +20,27 @@ header, malformed value, unknown token, revoked token — answers ``401``
 with the same generic body; which one it was is recorded in ``auth_audit``,
 never disclosed to the caller. An authenticated request lacking the
 required scope answers ``403`` naming the token and the missing scope, with
-no echo of request content. Failure rate limiting (the ``429`` path)
-arrives with WI-2b.
+no echo of request content.
+
+Failed authentication is rate-limited (ADR-0026 rules 1-4, defaults
+ADR-0051): the limiter throttles *failures only* — a valid credential is
+never delayed — in buckets keyed by (source address, advisory token-name
+prefix), with a per-address aggregate cap so name-cycling does not evade
+it. A throttled failure answers ``429`` with a ``Retry-After`` header and
+is audited with the ``rate-limited`` outcome. State is in-memory only:
+a restart clears it, and ``POST /v1/auth/reset-limits`` clears it on
+demand (always reachable, because valid admin credentials never throttle).
 """
 
+import math
+import threading
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
-from typing import cast
+from dataclasses import dataclass, field
+from typing import NoReturn, cast
 
+import sqlcipher3
 from fastapi import Depends, FastAPI, HTTPException, Request, params
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, Route
@@ -41,6 +53,15 @@ PUBLIC = "public"
 # Uniform 401 (ADR-0026): no unknown-vs-revoked distinction leaks.
 AUTH_FAILED_DETAIL = "authentication failed"
 _AUTH_FAILED_HEADERS = {"WWW-Authenticate": "Bearer"}
+
+# 429 (ADR-0026): revealing that the limiter fired discloses nothing about
+# token state, so the body may say what happened — and nothing else.
+RATE_LIMITED_DETAIL = "too many failed authentication attempts"
+
+# ADR-0026 rule 3: the per-address aggregate threshold is a fixed multiple
+# of the per-bucket one (ADR-0051) — high enough that only name-cycling
+# trips it, never one misconfigured client.
+ADDRESS_THRESHOLD_MULTIPLIER = 5
 
 # Liveness abuse cap (ADR-0049): 30 requests per rolling 1-second window per
 # source address. Generous for every legitimate poller at one address
@@ -75,52 +96,128 @@ class _PublicMarker(ScopeRequirement):
         return None
 
 
+@dataclass
+class _FailureBucket:
+    failures: int = 0
+    blocked_until: float = 0.0
+
+
+@dataclass
+class _AddressState:
+    buckets: dict[str, _FailureBucket] = field(
+        default_factory=dict[str, _FailureBucket]
+    )
+    blocked_until: float = 0.0
+
+    def total_failures(self) -> int:
+        return sum(bucket.failures for bucket in self.buckets.values())
+
+
+class AuthFailureRateLimiter:
+    """Exponential backoff on failed authentication (ADR-0026 rules 1-4).
+
+    Failures only: callers consult it exclusively on the failure path, so a
+    valid credential is never delayed or rejected. Buckets key on (source
+    address, advisory token-name prefix) — parsed from ``hsp_<name>_…``,
+    unparseable credentials sharing one ``invalid`` bucket per address — and
+    a per-address aggregate cap catches name-cycling. Backoff starts after
+    ``failure_threshold`` free failures at 1 s, doubles per failure, and
+    caps at ``max_backoff_seconds`` (default 60, ADR-0026 rule 4).
+
+    State is in-memory and deliberately unpersisted (ADR-0051): the cap
+    bounds a misconfigured client's recovery, a restart clears everything,
+    and :meth:`reset` backs ``auth reset-limits``. Thread-safe — the verify
+    dependency runs on the AnyIO worker threadpool.
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        max_backoff_seconds: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._threshold = failure_threshold
+        self._max_backoff = max_backoff_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._addresses: dict[str, _AddressState] = {}
+
+    def retry_after(self, address: str, name: str) -> float | None:
+        """Seconds until this bucket may fail again, or ``None`` if unblocked."""
+        now = self._clock()
+        with self._lock:
+            state = self._addresses.get(address)
+            if state is None:
+                return None
+            bucket = state.buckets.get(name)
+            blocked_until = max(
+                state.blocked_until, bucket.blocked_until if bucket else 0.0
+            )
+        remaining = blocked_until - now
+        return remaining if remaining > 0 else None
+
+    def record_failure(self, address: str, name: str) -> None:
+        """Count a failed authentication and (re-)arm the backoff windows."""
+        now = self._clock()
+        with self._lock:
+            state = self._addresses.setdefault(address, _AddressState())
+            bucket = state.buckets.setdefault(name, _FailureBucket())
+            bucket.failures += 1
+            delay = self._backoff(bucket.failures - self._threshold)
+            if delay > 0:
+                bucket.blocked_until = max(bucket.blocked_until, now + delay)
+            aggregate_threshold = self._threshold * ADDRESS_THRESHOLD_MULTIPLIER
+            delay = self._backoff(state.total_failures() - aggregate_threshold)
+            if delay > 0:
+                state.blocked_until = max(state.blocked_until, now + delay)
+
+    def record_success(self, address: str, name: str) -> None:
+        """Clear the bucket a now-valid credential was failing in (rule 1).
+
+        The cleared failures also leave the address aggregate, so a client
+        recovering from a rotated-out token stops counting against its
+        neighbors at the same address.
+        """
+        with self._lock:
+            state = self._addresses.get(address)
+            if state is None:
+                return
+            state.buckets.pop(name, None)
+            if not state.buckets and state.blocked_until <= self._clock():
+                del self._addresses[address]
+
+    def reset(self) -> None:
+        """Clear all limiter state (``auth reset-limits``, ADR-0026 rule 4)."""
+        with self._lock:
+            self._addresses.clear()
+
+    def _backoff(self, failures_over: int) -> float:
+        """1 s doubling per failure past the threshold, capped (ADR-0051)."""
+        if failures_over <= 0:
+            return 0.0
+        exponent = min(failures_over - 1, 63)  # 2**63 s already dwarfs any cap
+        return min(float(2**exponent), self._max_backoff)
+
+
 class _ScopedRequirement(ScopeRequirement):
     """Verify the bearer, enforce the scope, audit the outcome (ADR-0026)."""
 
     def __call__(self, request: Request) -> None:
         runtime = cast(ServiceRuntime, request.app.state.runtime)
+        limiter = cast(AuthFailureRateLimiter, request.app.state.auth_limiter)
         conn = runtime.pool.connection()
         source_addr = request.client.host if request.client else "unknown"
         endpoint = request.url.path
         method = request.method
 
-        def deny_invalid() -> HTTPException:
-            tokens.record_outcome(
-                conn,
-                token_name=tokens.INVALID_NAME,
-                source_addr=source_addr,
-                endpoint=endpoint,
-                method=method,
-                outcome=tokens.OUTCOME_DENIED_INVALID,
-            )
-            return HTTPException(
-                status_code=401,
-                detail=AUTH_FAILED_DETAIL,
-                headers=_AUTH_FAILED_HEADERS,
-            )
-
         presented = _bearer_value(request.headers.get("Authorization"))
-        if presented is None:
-            raise deny_invalid()
-        record = tokens.look_up(conn, presented)
-        if record is None:
-            raise deny_invalid()
-        if record.revoked:
-            tokens.record_outcome(
-                conn,
-                token_name=record.name,
-                source_addr=source_addr,
-                endpoint=endpoint,
-                method=method,
-                outcome=tokens.OUTCOME_DENIED_REVOKED,
-            )
-            # Deliberately identical to the invalid-credential answer.
-            raise HTTPException(
-                status_code=401,
-                detail=AUTH_FAILED_DETAIL,
-                headers=_AUTH_FAILED_HEADERS,
-            )
+        record = tokens.look_up(conn, presented) if presented is not None else None
+
+        if record is None or record.revoked:
+            self._deny_failure(conn, limiter, presented, record, source_addr, request)
+        # A valid credential is never throttled (ADR-0026 rule 1); its bucket
+        # clears so a client recovering from a stale token starts clean.
+        limiter.record_success(source_addr, record.name)
         if self.scope not in record.scopes:
             tokens.record_outcome(
                 conn,
@@ -140,6 +237,65 @@ class _ScopedRequirement(ScopeRequirement):
             conn, record, source_addr=source_addr, endpoint=endpoint, method=method
         )
         request.state.token = record
+
+    def _deny_failure(
+        self,
+        conn: sqlcipher3.Connection,
+        limiter: AuthFailureRateLimiter,
+        presented: str | None,
+        record: tokens.TokenRecord | None,
+        source_addr: str,
+        request: Request,
+    ) -> NoReturn:
+        """Audit and answer an authentication *failure*, throttled or not.
+
+        The bucket keys on the advisory name prefix (ADR-0026 rule 2 —
+        attacker-supplied text spreads failures across buckets, which the
+        address aggregate catches); the audit row's ``token_name`` never
+        takes it (ADR-0050 §3): unrecognized credentials audit as
+        ``invalid``, a recognized-but-revoked token under its server-side
+        name.
+        """
+        endpoint = request.url.path
+        method = request.method
+        bucket = None if presented is None else tokens.parse_name(presented)
+        bucket_name = bucket if bucket is not None else tokens.INVALID_NAME
+        audit_name = record.name if record is not None else tokens.INVALID_NAME
+
+        retry_after = limiter.retry_after(source_addr, bucket_name)
+        limiter.record_failure(source_addr, bucket_name)
+        if retry_after is not None:
+            tokens.record_outcome(
+                conn,
+                token_name=audit_name,
+                source_addr=source_addr,
+                endpoint=endpoint,
+                method=method,
+                outcome=tokens.OUTCOME_RATE_LIMITED,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=RATE_LIMITED_DETAIL,
+                headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+            )
+        tokens.record_outcome(
+            conn,
+            token_name=audit_name,
+            source_addr=source_addr,
+            endpoint=endpoint,
+            method=method,
+            outcome=(
+                tokens.OUTCOME_DENIED_REVOKED
+                if record is not None
+                else tokens.OUTCOME_DENIED_INVALID
+            ),
+        )
+        # Deliberately identical for unknown and revoked (ADR-0026).
+        raise HTTPException(
+            status_code=401,
+            detail=AUTH_FAILED_DETAIL,
+            headers=_AUTH_FAILED_HEADERS,
+        )
 
 
 def _bearer_value(header: str | None) -> str | None:

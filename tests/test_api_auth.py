@@ -1,6 +1,6 @@
 """Endpoint authentication and scope enforcement over a real database
-(ADR-0026/0040): the 401/403 matrix, uniform denials, audit rows, and the
-`monitor`-scoped health-detail and metrics endpoints.
+(ADR-0026/0040): the 401/403/429 matrix, uniform denials, audit rows, and
+the `monitor`-scoped health-detail and metrics endpoints.
 """
 
 from collections.abc import Callable, Iterator
@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from healthspan import db, migrate, tokens
 from healthspan.api_health import HEALTH_DETAIL_PATH, LIVENESS_PATH
 from healthspan.api_metrics import METRICS_PATH
-from healthspan.api_security import assert_all_routes_declared
+from healthspan.api_security import AuthFailureRateLimiter, assert_all_routes_declared
 from healthspan.config import Config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock
@@ -259,4 +259,78 @@ def test_detail_and_metrics_answer_only_with_monitor_scope(
         assert _get(harness.client, path, token=harness.reader_token).status_code == 403
         assert (
             _get(harness.client, path, token=harness.monitor_token).status_code == 200
+        )
+
+
+# --------------------------------------------------------------------------
+# 429: the auth-failure rate limiter (ADR-0026 rules 1-4)
+# --------------------------------------------------------------------------
+
+
+def _freeze_limiter(harness: Harness, threshold: int = 5) -> None:
+    """Swap in a limiter with a frozen clock: armed backoff never expires."""
+    harness.app.state.auth_limiter = AuthFailureRateLimiter(
+        failure_threshold=threshold, clock=lambda: 0.0
+    )
+
+
+def test_repeated_failures_answer_429_with_retry_after(harness: Harness) -> None:
+    _freeze_limiter(harness, threshold=2)
+    bad = "hsp_ghost_notarealsecret"
+    for _ in range(3):  # two free failures, the third arms the backoff
+        assert _get(harness.client, HEALTH_DETAIL_PATH, token=bad).status_code == 401
+    throttled = _get(harness.client, HEALTH_DETAIL_PATH, token=bad)
+    assert throttled.status_code == 429
+    assert throttled.json() == {"detail": "too many failed authentication attempts"}
+    assert int(throttled.headers["Retry-After"]) >= 1
+    outcomes = [row[3] for row in _audit_rows(harness.db_path)]
+    assert outcomes == ["denied:invalid"] * 3 + ["rate-limited"]
+
+
+def test_valid_credential_is_never_throttled(harness: Harness) -> None:
+    _freeze_limiter(harness, threshold=1)
+    # Trip both the monitor-probe bucket and the invalid bucket at this
+    # address, then some — the limiter must still wave the valid token
+    # through (ADR-0026 rule 1).
+    for _ in range(4):
+        _get(harness.client, HEALTH_DETAIL_PATH, token="hsp_monitor-probe_wrong")
+        _get(harness.client, HEALTH_DETAIL_PATH, token="garbage")
+    assert (
+        _get(
+            harness.client, HEALTH_DETAIL_PATH, token=harness.monitor_token
+        ).status_code
+        == 200
+    )
+
+
+def test_revoked_token_throttles_and_audits_under_its_real_name(
+    harness: Harness,
+) -> None:
+    _freeze_limiter(harness, threshold=1)
+    conn = _store_conn(harness.db_path)
+    try:
+        assert tokens.revoke_token(conn, "reader")
+    finally:
+        db.close(conn)
+    responses = [
+        _get(harness.client, HEALTH_DETAIL_PATH, token=harness.reader_token)
+        for _ in range(3)
+    ]
+    assert [r.status_code for r in responses] == [401, 401, 429]
+    # The 429 discloses nothing about token state; the audit row records the
+    # server-side name, never the advisory one of an unrecognized credential.
+    rows = _audit_rows(harness.db_path)
+    assert rows[-1] == ("reader", HEALTH_DETAIL_PATH, "GET", "rate-limited")
+
+
+def test_missing_scope_is_not_an_authentication_failure(harness: Harness) -> None:
+    _freeze_limiter(harness, threshold=1)
+    # 403s are authenticated requests: repeating them must never trip the
+    # failure limiter (the limiter throttles failures only, rule 1).
+    for _ in range(5):
+        assert (
+            _get(
+                harness.client, HEALTH_DETAIL_PATH, token=harness.reader_token
+            ).status_code
+            == 403
         )

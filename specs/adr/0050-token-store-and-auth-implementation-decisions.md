@@ -71,3 +71,4 @@ ADR-0026 describes `auth_audit` and [ADR-0027](0027-audit-trail-and-corrections.
 - Related: [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) — the `authorship` token attribute realized in migration 0002
 - Related: [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) — the WI-decisions-bundle pattern; direct-start context for the bootstrap decision
 - Related: [ADR-0009](0009-database-migration.md), [ADR-0035](0035-migration-execution-semantics.md) — the init/migrate separation the bootstrap decision preserves
+- Extended by: [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) — WI-2b realizes §1's bootstrap with keyring-first ordering, plus the limiter and lifecycle decisions

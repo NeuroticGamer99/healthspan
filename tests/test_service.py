@@ -15,18 +15,22 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 import healthspan.rotation as rotation
+import healthspan.service as service_mod
+from healthspan import keychain
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
 from healthspan.cli import app as cli_app
 from healthspan.config import Config, load_config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock
-from healthspan.pool import ConnectionPool
+from healthspan.pool import ConnectionPool, PoolClosedError
 from healthspan.service import (
     ServiceStartupError,
+    bootstrap_tokens,
     build_runtime,
     create_app,
     resolve_passphrase,
+    start_service,
 )
 from healthspan.service_runtime import ServiceRuntime
 
@@ -207,6 +211,64 @@ def test_build_runtime_wrong_passphrase_releases_lock(
         build_runtime(cfg, passphrase_file_flag=bad)
     reclaim = InstanceLock(cfg.database.path)
     reclaim.acquire()  # lock was released despite the failure
+    reclaim.release()
+
+
+def test_bootstrap_tokens_mints_on_first_start_and_prints_mcp_secret_to_stderr(
+    tmp_path: Path, empty_stdin: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The ADR-0050 §1 hook: first `service start` finds an empty tokens
+    # table and mints; the second start finds it populated and does not.
+    cfg = load_config(flag=_init(tmp_path, migrate=True))
+    runtime = build_runtime(cfg, passphrase_file_flag=_passphrase_file(tmp_path))
+    try:
+        assert bootstrap_tokens(runtime) is True
+        err = capsys.readouterr().err
+        assert "hsp_mcpclient_" in err  # the console channel, not stdout logs
+        assert bootstrap_tokens(runtime) is False
+    finally:
+        runtime.pool.close_all()
+        runtime.lock.release()
+        runtime.key.zeroize()
+
+
+def test_start_service_bootstrap_failure_releases_everything(
+    tmp_path: Path, empty_stdin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ADR-0051 §7: a bootstrap failure aborts startup with nothing held —
+    # lock released (the next start can retry), key zeroized, pool closed,
+    # and uvicorn never reached.
+    cfg = load_config(flag=_init(tmp_path, migrate=True))
+    captured: list[ServiceRuntime] = []
+    real_build = service_mod.build_runtime
+
+    def capturing_build(
+        cfg: Config, passphrase_file_flag: Path | None = None
+    ) -> ServiceRuntime:
+        runtime = real_build(cfg, passphrase_file_flag)
+        captured.append(runtime)
+        return runtime
+
+    def broken_store(name: str, token: str) -> None:
+        raise keychain.KeychainError("keyring backend unavailable")
+
+    def refuse_to_serve(app: FastAPI, cfg: Config) -> None:
+        pytest.fail("must not serve after a bootstrap failure")
+
+    monkeypatch.setattr(service_mod, "build_runtime", capturing_build)
+    monkeypatch.setattr(keychain, "store_token_plaintext", broken_store)
+    monkeypatch.setattr(service_mod, "_run_uvicorn", refuse_to_serve)
+
+    with pytest.raises(ServiceStartupError, match="default token set"):
+        start_service(cfg, _passphrase_file(tmp_path))
+
+    (runtime,) = captured
+    with pytest.raises(RuntimeError, match="zeroized"):
+        runtime.key.hex()
+    with pytest.raises(PoolClosedError):
+        runtime.pool.connection()
+    reclaim = InstanceLock(cfg.database.path)
+    reclaim.acquire()  # the lock was released despite the failure
     reclaim.release()
 
 
