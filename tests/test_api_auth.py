@@ -303,6 +303,30 @@ def test_valid_credential_is_never_throttled(harness: Harness) -> None:
     )
 
 
+def test_a_valid_success_does_not_launder_an_attackers_failures(
+    harness: Harness,
+) -> None:
+    # The loopback-launder scenario (ADR-0051 §1): a co-resident attacker
+    # brute-forces under a live token's advisory name; the real token's
+    # owner then authenticates successfully. That success must NOT clear the
+    # attacker's accumulated failures — otherwise every legit poll resets the
+    # wall. Pre-fix (clear-on-success) the final attempt was a fresh 401;
+    # now the armed bucket survives the success and answers 429.
+    _freeze_limiter(harness, threshold=1)
+    forged = "hsp_monitor-probe_wrongsecret"  # parses to the live name
+    for _ in range(2):  # one free failure, the second arms the bucket
+        assert _get(harness.client, HEALTH_DETAIL_PATH, token=forged).status_code == 401
+    # The real owner authenticates successfully in between.
+    assert (
+        _get(
+            harness.client, HEALTH_DETAIL_PATH, token=harness.monitor_token
+        ).status_code
+        == 200
+    )
+    # The attacker's bucket under 'monitor-probe' is still armed.
+    assert _get(harness.client, HEALTH_DETAIL_PATH, token=forged).status_code == 429
+
+
 def test_revoked_token_throttles_and_audits_under_its_real_name(
     harness: Harness,
 ) -> None:

@@ -44,6 +44,14 @@ SCOPES = frozenset(
 # Audit token_name for credentials that resolve to no token row (ADR-0026).
 INVALID_NAME = "invalid"
 
+# Names that carry a reserved meaning elsewhere and must never be minted as a
+# real token (ADR-0026/0050/0051): ``invalid`` is the audit sentinel and the
+# limiter's shared unrecognized/overflow bucket key, and ``mcpclient`` is the
+# MCP client-facing secret's format segment, which ADR-0026 states is "never a
+# Core token name". A real token under either would corrupt audit queries and,
+# via the limiter, could clear an attacker's accumulated failures.
+RESERVED_NAMES = frozenset({INVALID_NAME, "mcpclient"})
+
 # auth_audit outcomes (ADR-0026; the CHECK constraint mirrors this set).
 OUTCOME_OK = "ok"
 OUTCOME_DENIED_SCOPE = "denied:scope"
@@ -60,6 +68,15 @@ _NAME = re.compile(r"^[a-z0-9][a-z0-9:-]*$")
 
 class TokenError(Exception):
     """A token could not be minted or altered."""
+
+
+class DuplicateTokenError(TokenError):
+    """A mint collided with an existing name or hash (the UNIQUE constraint).
+
+    Distinct from a validation ``TokenError`` (bad scope, bad name) so the
+    REST layer can answer a name collision ``409`` without misclassifying a
+    request that never reached the INSERT.
+    """
 
 
 @dataclass(frozen=True)
@@ -145,6 +162,11 @@ def _validate_spec(spec: TokenSpec) -> None:
             f"invalid token name {spec.name!r}: lowercase letters, digits, '-' "
             "and ':' only (an underscore would make the token format ambiguous)"
         )
+    if spec.name in RESERVED_NAMES:
+        raise TokenError(
+            f"token name {spec.name!r} is reserved and cannot be minted "
+            f"(reserved: {sorted(RESERVED_NAMES)}, ADR-0051)"
+        )
     if not spec.scopes:
         raise TokenError("a token must carry at least one scope (ADR-0026)")
     unknown = set(spec.scopes) - SCOPES
@@ -191,7 +213,7 @@ def store_tokens(
                 )
     except sqlcipher3.IntegrityError as exc:
         names = ", ".join(spec.name for spec, _ in pairs)
-        raise TokenError(f"could not mint token(s) {names!r}: {exc}") from exc
+        raise DuplicateTokenError(f"could not mint token(s) {names!r}: {exc}") from exc
 
 
 def mint_token(

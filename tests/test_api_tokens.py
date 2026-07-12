@@ -174,6 +174,38 @@ def test_create_rejects_duplicates_bad_scopes_and_bad_names(harness: Harness) ->
     assert bad_name.status_code == 400
 
 
+def test_reserved_names_are_rejected(harness: Harness) -> None:
+    # 'invalid' is the audit/limiter sentinel and 'mcpclient' is the MCP
+    # secret's format segment — neither may be minted as a real token.
+    for name in ("invalid", "mcpclient"):
+        response = _call(
+            harness.client,
+            "POST",
+            TOKENS_PATH,
+            harness.admin_token,
+            json={"name": name, "scopes": ["read"]},
+        )
+        assert response.status_code == 400, name
+        assert "reserved" in response.json()["detail"]
+
+
+def test_validation_error_on_an_existing_name_is_400_not_409(
+    harness: Harness,
+) -> None:
+    # Regression: a bad scope for an existing name must surface as the 400
+    # validation error, not be misclassified as a 409 duplicate (which would
+    # steer the operator toward rotating a live token).
+    response = _call(
+        harness.client,
+        "POST",
+        TOKENS_PATH,
+        harness.admin_token,
+        json={"name": "monitor-probe", "scopes": ["omnipotent"]},
+    )
+    assert response.status_code == 400
+    assert "omnipotent" in response.json()["detail"]
+
+
 def test_list_carries_metadata_and_never_values(harness: Harness) -> None:
     response = _call(harness.client, "GET", TOKENS_PATH, harness.admin_token)
     assert response.status_code == 200
