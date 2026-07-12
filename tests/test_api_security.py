@@ -56,6 +56,13 @@ def test_public_route_reported_through_included_router() -> None:
     assert assert_all_routes_declared(app) == ["/v1/health"]
 
 
+def test_require_rejects_unknown_scopes_at_declaration() -> None:
+    # A typo'd scope would deny every caller forever; it must fail at app
+    # assembly, not at request time (ADR-0026 declare-every-route rule).
+    with pytest.raises(ValueError, match="unknown scope"):
+        require("reed")
+
+
 def test_scoped_route_is_not_public() -> None:
     app = FastAPI(openapi_url=None)
     app.add_api_route(

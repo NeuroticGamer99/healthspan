@@ -56,4 +56,7 @@ testpaths = ["tests"]
 dev = [
     "httpx>=0.28.1",
     "hypothesis>=6.140",
+    # For the editor (Pylance) and ad-hoc local runs; the CI gates still run
+    # the version pinned in ci.yml via `uv run --with "pytest==..."`.
+    "pytest>=9.1.1",
 ]

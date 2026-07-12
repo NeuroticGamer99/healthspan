@@ -16,6 +16,7 @@ supervision are later phases (ADR-0049).
 
 import getpass
 import sys
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from importlib.metadata import version as _dist_version
@@ -33,11 +34,14 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from healthspan import db, migrate, recovery_kit, rotation
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_health import router as health_router
+from healthspan.api_metrics import MetricsCounters, MetricsMiddleware
+from healthspan.api_metrics import router as metrics_router
 from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
 from healthspan.config import Config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock, InstanceLockHeldError
 from healthspan.logging_setup import PROCESS_CORE_SERVICE, configure_logging, get_logger
+from healthspan.pool import ConnectionPool
 from healthspan.service_runtime import ServiceRuntime
 
 # ADR-0037: a deliberately small worker threadpool — pool size equals
@@ -131,25 +135,33 @@ def build_runtime(
             _log.warning("disposed orphaned recovery-kit plaintext", path=str(orphan))
         passphrase = resolve_passphrase(cfg, passphrase_file_flag)
         key = rotation.unlock(cfg, passphrase).key
-        verify_schema(cfg, key)
+        schema = verify_schema(cfg, key)
     except BaseException:
         if key is not None:
             key.zeroize()
         lock.release()
         raise
-    return ServiceRuntime(cfg=cfg, key=key, lock=lock)
+    return ServiceRuntime(
+        cfg=cfg,
+        key=key,
+        lock=lock,
+        pool=ConnectionPool(cfg.database.path, key),
+        schema_version=schema,
+    )
 
 
-def verify_schema(cfg: Config, key: DbKey) -> None:
-    """Refuse to serve against a schema this build does not expect (ADR-0039)."""
+def verify_schema(cfg: Config, key: DbKey) -> int:
+    """Refuse to serve against a schema this build does not expect (ADR-0039).
+
+    Returns the verified schema version (also this build's target)."""
     conn = db.connect(cfg.database.path, key)
     try:
         current = db.schema_version(conn)
     finally:
         db.close(conn)
     target = migrate.target_version()
-    if current == target:
-        return
+    if current is not None and current == target:
+        return current
     raise ServiceStartupError(
         _schema_mismatch_message(cfg.database.path, current, target)
     )
@@ -210,6 +222,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     runtime = cast(ServiceRuntime, app.state.runtime)
     # ADR-0037: cap the worker threadpool the sync repository will run on.
     to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_LIMIT
+    runtime.started_monotonic = time.monotonic()
     runtime.ready = True
     _log.info(
         "core service ready",
@@ -220,6 +233,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         runtime.ready = False
+        runtime.pool.close_all()  # before the key it was built on is zeroized
         runtime.lock.release()
         runtime.key.zeroize()
         _log.info("core service stopped")
@@ -230,8 +244,8 @@ def create_app(runtime: ServiceRuntime) -> FastAPI:
 
     Enforces the ADR-0026/0040 route-declaration rule: every route declares a
     scope or ``public``, and the only ``public`` route is liveness. OpenAPI
-    and the docs UIs are disabled — an unauthenticated API-surface disclosure
-    is a WI-2 auth question, not a WI-1 default.
+    and the docs UIs stay disabled through Phase 2 (ADR-0049 §7) — no
+    unauthenticated API-surface disclosure.
     """
     app = FastAPI(
         title="Healthspan Core Service",
@@ -243,8 +257,11 @@ def create_app(runtime: ServiceRuntime) -> FastAPI:
     )
     app.state.runtime = runtime
     app.state.liveness_limiter = LivenessRateLimiter()
+    app.state.metrics = MetricsCounters()
+    app.add_middleware(MetricsMiddleware, counters=app.state.metrics)
     app.add_middleware(RequestIDMiddleware)
     app.include_router(health_router)
+    app.include_router(metrics_router)
 
     public_paths = assert_all_routes_declared(app)
     if public_paths != [LIVENESS_PATH]:
