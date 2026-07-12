@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
+import httpx
 import keyring
 import pytest
 from fastapi import FastAPI
@@ -125,6 +126,22 @@ def test_token_revoke_and_the_self_revocation_guard(cli_env: CliEnv) -> None:
     assert "rotate" in output
 
 
+def test_path_significant_names_are_rejected_before_any_request(
+    cli_env: CliEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The token-name charset is URL-safe by construction, so the CLI
+    # rejects anything else client-side — a name like 'a/b' must never be
+    # sent where it would be misread as path structure. The monkeypatch
+    # proves no request is attempted (the assertion is load-bearing).
+    def no_request(*args: object, **kwargs: object) -> object:
+        pytest.fail("an invalid name must be rejected before any request")
+
+    monkeypatch.setattr(cli_token, "_build_client", no_request)
+    for bad in ("a/b", "a?x", "a#y", "UPPER"):
+        output = _invoke(cli_env, "token", "revoke", bad, expect=1)
+        assert "invalid token name" in output
+
+
 def test_token_rotate_updates_the_keyring_entry(cli_env: CliEnv) -> None:
     before = keychain.load_token_plaintext("gui")
     output = _invoke(cli_env, "token", "rotate", "gui")
@@ -157,6 +174,24 @@ def test_missing_cli_admin_entry_gives_bootstrap_guidance(cli_env: CliEnv) -> No
     output = _invoke(cli_env, "token", "list", expect=1)
     assert "token:cli-admin" in output
     assert "service start" in output
+
+
+def test_non_json_success_body_is_a_clean_error(
+    cli_env: CliEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A 200 whose body is not JSON (something else on the port, a proxy)
+    # must become the CLI's error channel, never a JSONDecodeError traceback.
+    def not_json(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>not the Core Service</html>")
+
+    def fake_client(_cfg: object) -> httpx.Client:
+        return httpx.Client(
+            transport=httpx.MockTransport(not_json), base_url="http://testserver"
+        )
+
+    monkeypatch.setattr(cli_token, "_build_client", fake_client)
+    output = _invoke(cli_env, "token", "list", expect=1)
+    assert "non-JSON" in output
 
 
 def test_unreachable_service_points_at_service_start(tmp_path: Path) -> None:

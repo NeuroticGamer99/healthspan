@@ -82,6 +82,23 @@ def test_mint_rejects_duplicate_names(conn: sqlcipher3.Connection) -> None:
         tokens.mint_token(conn, "gui", {"read"})
 
 
+def test_revoke_refuses_the_last_live_admin_token(conn: sqlcipher3.Connection) -> None:
+    # ADR-0051 §4: the store-level lockout guard — bootstrap never re-mints
+    # into a non-empty table, so the final admin credential is sacrosanct.
+    tokens.mint_token(conn, "admin-a", {"admin"})
+    with pytest.raises(tokens.LastAdminError):
+        tokens.revoke_token(conn, "admin-a")
+    tokens.mint_token(conn, "admin-b", {"admin", "read"})
+    assert tokens.revoke_token(conn, "admin-a")  # another live admin remains
+    with pytest.raises(tokens.LastAdminError):
+        tokens.revoke_token(conn, "admin-b")  # now the last one
+    record = tokens.find_by_name(conn, "admin-b")
+    assert record is not None
+    assert record.revoked is False  # the refusal rolled back cleanly
+    tokens.mint_token(conn, "reader", {"read"})
+    assert tokens.revoke_token(conn, "reader")  # non-admin tokens unaffected
+
+
 def test_store_tokens_is_all_or_nothing(conn: sqlcipher3.Connection) -> None:
     # The bootstrap entry point (ADR-0051 §7): a failure on any row of the
     # batch must land zero rows — a partial default set would never be

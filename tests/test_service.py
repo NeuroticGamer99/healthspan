@@ -10,13 +10,14 @@ from typing import Any
 
 import httpx
 import pytest
+import sqlcipher3
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 import healthspan.rotation as rotation
 import healthspan.service as service_mod
-from healthspan import keychain
+from healthspan import keychain, token_bootstrap
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
 from healthspan.cli import app as cli_app
@@ -270,6 +271,28 @@ def test_start_service_bootstrap_failure_releases_everything(
     reclaim = InstanceLock(cfg.database.path)
     reclaim.acquire()  # the lock was released despite the failure
     reclaim.release()
+
+
+def test_bootstrap_database_failure_becomes_a_startup_error(
+    tmp_path: Path, empty_stdin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Driver-level failures (locked past busy_timeout, disk I/O error) must
+    # reach the operator through the same ServiceStartupError channel as
+    # every other startup refusal, never as a raw sqlcipher3 traceback.
+    cfg = load_config(flag=_init(tmp_path, migrate=True))
+
+    def broken_bootstrap(conn: object, console: object) -> bool:
+        raise sqlcipher3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(token_bootstrap, "bootstrap_default_tokens", broken_bootstrap)
+    runtime = build_runtime(cfg, passphrase_file_flag=_passphrase_file(tmp_path))
+    try:
+        with pytest.raises(ServiceStartupError, match="default token set"):
+            bootstrap_tokens(runtime)
+    finally:
+        runtime.pool.close_all()
+        runtime.lock.release()
+        runtime.key.zeroize()
 
 
 def test_build_runtime_leaves_no_passphrase_in_environment(
