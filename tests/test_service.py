@@ -21,6 +21,7 @@ from healthspan.cli import app as cli_app
 from healthspan.config import Config, load_config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock
+from healthspan.pool import ConnectionPool
 from healthspan.service import (
     ServiceStartupError,
     build_runtime,
@@ -237,7 +238,16 @@ def live(
     cfg = make_config()
     lock = InstanceLock(cfg.database.path)
     lock.acquire()
-    runtime = ServiceRuntime(cfg=cfg, key=DbKey(bytearray(os.urandom(32))), lock=lock)
+    key = DbKey(bytearray(os.urandom(32)))
+    # The pool is lazy and the key random: no route under test may touch the
+    # database (liveness reads only the cached flag, ADR-0037/0040).
+    runtime = ServiceRuntime(
+        cfg=cfg,
+        key=key,
+        lock=lock,
+        pool=ConnectionPool(cfg.database.path, key),
+        schema_version=0,
+    )
     application = create_app(runtime)
     with TestClient(application) as client:
         yield client, runtime, application

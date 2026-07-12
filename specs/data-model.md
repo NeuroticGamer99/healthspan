@@ -250,3 +250,26 @@ The data types above are realized as concrete tables by **migration 0001**, the 
 - Levels **zones / activity / nutrition** tables → **Phase 7**; they are "Not yet designed" pending inspection of a real Levels export, so 0001 does not invent their shape.
 - Clinical-document **original-binary storage** (content-addressed BLOBs) → **Phase 5** ([ADR-0034](adr/0034-clinical-document-storage.md)); 0001 records only the `source_file_hash` dedup key on `clinical_documents`. The FTS-indexed `body` text ships now because [ADR-0041](adr/0041-clinical-document-fts.md) requires the index in 0001.
 - The lab's **reported LOINC per result** → deferred to [ADR-0032](adr/0032-biomarker-loinc-cardinality.md) (one concept, many codes); `lab_results` carries no `reported_loinc` column yet.
+
+---
+
+## Migration 0002 — Control Plane (tokens, auth_audit)
+
+**Migration 0002** ([`src/healthspan/migrations/0002_tokens_and_auth_audit.sql`](../src/healthspan/migrations/0002_tokens_and_auth_audit.sql), Phase 2 WI-2) realizes [ADR-0026](adr/0026-named-scoped-tokens.md)'s server-side credential store. Same convention as 0001: the DDL is the source of truth; this records what it doesn't say. It is the first post-0001 migration, deliberately exercising the runner's incremental-apply semantics ([ADR-0035](adr/0035-migration-execution-semantics.md)) on a real schema change.
+
+### `tokens` — one row per issued credential
+
+- `token_hash` holds **`SHA-256(full token string)`, hex** — never plaintext, per ADR-0026's storage rule. Both `name` and `token_hash` are `UNIQUE`.
+- `scopes` is a **space-separated flat scope list** in `TEXT` (e.g. `"admin monitor read"`). The nine valid scope names are enforced at the application layer (`healthspan.tokens.SCOPES`), not by a CHECK — the scope vocabulary grows by ADR ([ADR-0040](adr/0040-health-endpoint-authentication.md), [ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md) precedents) and must not require a schema migration per new scope.
+- `authorship` (`'self'`/`'ai'`, CHECK-enforced, default `'self'`) is the [ADR-0043](adr/0043-ai-authored-analyses-and-annotate-scope.md) token attribute stamped onto interpretive rows.
+- `publish_namespaces` is the events-scope allowlist ([ADR-0026](adr/0026-named-scoped-tokens.md)), space-separated patterns (`"alert.* external.*"`), `NULL` for tokens without `events`.
+- `job_id` is a real FK to `jobs` — the ephemeral job-token binding (named `job:<uuid>`); `NULL` for standing tokens.
+- `revoked` (0/1) + `revoked_utc`, with `CHECK (revoked_utc IS NULL OR revoked = 1)`; `last_used_utc` is touched on every successful authentication.
+- Token **names never contain `_`**: the secret segment of `hsp_<name>_<secret>` is base64url (whose alphabet includes `_` and `-`), so the first `_` after the prefix must terminate the name for the format to parse unambiguously (recorded in [ADR-0050](adr/0050-token-store-and-auth-implementation-decisions.md)).
+
+### `auth_audit` — append-only authentication outcomes
+
+- Columns: `occurred_utc`, `token_name` (advisory name, or the literal `invalid` for unrecognized credentials), `source_addr`, `endpoint`, `method`, `outcome` — CHECK-constrained to ADR-0026's five outcomes (`ok`, `denied:scope`, `denied:invalid`, `denied:revoked`, `rate-limited`). Never token values, request bodies, or health data.
+- **Append-only via `BEFORE UPDATE`/`BEFORE DELETE` `RAISE(ABORT)` triggers** — the `audit_log` pattern. Deliberately a separate table from `audit_log`: that one records data mutations ([ADR-0027](adr/0027-audit-trail-and-corrections.md)); this one records control-plane access, with different columns, retention, and query patterns.
+- Timestamps are UTC-only system event times — the four-column local-time quadruple is for clinically meaningful times, which these are not.
+- Retention/pruning is deferred to the jobs-table pruning pattern ([ADR-0012](adr/0012-job-abstraction.md), Phase 4).

@@ -32,9 +32,11 @@ def _provisioned(tmp_path: Path) -> Path:
 
 def test_packaged_migrations_present_and_named() -> None:
     migrations = migrate.discover_migrations()
-    assert [m.version for m in migrations] == [1]
+    assert [m.version for m in migrations] == [1, 2]
     assert migrations[0].filename == "0001_initial_schema.sql"
     assert "CREATE TABLE audit_log" in migrations[0].sql
+    assert migrations[1].filename == "0002_tokens_and_auth_audit.sql"
+    assert "CREATE TABLE tokens" in migrations[1].sql
 
 
 def test_discover_orders_by_version(tmp_path: Path) -> None:
@@ -47,7 +49,7 @@ def test_discover_orders_by_version(tmp_path: Path) -> None:
 
 
 def test_target_version_is_the_highest_shipped() -> None:
-    assert migrate.target_version() == 1
+    assert migrate.target_version() == 2
 
 
 def test_target_version_from_an_explicit_corpus(tmp_path: Path) -> None:
@@ -113,13 +115,16 @@ def test_split_allows_trailing_comment() -> None:
 def test_fresh_database_applies_all_migrations(tmp_path: Path) -> None:
     path = _provisioned(tmp_path)
     run = migrate.migrate_database(path, KEY)
-    assert run.applied == (1,)
-    assert run.final_version == 1
+    assert run.applied == (1, 2)
+    assert run.final_version == 2
     conn = db.connect(path, KEY)
     try:
         rows = conn.execute("SELECT version, filename FROM schema_version").fetchall()
-        assert rows == [(1, "0001_initial_schema.sql")]
-        assert db.schema_version(conn) == 1
+        assert rows == [
+            (1, "0001_initial_schema.sql"),
+            (2, "0002_tokens_and_auth_audit.sql"),
+        ]
+        assert db.schema_version(conn) == 2
         # Runtime connections enforce foreign keys (ADR-0035 pragma table).
         assert conn.execute("PRAGMA foreign_keys").fetchone() == (1,)
     finally:
@@ -131,11 +136,11 @@ def test_runner_is_idempotent(tmp_path: Path) -> None:
     migrate.migrate_database(path, KEY)
     second = migrate.migrate_database(path, KEY)
     assert second.applied == ()
-    assert second.final_version == 1
+    assert second.final_version == 2
     conn = db.connect(path, KEY)
     try:
         # No per-file idempotent SQL; the ledger is the only skip mechanism.
-        assert conn.execute("SELECT count(*) FROM schema_version").fetchone() == (1,)
+        assert conn.execute("SELECT count(*) FROM schema_version").fetchone() == (2,)
     finally:
         db.close(conn)
 
@@ -298,8 +303,8 @@ def test_cli_migrate_applies_then_reports_up_to_date(config_file: Path) -> None:
     assert _init(config_file).exit_code == 0
     first = _invoke(config_file, ["db", "migrate"], f"{PASSPHRASE}\n")
     assert first.exit_code == 0, first.output
-    assert "Applied 1 migration" in first.output
-    assert "version 1" in first.output
+    assert "Applied 2 migration(s) [1, 2]" in first.output
+    assert "version 2" in first.output
     second = _invoke(config_file, ["db", "migrate"], f"{PASSPHRASE}\n")
     assert second.exit_code == 0, second.output
     assert "already up to date" in second.output

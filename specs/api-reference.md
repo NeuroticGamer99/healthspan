@@ -16,6 +16,14 @@ This document is also the **ledger for API-surface decisions made during impleme
 
 **Error responses:** Errors return a JSON body with a structured error object. Error responses must not echo back sensitive input values. See [security.md](security.md).
 
+**Authentication errors (implemented, Phase 2 WI-2):**
+
+- **`401`** — every authentication failure (missing `Authorization` header, malformed value, unknown token, revoked token) answers identically: body `{"detail": "authentication failed"}` and header `WWW-Authenticate: Bearer` (the bare scheme, no realm, no OAuth metadata). Which failure it was is recorded in the append-only `auth_audit` table ([data-model.md](data-model.md), migration 0002), never disclosed to the caller ([ADR-0026](adr/0026-named-scoped-tokens.md) uniform-denial rule).
+- **`403`** — authenticated but lacking the route's required scope: `{"detail": "token '<name>' lacks the required scope '<scope>'"}` — names the token and the missing scope, echoes nothing else ([ADR-0026](adr/0026-named-scoped-tokens.md)).
+- **`429`** — the auth-failure rate limiter (WI-2b, not yet implemented).
+
+Every authentication outcome — including success — writes one `auth_audit` row, and a successful authentication updates the token's `last_used_utc`, in the same transaction. Scope enforcement is a per-route FastAPI dependency created by the route's `require(<scope>)` declaration; an unknown scope name in a declaration fails at app assembly, not at request time.
+
 ---
 
 ## Endpoint Groups
@@ -55,7 +63,14 @@ Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-e
 | `GET /v1/metrics` | `monitor` — request counts, status histogram, job counts |
 | `POST /v1/system/process-reports` | `supervise` — launcher supervision reports, from which the Core Service emits the reserved `system.process.*`/`system.core.restarted` events ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)) |
 
-**Implemented:** `GET /v1/health` landed in Phase 2 WI-1 ([ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)) exactly as specified — a `{"status": …}` body and nothing else, answered from a cached readiness flag (no database query, [ADR-0037](adr/0037-core-service-concurrency-and-driver.md)), and carrying the per-source-address liveness rate cap (30 req/s, `429` beyond) the exemption requires ([ADR-0040](adr/0040-health-endpoint-authentication.md)). It is the platform's single `public` route, enforced at app assembly. `GET /v1/health/detail`, `GET /v1/metrics` (both `monitor`, WI-2), and `POST /v1/system/process-reports` (`supervise`, Phase 6 supervision) are not yet implemented.
+**Implemented:** `GET /v1/health` landed in Phase 2 WI-1 ([ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)) exactly as specified — a `{"status": …}` body and nothing else, answered from a cached readiness flag (no database query, [ADR-0037](adr/0037-core-service-concurrency-and-driver.md)), and carrying the per-source-address liveness rate cap (30 req/s, `429` beyond) the exemption requires ([ADR-0040](adr/0040-health-endpoint-authentication.md)). It is the platform's single `public` route, enforced at app assembly.
+
+`GET /v1/health/detail` and `GET /v1/metrics` (both `monitor`) landed in Phase 2 WI-2 with the [observability.md](observability.md) response shapes:
+
+- `/v1/health/detail` → `{"status", "version", "schema_version", "db_connected", "uptime_seconds"}`. `status` is `"healthy"` when the service is ready and the database answers `SELECT 1`, else `"unhealthy"`; `db_connected` reflects a real query through the connection pool (this endpoint is authenticated, so the O(1)-no-database rule applies only to liveness). `uptime_seconds` counts from readiness, as an integer.
+- `/v1/metrics` → `{"requests_total", "requests_by_status", "active_jobs", "db_query_count", "uptime_seconds"}`. Request counts come from ASGI middleware and include every HTTP response (liveness and denials included); `requests_by_status` keys are status-code strings. **`active_jobs` is a constant `0` until the job system lands ([ADR-0012](adr/0012-job-abstraction.md), Phase 4)** — the field ships now so the response shape is stable for monitoring clients. `db_query_count` counts SQL statements executed through the Core Service connection pool since startup.
+
+`POST /v1/system/process-reports` (`supervise`, Phase 6 supervision) is not yet implemented.
 
 ### Reference data
 Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.

@@ -1,22 +1,46 @@
-"""Per-route scope declaration and the liveness rate cap (ADR-0026/0040/0049).
+"""Bearer-token verification, scope enforcement, and route declaration
+(ADR-0026/0040/0049).
 
 Every Core Service route declares exactly one requirement — a named scope,
 or the ``public`` marker for the unauthenticated liveness endpoint. An
 undeclared route is a hard error at app assembly, so a scope-free endpoint
-can never ship by omission (ADR-0026/ADR-0040). WI-1 lands the declaration
-machinery and the ``public`` marker; WI-2 replaces the marker's no-op body
-with real bearer verification and scope enforcement.
+can never ship by omission (ADR-0026/ADR-0040).
+
+A scoped declaration is a real FastAPI dependency: it verifies the bearer
+against the ``tokens`` table (hash + ``compare_digest``), enforces the
+scope, audits the outcome in ``auth_audit``, and touches ``last_used_utc``.
+It is synchronous by design — FastAPI runs it on the AnyIO worker
+threadpool, where the ADR-0037 thread-affine pool hands it this thread's
+connection; the driver never runs on the event loop. The ``public`` marker
+stays an async no-op so liveness never pays a thread hop or touches the
+database (ADR-0040).
+
+Denials are uniform (ADR-0026): every authentication failure — missing
+header, malformed value, unknown token, revoked token — answers ``401``
+with the same generic body; which one it was is recorded in ``auth_audit``,
+never disclosed to the caller. An authenticated request lacking the
+required scope answers ``403`` naming the token and the missing scope, with
+no echo of request content. Failure rate limiting (the ``429`` path)
+arrives with WI-2b.
 """
 
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
+from typing import cast
 
-from fastapi import Depends, FastAPI, params
+from fastapi import Depends, FastAPI, HTTPException, Request, params
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, Route
 
+from healthspan import tokens
+from healthspan.service_runtime import ServiceRuntime
+
 PUBLIC = "public"
+
+# Uniform 401 (ADR-0026): no unknown-vs-revoked distinction leaks.
+AUTH_FAILED_DETAIL = "authentication failed"
+_AUTH_FAILED_HEADERS = {"WWW-Authenticate": "Bearer"}
 
 # Liveness abuse cap (ADR-0049): 30 requests per rolling 1-second window per
 # source address. Generous for every legitimate poller at one address
@@ -28,21 +52,120 @@ LIVENESS_WINDOW_SECONDS = 1.0
 class ScopeRequirement:
     """A route's declared capability requirement (a scope name or ``public``).
 
-    In WI-1 the dependency body is a no-op: it records intent only. WI-2
-    turns it into the FastAPI dependency that verifies the bearer token and
-    enforces the scope (ADR-0026).
+    The base class carries the declaration that :func:`route_scope` and
+    :func:`assert_all_routes_declared` introspect; subclasses provide the
+    dependency body.
     """
 
     def __init__(self, scope: str) -> None:
         self.scope = scope
 
-    def __call__(self) -> None:  # pragma: no cover - trivial WI-1 no-op
+
+class _PublicMarker(ScopeRequirement):
+    """The declared liveness exemption (ADR-0040): visibly, deliberately open.
+
+    Async no-op: the one public route must stay O(1) on the event loop —
+    no threadpool hop, no database.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(PUBLIC)
+
+    async def __call__(self) -> None:
         return None
 
 
+class _ScopedRequirement(ScopeRequirement):
+    """Verify the bearer, enforce the scope, audit the outcome (ADR-0026)."""
+
+    def __call__(self, request: Request) -> None:
+        runtime = cast(ServiceRuntime, request.app.state.runtime)
+        conn = runtime.pool.connection()
+        source_addr = request.client.host if request.client else "unknown"
+        endpoint = request.url.path
+        method = request.method
+
+        def deny_invalid() -> HTTPException:
+            tokens.record_outcome(
+                conn,
+                token_name=tokens.INVALID_NAME,
+                source_addr=source_addr,
+                endpoint=endpoint,
+                method=method,
+                outcome=tokens.OUTCOME_DENIED_INVALID,
+            )
+            return HTTPException(
+                status_code=401,
+                detail=AUTH_FAILED_DETAIL,
+                headers=_AUTH_FAILED_HEADERS,
+            )
+
+        presented = _bearer_value(request.headers.get("Authorization"))
+        if presented is None:
+            raise deny_invalid()
+        record = tokens.look_up(conn, presented)
+        if record is None:
+            raise deny_invalid()
+        if record.revoked:
+            tokens.record_outcome(
+                conn,
+                token_name=record.name,
+                source_addr=source_addr,
+                endpoint=endpoint,
+                method=method,
+                outcome=tokens.OUTCOME_DENIED_REVOKED,
+            )
+            # Deliberately identical to the invalid-credential answer.
+            raise HTTPException(
+                status_code=401,
+                detail=AUTH_FAILED_DETAIL,
+                headers=_AUTH_FAILED_HEADERS,
+            )
+        if self.scope not in record.scopes:
+            tokens.record_outcome(
+                conn,
+                token_name=record.name,
+                source_addr=source_addr,
+                endpoint=endpoint,
+                method=method,
+                outcome=tokens.OUTCOME_DENIED_SCOPE,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"token '{record.name}' lacks the required scope '{self.scope}'"
+                ),
+            )
+        tokens.record_ok(
+            conn, record, source_addr=source_addr, endpoint=endpoint, method=method
+        )
+        request.state.token = record
+
+
+def _bearer_value(header: str | None) -> str | None:
+    """The credential in an ``Authorization: Bearer …`` header, or ``None``."""
+    if header is None:
+        return None
+    scheme, separator, value = header.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not value.strip():
+        return None
+    return value.strip()
+
+
 def require(scope: str) -> params.Depends:
-    """Declare a route's required scope; use in ``dependencies=[require(...)]``."""
-    return Depends(ScopeRequirement(scope))
+    """Declare a route's required scope; use in ``dependencies=[require(...)]``.
+
+    Declaration-time validation: an unknown scope name is a typo that would
+    otherwise deny every caller forever, so it fails at app assembly.
+    """
+    if scope == PUBLIC:
+        return Depends(_PublicMarker())
+    if scope not in tokens.SCOPES:
+        raise ValueError(
+            f"unknown scope {scope!r}; valid: {sorted(tokens.SCOPES)} "
+            f"or the {PUBLIC!r} marker (ADR-0026)"
+        )
+    return Depends(_ScopedRequirement(scope))
 
 
 def route_scope(route: APIRoute) -> str | None:
