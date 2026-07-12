@@ -24,6 +24,7 @@ from healthspan.backup import (
     prune_backups,
 )
 from healthspan.cli_support import fail, load_config_or_exit
+from healthspan.fsperm import PermissionSetError
 from healthspan.keyparams import KeyParamsError
 
 db_app = typer.Typer(
@@ -152,6 +153,7 @@ def _run[T](operation: Callable[[], T]) -> T:
         db.DatabaseError,
         keychain.KeychainError,
         KeyParamsError,
+        PermissionSetError,
         OSError,
     ) as exc:
         raise fail(str(exc)) from exc

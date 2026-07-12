@@ -61,6 +61,24 @@ def test_empty_manifest_never_hits(tmp_path: Path) -> None:
     assert slc.scan([log], set()) == []
 
 
+def test_token_before_sentence_period_still_matches(tmp_path: Path) -> None:
+    # Regression: a leaked canary token at a sentence end ("...CANARY-foo.")
+    # must be caught. The trailing period is a boundary, not a continuation —
+    # the manifest itself strips it during derivation, so the gate has to too.
+    log = _log(tmp_path, "note CANARY-foo. done\nCANARY-foo.\n")
+    assert [h[2] for h in slc.scan([log], {"CANARY-foo"})] == [
+        "CANARY-foo",
+        "CANARY-foo",
+    ]
+
+
+def test_token_not_matched_inside_dotted_continuation(tmp_path: Path) -> None:
+    # "CANARY-foo.bar" is a longer token; the shorter manifest entry must not
+    # match inside it (the full token is caught by its own manifest entry).
+    log = _log(tmp_path, "saw CANARY-foo.bar here\n")
+    assert slc.scan([log], {"CANARY-foo"}) == []
+
+
 # --- main -----------------------------------------------------------------
 
 

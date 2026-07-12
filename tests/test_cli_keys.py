@@ -148,7 +148,9 @@ def test_rotate_secret_key_cli_requires_confirmation_and_prints_new_kit(
     assert declined.exit_code != 0  # aborted before any change
     result = _invoke(config_file, ["keys", "rotate-secret-key"], f"{PASSPHRASE}\ny\n")
     assert result.exit_code == 0, result.output
-    assert "INVALID" in result.output
+    # The confirmation tells the user to KEEP the old kit (it still opens
+    # pre-rotation backups), not that it becomes invalid.
+    assert "Keep your current kit too" in result.output
     assert "HEALTHSPAN RECOVERY KIT" in result.output
 
 
@@ -372,3 +374,11 @@ def test_init_restore_incompatible_with_passphrase_only(config_file: Path) -> No
     result = _invoke(config_file, ["init", "--restore", "--key-from-passphrase"], "")
     assert result.exit_code == 1
     assert "incompatible" in result.output
+
+
+def test_init_restore_rejects_output_flag(config_file: Path) -> None:
+    # --restore renders no new kit, so --output is meaningless; reject it
+    # instead of silently ignoring it.
+    result = _invoke(config_file, ["init", "--restore", "--output", "kit.txt"], "")
+    assert result.exit_code == 1
+    assert "--output has no effect with --restore" in result.output

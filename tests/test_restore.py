@@ -88,7 +88,59 @@ def test_restore_round_trip_displaces_previous_live(tmp_path: Path) -> None:
     assert result.displaced.exists()
     # The displaced copy still holds the previous live data (ciphertext kept).
     assert _read_marker(result.displaced) == "old-live"
+
+
+def test_install_rollback_leaves_live_untouched_on_partial_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two install renames are not atomic; if the second (the sidecar)
+    fails, the live database must not be left as a restored DB with no sidecar.
+    The displaced originals roll back so the live file is genuinely untouched
+    (the ADR-0038 guarantee)."""
+    live = _make_db(tmp_path / "hs.db", "old-live", version=1)
+    backup = _make_db(tmp_path / "b" / "backup.db", "from-backup", version=1)
+    live_sidecar = sidecar_path(live)
+
+    real_replace = Path.replace
+    failed = {"once": False}
+
+    def _flaky_replace(self: Path, target: Path) -> Path:
+        # Fail exactly once, on the restored sidecar landing on the live name,
+        # so the rollback's own replace of the original sidecar still works.
+        if target == live_sidecar and not failed["once"]:
+            failed["once"] = True
+            raise OSError("simulated lock on the sidecar target")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", _flaky_replace)
+    with pytest.raises(OSError, match="simulated lock"):
+        restore_database(backup, live, KEY, target_version=1)
+    monkeypatch.undo()
+
+    # The live database is the ORIGINAL, rolled back, sidecar present, opens.
+    assert live_sidecar.is_file()
+    assert _read_marker(live) == "old-live"
     assert not list(tmp_path.glob("*.restoring*"))
+
+
+def test_restore_verify_does_not_optimize_the_verified_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The verified copy must be closed with conn.close(), NOT db.close() (which
+    # runs PRAGMA optimize, a write) — the installed bytes must equal the bytes
+    # verified. restore_database calls no db.close() at all, so a db.close that
+    # fails proves the verify path does not route through it.
+    live = _make_db(tmp_path / "hs.db", "old-live", version=1)
+    backup = _make_db(tmp_path / "b" / "backup.db", "from-backup", version=1)
+
+    def _forbidden(conn: object) -> None:
+        pytest.fail("restore must not run db.close (PRAGMA optimize) on the copy")
+
+    monkeypatch.setattr(db, "close", _forbidden)
+    restore_database(backup, live, KEY, target_version=1)
+    monkeypatch.undo()
+
+    assert _read_marker(live) == "from-backup"
 
 
 def test_restore_onto_new_machine_has_nothing_to_displace(tmp_path: Path) -> None:

@@ -205,3 +205,21 @@ class TestPermissionWarning:
         warnings: list[str] = []
         load_config(flag=cfg_file, env={}, warn=warnings.append)
         assert warnings == []
+
+
+def test_unreadable_config_is_a_clean_error(
+    tmp_path: Path, write_file: WriteFile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An I/O error reading an existing config surfaces as ConfigError (clean
+    # exit), not an uncaught OSError traceback (load_config_or_exit catches
+    # only ConfigError).
+    import tomllib
+
+    path = write_file(tmp_path / "config.toml", "config_version = 1\n")
+
+    def _boom(fh: object) -> dict[str, object]:
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(tomllib, "load", _boom)
+    with pytest.raises(ConfigError, match="could not read config file"):
+        load_config(flag=path)

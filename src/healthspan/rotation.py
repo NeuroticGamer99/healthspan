@@ -9,9 +9,12 @@ specifies. The staging order means no failure can leave the database
 encrypted under credentials no file on disk records.
 """
 
+import contextlib
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+import sqlcipher3
 
 from healthspan import db, keychain
 from healthspan.backup import create_verified_backup
@@ -132,6 +135,11 @@ def rotate_secret_key(
             old_secret_key=None,
             backup_database=backup_path,
         )
+    # No final kit for the outgoing key: two-factor rotate-secret-key keeps the
+    # same mode, and ADR-0028's non-retroactivity guidance is to RETAIN the
+    # existing kit (it still opens pre-rotation backups). The CLI message says
+    # so. Rendering a fresh old-key kit here is a convert-mode-only behavior
+    # (ADR-0028/ADR-0033); adding it to rotate would extend those ADRs.
     return RotationResult(
         mode=new_params.mode,
         new_secret_key=new_salt,
@@ -250,15 +258,34 @@ def _rekey(
         try:
             write_keyparams(pending, new_params)
             conn = db.connect(unlocked.database_path, unlocked.key)
-            try:
-                db.rekey(conn, new_key)
-            finally:
-                db.close(conn)
         except BaseException:
-            pending.unlink(missing_ok=True)  # nothing rekeyed; no trace
+            pending.unlink(missing_ok=True)  # nothing rekeyed yet; no trace
             raise
+        try:
+            db.rekey(conn, new_key)
+        except BaseException:
+            # rekey failed: the database still opens with the OLD credentials,
+            # so the pending sidecar (new params) records a state that never
+            # happened — remove it.
+            pending.unlink(missing_ok=True)
+            raise
+        finally:
+            _close_quietly(conn)
+        # rekey succeeded: the pending sidecar is now the ONLY on-disk record
+        # of the credentials the database is actually encrypted under. It must
+        # survive every failure from here (a Ctrl-C, a failed os.replace) so
+        # unlock()'s recovery hint can find it — never unlink it past this line.
         os.replace(pending, unlocked.sidecar)  # atomic same-directory swap
         return backup_path
     finally:
         unlocked.key.zeroize()
         new_key.zeroize()
+
+
+def _close_quietly(conn: sqlcipher3.Connection) -> None:
+    # After a successful rekey the connection close must not be able to raise
+    # into _rekey's cleanup (which would delete the pending sidecar) or mask
+    # the rekey; swallow its errors. A KeyboardInterrupt still propagates, but
+    # by then the pending sidecar is preserved and os.replace is the next line.
+    with contextlib.suppress(Exception):
+        db.close(conn)
