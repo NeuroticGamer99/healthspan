@@ -78,8 +78,14 @@ def test_mint_rejects_unknown_or_empty_scopes(conn: sqlcipher3.Connection) -> No
 
 def test_mint_rejects_duplicate_names(conn: sqlcipher3.Connection) -> None:
     tokens.mint_token(conn, "gui", {"read"})
-    with pytest.raises(tokens.TokenError, match="gui"):
+    with pytest.raises(tokens.DuplicateTokenError, match="gui"):
         tokens.mint_token(conn, "gui", {"read"})
+
+
+def test_mint_rejects_reserved_names(conn: sqlcipher3.Connection) -> None:
+    for name in ("invalid", "mcpclient"):
+        with pytest.raises(tokens.TokenError, match="reserved"):
+            tokens.mint_token(conn, name, {"read"})
 
 
 def test_revoke_refuses_the_last_live_admin_token(conn: sqlcipher3.Connection) -> None:

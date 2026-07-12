@@ -74,19 +74,18 @@ def create_token(request: Request, body: TokenCreateBody) -> dict[str, object]:
             set(body.scopes),
             publish_namespaces=tuple(body.publish_namespaces),
         )
+    except tokens.DuplicateTokenError as exc:
+        # The INSERT's UNIQUE constraint is the authoritative duplicate
+        # detector (no check-then-insert race); a validation TokenError
+        # raised before the INSERT falls through to the 400 below instead.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"token '{body.name}' already exists (a revoked name stays "
+                "reserved as its revocation record; rotate it to reissue)"
+            ),
+        ) from exc
     except tokens.TokenError as exc:
-        # Classify after the fact rather than check-then-insert: concurrent
-        # creates race a pre-check, and the INSERT's UNIQUE constraint is
-        # the authoritative duplicate detector either way.
-        if tokens.find_by_name(conn, body.name) is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"token '{body.name}' already exists (a revoked name "
-                    "stays reserved as its revocation record; rotate it to "
-                    "reissue)"
-                ),
-            ) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _log.info("token minted", name=body.name, scopes=sorted(set(body.scopes)))
     return {"name": body.name, "scopes": sorted(set(body.scopes)), "token": token}

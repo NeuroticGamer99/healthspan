@@ -6,6 +6,9 @@ audit rows, valid-credential bypass) is covered in test_api_auth.py.
 
 from typing import Any
 
+import pytest
+
+from healthspan import api_security
 from healthspan.api_security import (
     ADDRESS_THRESHOLD_MULTIPLIER,
     MAX_BUCKETS_PER_ADDRESS,
@@ -81,15 +84,20 @@ def test_name_cycling_trips_the_address_aggregate() -> None:
     assert limiter.register_failure("192.168.0.7", "fresh") is None
 
 
-def test_success_clears_the_bucket_and_releases_the_address_block() -> None:
-    limiter = AuthFailureRateLimiter(failure_threshold=1, clock=Clock())
-    for i in range(ADDRESS_THRESHOLD_MULTIPLIER + 1):
-        limiter.register_failure(ADDR, f"name-{i}")
-    assert limiter.register_failure(ADDR, "fresh") is not None  # aggregate armed
-    # One contributor recovers: its failures leave the aggregate, dropping
-    # the total back under the threshold — the address block releases too.
-    limiter.record_success(ADDR, "name-0")
-    assert limiter.register_failure(ADDR, "other") is None
+def test_a_success_never_clears_accumulated_failures() -> None:
+    # Security property (ADR-0051 §1): the advisory name is unauthenticated,
+    # so a legitimate success under a name must NOT drain the failures an
+    # attacker deposited under that same name (both share one loopback
+    # address). There is no clear-on-success path; decay is time-based only.
+    clock = Clock()
+    limiter = AuthFailureRateLimiter(failure_threshold=1, clock=clock)
+    limiter.register_failure(ADDR, "gui")
+    limiter.register_failure(ADDR, "gui")  # arms gui's bucket
+    assert limiter.register_failure(ADDR, "gui") is not None
+    # The limiter exposes no success hook to reset it — only reset() (admin)
+    # or the idle-prune decay can clear a bucket.
+    assert not hasattr(limiter, "record_success")
+    assert limiter.register_failure(ADDR, "gui") is not None  # still walled
 
 
 def test_bucket_count_per_address_is_capped() -> None:
@@ -100,6 +108,31 @@ def test_bucket_count_per_address_is_capped() -> None:
     # Overflow shares the `invalid` bucket instead of allocating new ones.
     assert len(state.buckets) <= MAX_BUCKETS_PER_ADDRESS + 1
     assert state.total_failures == MAX_BUCKETS_PER_ADDRESS + 50
+
+
+def test_overflow_failures_honor_the_shared_bucket_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Finding: a fresh name past the bucket cap reroutes into the shared
+    # 'invalid' bucket — and the reroute is resolved BEFORE the throttle
+    # check, so an overflowing attempt honors that bucket's armed window
+    # instead of slipping a free 401 through and then recording into it.
+    # A small cap and threshold=2 keep the aggregate (5x = 10) clear of the
+    # few failures used, isolating the per-bucket behavior.
+    monkeypatch.setattr(api_security, "MAX_BUCKETS_PER_ADDRESS", 2)
+    clock = Clock()
+    limiter = AuthFailureRateLimiter(
+        failure_threshold=2, max_backoff_seconds=60.0, clock=clock
+    )
+    for _ in range(3):  # 2 free, the 3rd arms 'invalid' to blocked_until=1.0
+        limiter.register_failure(ADDR, "invalid")
+    limiter.register_failure(ADDR, "filler")  # buckets now {invalid, filler} = cap
+    clock.now = 0.5  # inside 'invalid's armed window (aggregate total 4 < 10)
+    # A never-seen name overflows into the armed 'invalid' bucket and is
+    # throttled — pre-fix it returned None (a free 401) and extended the block.
+    retry = limiter.register_failure(ADDR, "brand-new")
+    assert retry is not None
+    assert retry == 0.5
 
 
 def test_idle_buckets_are_pruned_for_a_clean_slate() -> None:

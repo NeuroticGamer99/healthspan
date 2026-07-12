@@ -142,9 +142,19 @@ class AuthFailureRateLimiter:
     ``Retry-After`` is honest, a client that honors it escapes once the
     window serves out, and hammering a 429 neither doubles the backoff nor
     grows memory. State is bounded (name truncation, per-address bucket cap
-    with overflow into the ``invalid`` bucket) and idle buckets are pruned
-    after :data:`PRUNE_IDLE_SECONDS` — the decay that gives a client that
-    stopped failing a clean slate.
+    with overflow into the ``invalid`` bucket).
+
+    **Decay is time-based only.** Buckets idle past
+    :data:`PRUNE_IDLE_SECONDS` are pruned; there is deliberately no
+    clear-on-success path. The advisory name is attacker-suppliable
+    (ADR-0026 rule 2), so a bucket's ownership is unauthenticated — letting
+    a legitimate success drain the failures accumulated under its name would
+    let a co-resident attacker (every loopback client shares one address)
+    launder brute-force attempts against a live token's name through that
+    token's ordinary traffic, defeating the wall ADR-0026 rule 1 promises
+    against localhost. A valid credential is never throttled regardless
+    (the limiter is consulted only on the failure path), so there is nothing
+    it needs to clear.
 
     State is in-memory and deliberately unpersisted (ADR-0051): the cap
     bounds a misconfigured client's recovery, a restart clears everything,
@@ -179,16 +189,25 @@ class AuthFailureRateLimiter:
         with self._lock:
             self._maybe_sweep(now)
             state = self._addresses.setdefault(address, _AddressState())
+            # Resolve the effective bucket — including the overflow reroute —
+            # *before* the throttle check, so the check honors the armed
+            # window of the bucket the failure will actually land in (a fresh
+            # name past the cap is throttled by the shared `invalid` bucket,
+            # not waved through and then recorded into it).
+            if (
+                name not in state.buckets
+                and len(state.buckets) >= MAX_BUCKETS_PER_ADDRESS
+            ):
+                name = tokens.INVALID_NAME  # overflow shares one bucket
             bucket = state.buckets.get(name)
             blocked_until = max(
                 state.blocked_until, bucket.blocked_until if bucket else 0.0
             )
             if blocked_until > now:
-                # Throttled: report the honest remainder; never extend.
+                # Throttled: report the honest remainder; never record or
+                # extend (the invariant the whole class turns on).
                 return blocked_until - now
             if bucket is None:
-                if len(state.buckets) >= MAX_BUCKETS_PER_ADDRESS:
-                    name = tokens.INVALID_NAME  # overflow shares one bucket
                 bucket = state.buckets.setdefault(name, _FailureBucket())
             bucket.failures += 1
             bucket.last_failure = now
@@ -201,30 +220,6 @@ class AuthFailureRateLimiter:
             if delay > 0:
                 state.blocked_until = max(state.blocked_until, now + delay)
             return None
-
-    def record_success(self, address: str, name: str) -> None:
-        """Clear the bucket a now-valid credential was failing in (rule 1).
-
-        The cleared failures also leave the address aggregate — and if that
-        drops the total back under the aggregate threshold, an armed
-        address-wide block is released with it, so a recovered client stops
-        penalizing its neighbors at the same address.
-        """
-        if not self._addresses:  # lock-free fast path for the common case
-            return
-        with self._lock:
-            state = self._addresses.get(address)
-            if state is None:
-                return
-            bucket = state.buckets.pop(name[:BUCKET_NAME_MAX_CHARS], None)
-            if bucket is None:
-                return
-            state.total_failures -= bucket.failures
-            aggregate_threshold = self._threshold * ADDRESS_THRESHOLD_MULTIPLIER
-            if state.total_failures <= aggregate_threshold:
-                state.blocked_until = 0.0
-            if not state.buckets:
-                del self._addresses[address]
 
     def reset(self) -> None:
         """Clear all limiter state (``auth reset-limits``, ADR-0026 rule 4)."""
@@ -278,9 +273,10 @@ class _ScopedRequirement(ScopeRequirement):
 
         if record is None or record.revoked:
             self._deny_failure(conn, limiter, presented, record, source_addr, request)
-        # A valid credential is never throttled (ADR-0026 rule 1); its bucket
-        # clears so a client recovering from a stale token starts clean.
-        limiter.record_success(source_addr, record.name)
+        # A valid credential is never throttled (ADR-0026 rule 1) — the limiter
+        # is consulted only on the failure path above, so a success needs no
+        # interaction with it (and must not clear an attacker's failures under
+        # this token's advisory name; see AuthFailureRateLimiter).
         if self.scope not in record.scopes:
             tokens.record_outcome(
                 conn,
