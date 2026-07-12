@@ -39,7 +39,15 @@ def compile_manifest_pattern(manifest: set[str]) -> re.Pattern[str] | None:
         if _DECIMAL_SHAPE.fullmatch(value):
             parts.append(rf"(?<!\d){escaped}(?!\d)")
         else:
-            parts.append(rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_.-])")
+            # Reject a match only when the token genuinely CONTINUES into a
+            # longer token — another token char (`[A-Za-z0-9_-]`) or a dotted
+            # component (`.x`). A trailing sentence period or dash is a
+            # boundary, not a continuation, so a leaked token at a sentence end
+            # ("...CANARY-foo.") must still hit. A longer real token is caught
+            # by its own (longer, tried-first) manifest entry.
+            parts.append(
+                rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_-])"
+            )
     return re.compile("|".join(parts))
 
 

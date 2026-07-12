@@ -14,10 +14,14 @@ from pathlib import Path
 
 import sqlcipher3
 
-from healthspan import db
+from healthspan import db, paths
 from healthspan.fsperm import set_owner_only
 from healthspan.kdf import DbKey
 from healthspan.keyparams import SIDECAR_SUFFIX, sidecar_path
+
+# Published backups are "<prefix><stamp>.db"; the prefix derives from the
+# one app-name source (ADR-0046) so writer and reader can never drift.
+_BACKUP_PREFIX = f"{paths.APP_NAME}-"
 
 
 class BackupError(Exception):
@@ -71,24 +75,38 @@ def create_verified_backup(
 
     final_db = backup_dir / f"{stem}.db"
     final_sidecar = backup_dir / f"{stem}.db{SIDECAR_SUFFIX}"
-    partial_db.rename(final_db)
+    # Publish the sidecar first: list_backups keys on the ``.db`` file, so a
+    # crash between these two renames can never surface a database without its
+    # sidecar (it would surface as a sidecar without a database, which
+    # list_backups ignores). The pair check there is the belt to this braces.
     partial_sidecar.rename(final_sidecar)
-    set_owner_only(final_db)
+    partial_db.rename(final_db)
     set_owner_only(final_sidecar)
+    set_owner_only(final_db)
     return BackupResult(database=final_db, sidecar=final_sidecar)
 
 
 def list_backups(backup_dir: Path) -> list[Path]:
     """Published backup database files in the directory, oldest first.
 
-    A published backup is a ``healthspan-<stamp>.db`` file; the timestamped
-    stem sorts chronologically, so a name sort is a time sort. ``.partial``
-    files (a run in flight or a crashed one) and the ``.keyparams`` sidecars
-    are excluded — only fully published database files are returned.
+    A published backup is a ``<prefix><stamp>.db`` file *paired with* its
+    ``.keyparams`` sidecar — a database without a sidecar (a crash between the
+    two publish renames, or a half-pruned pair) is not restorable, so it is
+    not returned. Order is chronological by ``(stamp, collision counter)``:
+    a plain name sort is *not* a time sort, because a same-second collision
+    suffix (``-2``) sorts lexically before the un-suffixed ``.db`` (``-`` <
+    ``.``), which would invert oldest/newest.
     """
     if not backup_dir.is_dir():
         return []
-    return sorted(p for p in backup_dir.glob("healthspan-*.db") if p.is_file())
+    return sorted(
+        (
+            p
+            for p in backup_dir.glob(f"{_BACKUP_PREFIX}*.db")
+            if p.is_file() and sidecar_path(p).is_file()
+        ),
+        key=_backup_order,
+    )
 
 
 def latest_backup(backup_dir: Path) -> Path:
@@ -123,13 +141,26 @@ def prune_backups(backup_dir: Path, retention_count: int) -> list[Path]:
 
 
 def _backup_stem(backup_dir: Path) -> str:
-    base = datetime.now(UTC).strftime("healthspan-%Y%m%dT%H%M%SZ")
+    base = datetime.now(UTC).strftime(f"{_BACKUP_PREFIX}%Y%m%dT%H%M%SZ")
     stem = base
     n = 1
     while any(backup_dir.glob(f"{stem}.db*")):
         n += 1
         stem = f"{base}-{n}"
     return stem
+
+
+def _backup_order(path: Path) -> tuple[str, int]:
+    """Chronological sort key for a published backup database file.
+
+    The stem is ``<stamp>`` or ``<stamp>-<n>`` (the collision counter); the
+    UTC stamp carries no dashes, so ``partition('-')`` splits them cleanly.
+    The un-suffixed first-of-the-second is counter 1, sorting before its
+    ``-2`` sibling — the ordering a plain string sort gets backwards.
+    """
+    stem = path.name[len(_BACKUP_PREFIX) : -len(".db")]
+    stamp, _, counter = stem.partition("-")
+    return (stamp, int(counter) if counter.isdigit() else 1)
 
 
 def _copy_database(database_path: Path, key: DbKey, target_path: Path) -> int | None:

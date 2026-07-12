@@ -92,17 +92,15 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
                 "they hold no data)."
             )
 
-    _ensure_config_file(cfg)
-
     if mode is KeyMode.TWO_FACTOR:
         secret_key: bytes | None = generate_secret_key()
         salt = secret_key
         params = KeyParams(mode=mode, created_utc=utc_now_iso())
-        # Store BEFORE creating files: if the keychain is unavailable, init
-        # aborts with nothing on disk. The reverse order could create an
-        # encrypted database whose secret key was never stored or shown.
-        # An orphaned entry from a later failure is harmless - the next
-        # successful init overwrites it.
+        # Store BEFORE writing ANY file (config, database, sidecar): if the
+        # keychain is unavailable, init aborts with nothing on disk. The
+        # reverse order could create an encrypted database whose secret key
+        # was never stored or shown. An orphaned entry from a later failure is
+        # harmless - the next successful init overwrites it.
         keychain.store_secret_key(secret_key)
     else:
         secret_key = None
@@ -110,13 +108,15 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
         params = KeyParams(mode=mode, salt=salt, created_utc=utc_now_iso())
 
     key = derive_db_key(passphrase, salt, params)
+    config_created = False
     try:
+        config_created = _ensure_config_file(cfg)
         db.provision(database_path, key)
         write_keyparams(sidecar, params)
     except BaseException:
         # The database is empty at this point; removing the partial files
-        # is safe and leaves init re-runnable instead of wedged on the
-        # "already exists" guard.
+        # (and a config file this call created) is safe and leaves init
+        # re-runnable instead of wedged on the "already exists" guard.
         for leftover in (
             sidecar,
             database_path,
@@ -124,6 +124,8 @@ def initialize(cfg: Config, passphrase: str, mode: KeyMode) -> InitResult:
             database_path.with_name(database_path.name + "-shm"),
         ):
             leftover.unlink(missing_ok=True)
+        if config_created:
+            cfg.path.unlink(missing_ok=True)
         raise
     finally:
         key.zeroize()

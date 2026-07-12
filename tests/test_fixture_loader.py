@@ -53,6 +53,16 @@ def test_unexpected_file_type_fails_loudly(tmp_path: Path) -> None:
         fl.parse_fixtures(tmp_path)
 
 
+def test_os_metadata_files_are_ignored_not_failed(tmp_path: Path) -> None:
+    # Incidental OS/VCS artifacts must not break the canary gate (a spurious
+    # CI failure unrelated to logs), while a genuine stray file still fails.
+    _write(tmp_path, "lab.json", '{"lab_results": [{"notes": "CANARY-x"}]}')
+    (tmp_path / ".DS_Store").write_bytes(b"\x00\x01")
+    (tmp_path / "Thumbs.db").write_bytes(b"\x00")
+    (tmp_path / ".gitkeep").write_text("", encoding="utf-8")
+    assert fl.build_manifest(tmp_path) == {"CANARY-x"}
+
+
 def test_unknown_table_fails_loudly(tmp_path: Path) -> None:
     _write(tmp_path, "bad.json", '{"not_a_table": [{"id": 1}]}')
     with pytest.raises(fl.FixtureError, match="unknown table"):

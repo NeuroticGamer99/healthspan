@@ -17,6 +17,7 @@ supervision in a later phase; in Phase 1 the CLI is the sole database
 opener, so restore runs without it.
 """
 
+import contextlib
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -137,7 +138,10 @@ def _verify_copy(copy_path: Path, key: DbKey) -> int | None:
             raise RestoreError("the backup failed PRAGMA foreign_key_check")
         return db.schema_version(conn)
     finally:
-        db.close(conn)
+        # Plain close, not db.close(): db.close runs PRAGMA optimize, a write,
+        # which would mutate the just-verified copy before it is installed —
+        # the installed bytes must be exactly the bytes verified.
+        conn.close()
 
 
 def _check_version_policy(
@@ -175,18 +179,42 @@ def _install(
     companions move together to ``<name>.pre-restore-<stamp>`` — a stale
     ``-wal`` must never pair with the restored file. On a brand-new machine
     there is nothing to displace and ``displaced`` is ``None``.
+
+    The two renames are not one atomic operation, so a failure between them
+    (a transient lock on the sidecar target, say) would leave the live
+    database installed without its sidecar — unopenable. On any failure we
+    roll the displaced originals back so the live file is genuinely
+    untouched (the ADR-0038 guarantee); the backup source is intact for a
+    re-run.
     """
-    displaced = _displace_live(live_database_path)
-    restoring_db.replace(live_database_path)
-    restoring_sidecar.replace(sidecar_path(live_database_path))
+    live_sidecar = sidecar_path(live_database_path)
+    moves = _displace_live(live_database_path)
+    try:
+        restoring_db.replace(live_database_path)
+        restoring_sidecar.replace(live_sidecar)
+    except BaseException:
+        _rollback_displacement(moves)
+        # Clear the restoring-copy leftovers (restoring_db may already have
+        # been consumed by its own replace before the failure) so a failed
+        # install leaves no ``.restoring`` files behind, like the copy/verify
+        # stage's cleanup does.
+        restoring_db.unlink(missing_ok=True)
+        restoring_sidecar.unlink(missing_ok=True)
+        raise
     set_owner_only(live_database_path)
-    set_owner_only(sidecar_path(live_database_path))
-    return displaced
+    set_owner_only(live_sidecar)
+    return next(
+        (aside for original, aside in moves if original == live_database_path),
+        None,
+    )
 
 
-def _displace_live(live_database_path: Path) -> Path | None:
-    if not live_database_path.exists():
-        return None
+def _displace_live(live_database_path: Path) -> list[tuple[Path, Path]]:
+    """Move the live database and its companions aside.
+
+    Returns the ``(original, aside)`` moves in application order so
+    :func:`_rollback_displacement` can reverse them if the install fails.
+    """
     suffix = _pre_restore_suffix(live_database_path)
     companions = [
         live_database_path,
@@ -194,15 +222,24 @@ def _displace_live(live_database_path: Path) -> Path | None:
         live_database_path.with_name(live_database_path.name + "-wal"),
         live_database_path.with_name(live_database_path.name + "-shm"),
     ]
-    displaced_db: Path | None = None
+    moves: list[tuple[Path, Path]] = []
     for companion in companions:
         if not companion.exists():
             continue
         target = companion.with_name(companion.name + suffix)
         companion.replace(target)
-        if companion == live_database_path:
-            displaced_db = target
-    return displaced_db
+        moves.append((companion, target))
+    return moves
+
+
+def _rollback_displacement(moves: list[tuple[Path, Path]]) -> None:
+    # Reverse the aside-renames; ``replace`` overwrites a partially installed
+    # live file with its original. Best-effort — a rollback failure must not
+    # mask the original install error, and the aside files are never deleted,
+    # so a manual recovery always remains possible.
+    for original, aside in reversed(moves):
+        with contextlib.suppress(OSError):
+            aside.replace(original)
 
 
 def _pre_restore_suffix(live_database_path: Path) -> str:

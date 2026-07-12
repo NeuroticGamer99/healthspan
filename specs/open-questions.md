@@ -42,6 +42,9 @@ Narrowed by [ADR-0030](adr/0030-biomarker-identity.md): incoming LOINC codes res
 **Biomarker category taxonomy**
 The `biomarkers` table has a `category` column (lipids, metabolic, thyroid, hormones, inflammation, etc.). This taxonomy should be defined and documented before bulk data entry begins so categories are consistent across sources.
 
+**Additive `ALTER TABLE` migrations must recreate the affected `*_current` view ([data-model.md](data-model.md), [ADR-0027](adr/0027-audit-trail-and-corrections.md))**
+The migration-0001 `*_current` views are `SELECT * FROM <table> WHERE superseded_by IS NULL`, and SQLite binds `SELECT *` to the base table's columns at `CREATE VIEW` time. A later migration that does `ALTER TABLE … ADD COLUMN` will therefore not surface the new column through the current-state view until the view is dropped and recreated. Convention to adopt when the first additive migration lands: any migration adding a column to a content table also `DROP VIEW`/`CREATE VIEW`s that table's `*_current` view (and a schema-integrity test asserts the view column set matches the base table). Trigger: the first `ALTER TABLE ADD COLUMN` migration (the header of `0001_initial_schema.sql` anticipates these for `import_batches`/`jobs`). Surfaced by the 2026-07-11 end-of-Phase-1 holistic review.
+
 ~~**Clinical documents — full-text search strategy**~~ → Resolved (FTS5 external-content over `body`) — see Resolved section and [ADR-0041](adr/0041-clinical-document-fts.md).
 
 **Subjective observation vocabulary ([data-model.md](data-model.md), Subjective Observations)**
@@ -109,6 +112,9 @@ WI-2 shipped kit rendering as terminal display plus explicit `--output` file (AD
 
 **`db backup` / `db restore` exclusive-access enforcement ([ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md))**
 WI-4 shipped the offline `healthspan db backup` (verify-then-publish + retention pruning) and `healthspan db restore` (verify-then-install) CLI commands and the verified-backup/verify pipelines they run. ADR-0038 requires both to *refuse while Core Service is up*, and `db restore` to hold the ADR-0042 advisory lock on `<database-path>.lock` for its duration. Neither guard ships in Phase 1: there is no Core Service to detect and no launcher lock yet (both ADR-0042 machinery), and in Phase 1 the CLI is the sole database opener, so exclusivity holds by construction. Trigger: single-instance locking / Core Service startup implementation (Phase 2) — the `.lock` acquisition and the service-up refusal land with ADR-0042's advisory lock. Also then: the in-service scheduled `backup.database` job (ADR-0038's scheduled producer), of which the WI-4 CLI is the offline counterpart.
+
+**Rekey crash-durability barrier ([ADR-0028](adr/0028-key-derivation-and-rotation.md), [ADR-0047](adr/0047-crypto-surface-implementation-decisions.md))**
+`_rekey` preserves the `.pending` sidecar once `db.rekey` has succeeded, so an interrupted rotation is *recoverable* — `unlock()` detects the stray `.pending` and guides the fix (ADR-0047 §7). Full crash-*consistency* — an `fsync` of the rekeyed database pages before, and of the directory after, the `os.replace(pending, sidecar)`, under `synchronous=NORMAL` WAL — is not yet enforced, so a power loss in the narrow window between the sidecar install and the pages reaching disk could still require the pending-file recovery rather than opening cleanly. Deferred: a correct barrier needs crash-injection testing and is platform-nuanced. Trigger: the process-supervision / durability hardening pass (Phase 2+, alongside the ADR-0042 lock). Surfaced by the 2026-07-11 end-of-Phase-1 holistic review.
 
 ---
 

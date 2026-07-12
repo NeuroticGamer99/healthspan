@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 import pytest
+import sqlcipher3
 
 from healthspan import db, keychain, rotation
 from healthspan.config import Config
@@ -100,6 +101,9 @@ def test_rotate_secret_key_two_factor_replaces_keychain_and_data_survives(
     assert result.new_secret_key is not None
     assert result.new_secret_key != secret_before
     assert keychain.load_secret_key() == result.new_secret_key
+    # No fresh old-key kit (unlike convert-mode): the user retains their
+    # existing kit for pre-rotation backups (ADR-0028 non-retroactivity).
+    assert result.old_secret_key is None
     _open_with(cfg, PASSPHRASE, expect_row=True)
 
 
@@ -172,6 +176,41 @@ def test_failed_backup_aborts_rekey_leaving_database_unchanged(
         rotation.change_passphrase(cfg, unlocked, "would-be new passphrase")
     assert sidecar_path(cfg.database.path).read_bytes() == sidecar_before
     _open_with(cfg, PASSPHRASE)  # old credentials still open the live file
+
+
+def test_rekey_survives_a_close_failure_after_a_successful_rekey(
+    make_config: Callable[[], Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-fix bug: ``db.rekey`` + ``db.close`` sat under one
+    ``except BaseException: pending.unlink()``, so a connection-close failure
+    AFTER a successful rekey deleted the pending sidecar and stranded the
+    database (rekeyed, but with the sidecar still recording the old params and
+    no ``.pending`` recovery hint). The fix must swallow that close failure —
+    the rekey already succeeded — and complete the sidecar install."""
+    cfg = make_config()
+    initialize(cfg, PASSPHRASE, KeyMode.PASSPHRASE_ONLY)
+    _seed_row(cfg, PASSPHRASE)
+    unlocked = rotation.unlock(cfg, PASSPHRASE)  # real db.close runs here
+    sidecar = sidecar_path(cfg.database.path)
+    pending = sidecar.with_name(sidecar.name + ".pending")
+    new_pass = "an entirely different passphrase"
+
+    real_close = db.close
+
+    def _close_then_fail(conn: sqlcipher3.Connection) -> None:
+        real_close(conn)  # do the real close, THEN signal a failure
+        raise RuntimeError("simulated close failure after a successful rekey")
+
+    monkeypatch.setattr(db, "close", _close_then_fail)
+    # Must NOT raise: pre-fix this propagated and deleted the pending sidecar;
+    # the fix installs the sidecar and completes the rotation.
+    rotation.change_passphrase(cfg, unlocked, new_pass, backup=False)
+    monkeypatch.undo()
+
+    assert not pending.exists()  # no stranded pending file
+    _open_with(cfg, new_pass)  # the NEW passphrase opens the rekeyed database
+    with pytest.raises(rotation.RotationError):  # the OLD one no longer does
+        rotation.unlock(cfg, PASSPHRASE)
 
 
 def test_rotation_without_backup_skips_backup_dir(

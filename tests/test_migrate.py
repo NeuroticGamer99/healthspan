@@ -226,6 +226,23 @@ def test_broken_migration_leaves_predecessors_and_recovers(tmp_path: Path) -> No
         db.close(conn)
 
 
+def test_apply_migrations_refuses_a_newer_schema_than_shipped(tmp_path: Path) -> None:
+    """A database migrated by a newer build must be refused, not silently
+    reported as up to date at a version this build cannot understand."""
+    path = _provisioned(tmp_path)
+    migrate.migrate_database(path, KEY)  # brings it to the real version 1
+    conn = db.connect_for_migration(path, KEY)
+    try:
+        conn.execute(
+            "INSERT INTO schema_version (version, filename, applied_at) "
+            "VALUES (99, '0099_from_the_future.sql', '2099-01-01T00:00:00Z')"
+        )
+        with pytest.raises(migrate.MigrationError, match="newer than this build"):
+            migrate.apply_migrations(conn, migrate.discover_migrations())
+    finally:
+        db.close(conn)
+
+
 def test_migrate_missing_database_fails(tmp_path: Path) -> None:
     with pytest.raises(db.DatabaseError, match="does not exist"):
         migrate.migrate_database(tmp_path / "absent.db", KEY)

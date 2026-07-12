@@ -43,6 +43,26 @@ def test_backup_creates_verified_pair(initialized: Path) -> None:
     assert len(list_backups(backup_dir)) == 1
 
 
+def test_backup_permission_error_is_reported_cleanly(
+    initialized: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # backup calls fsperm.set_owner_only, which raises PermissionSetError
+    # (subclasses Exception, not OSError) on a Windows icacls failure. cli_db's
+    # _run must catch it and exit cleanly, not surface a raw traceback.
+    from healthspan import backup as backup_mod
+    from healthspan.fsperm import PermissionSetError
+
+    def _deny(path: Path) -> None:
+        raise PermissionSetError("simulated ACL failure")
+
+    monkeypatch.setattr(backup_mod, "set_owner_only", _deny)
+    result = _backup(initialized)
+    assert result.exit_code == 1
+    assert "error:" in result.output
+    assert "simulated ACL failure" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_backup_prunes_beyond_retention(initialized: Path) -> None:
     _backup(initialized)
     _backup(initialized)

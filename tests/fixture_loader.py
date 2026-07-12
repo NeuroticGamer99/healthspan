@@ -40,6 +40,12 @@ if TYPE_CHECKING:
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 FIXTURE_SUFFIX = ".json"
+# Incidental OS/VCS metadata that tools drop into any directory; tolerated
+# (skipped) rather than failing the canary gate, while a genuinely unexpected
+# file still fails loudly (no silent skip of a real fixture).
+_IGNORED_FILENAMES = frozenset(
+    {".ds_store", "thumbs.db", "desktop.ini", ".gitkeep", ".gitignore"}
+)
 
 # Embedded canary tokens in text health fields. Same shape the scanner anchors
 # on: interior dots allowed, never leading/trailing (so a sentence-final
@@ -157,6 +163,8 @@ def parse_fixtures(fixtures_dir: Path | None = None) -> Fixtures:
     for path in sorted(fixtures_dir.rglob("*")):
         if not path.is_file():
             continue
+        if path.name.lower() in _IGNORED_FILENAMES:
+            continue  # incidental OS/VCS metadata, never a fixture
         if path.suffix != FIXTURE_SUFFIX:
             msg = (
                 f"unexpected non-fixture file under {fixtures_dir}: {path} "

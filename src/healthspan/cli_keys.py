@@ -92,6 +92,29 @@ def _echo_keychain_warning(warning: str | None) -> None:
         typer.echo(f"WARNING: {warning}", err=True)
 
 
+def _offer_final_old_kit(old_secret_key: bytes, output: Path | None) -> None:
+    """Offer a final Recovery Kit for a retired secret key (ADR-0028).
+
+    Old backups remain two-factor ciphertext requiring the outgoing key. The
+    rotation/conversion is already committed, so an unanswered prompt (EOF in
+    a scripted run) must default to SHOWING the kit — never silently discard
+    the last copy of a key that still opens existing backups.
+    """
+    typer.echo(
+        "Old backups are still two-factor ciphertext requiring the previous "
+        "secret key, which is no longer in the keychain."
+    )
+    try:
+        render_final = typer.confirm(
+            "Render a final Recovery Kit for the OLD secret key?", default=True
+        )
+    except typer.Abort:
+        typer.echo("(no answer; rendering the final kit for safety)")
+        render_final = True
+    if render_final:
+        _echo_kit(old_secret_key, output)
+
+
 def _announce_backup(backup_database: Path | None, skipped: bool) -> None:
     if skipped:
         typer.echo(
@@ -159,8 +182,10 @@ def keys_rotate_secret_key(
     unlocked = _unlock_or_exit(cfg, passphrase)
     if unlocked.params.mode is KeyMode.TWO_FACTOR:
         typer.echo(
-            "This generates a new secret key and a new Recovery Kit. "
-            "Every previously printed kit becomes INVALID."
+            "This generates a new secret key and a new Recovery Kit. Keep your "
+            "current kit too: its secret key stops opening the live database, "
+            "but still opens backups made before this rotation (ADR-0028 "
+            "non-retroactivity)."
         )
         typer.confirm("Continue?", default=False, abort=True)
     result = _run(
@@ -222,22 +247,7 @@ def keys_convert_mode(
     if result.new_secret_key is not None:
         _echo_kit(result.new_secret_key, output)
     if result.old_secret_key is not None:
-        typer.echo(
-            "Old backups are still two-factor ciphertext requiring the "
-            "outgoing secret key, which has been removed from the keychain."
-        )
-        # The conversion is already committed; an unanswered prompt (EOF in
-        # a scripted run) must not discard the old key - default to showing.
-        try:
-            render_final = typer.confirm(
-                "Render a final Recovery Kit for the OLD secret key?",
-                default=True,
-            )
-        except typer.Abort:
-            typer.echo("(no answer; rendering the final kit for safety)")
-            render_final = True
-        if render_final:
-            _echo_kit(result.old_secret_key, output)
+        _offer_final_old_kit(result.old_secret_key, output)
     typer.echo(_NON_RETROACTIVITY_WARNING)
 
 
@@ -264,7 +274,9 @@ def _init_restore(cfg: Config, key_from_passphrase: bool) -> None:
             "backups carry their salt in the sidecar."
         )
     typer.echo("Restoring two-factor credentials from your Recovery Kit.")
-    secret_key_text = typer.prompt("Secret key from the Recovery Kit (Base32)")
+    secret_key_text = typer.prompt(
+        "Secret key from the Recovery Kit (Base32)", hide_input=True
+    )
     result = _run(lambda: restore_credentials(cfg, secret_key_text))
     if result.replaced_existing:
         typer.echo("warning: an existing secret key in the keychain was replaced.")
@@ -305,6 +317,11 @@ def init_command(
     """Initialize Healthspan: credentials, encrypted database, sidecar."""
     cfg = load_config_or_exit(ctx)
     if restore:
+        if output is not None:
+            raise fail(
+                "--output has no effect with --restore: restore stores an "
+                "existing key, it renders no new Recovery Kit."
+            )
         _init_restore(cfg, key_from_passphrase)
         return
     mode = KeyMode.PASSPHRASE_ONLY if key_from_passphrase else KeyMode.TWO_FACTOR

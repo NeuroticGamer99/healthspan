@@ -9,6 +9,7 @@ choice, written to a warned-about file.
 """
 
 import io
+import os
 from pathlib import Path
 
 import qrcode
@@ -81,7 +82,14 @@ def write_kit(secret_key: bytes, output: Path) -> Path:
     """Write a deliberate digital copy (ADR-0033 ``--output`` pathway)."""
     if output.is_dir():
         output = output / default_kit_filename()
-    output.write_text(render_kit(secret_key), encoding="utf-8")
+    # Create owner-only from the first byte: this is the one file that holds
+    # the secret key in plaintext, so it must never exist even briefly under
+    # the umask's default (world/group-readable) mode. POSIX honors the 0o600
+    # at open(); Windows ignores it, so set_owner_only applies its ACLs
+    # immediately after the content is written.
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(render_kit(secret_key))
     set_owner_only(output)
     return output
 

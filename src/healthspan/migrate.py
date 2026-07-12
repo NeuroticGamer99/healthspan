@@ -148,6 +148,18 @@ def apply_migrations(
     """
     _ensure_schema_version(conn)
     already = _applied_versions(conn)
+    shipped_max = max((m.version for m in migrations), default=0)
+    applied_max = max(already, default=0)
+    if applied_max > shipped_max:
+        # A database migrated by a newer build: applying nothing and reporting
+        # the unknown version as current would let later code run against a
+        # schema it does not understand (the restore path refuses this; the
+        # runner must too).
+        raise MigrationError(
+            f"database is at schema version {applied_max}, newer than this "
+            f"build understands (it ships up to schema version {shipped_max}). "
+            "Upgrade healthspan before running migrations."
+        )
     applied: list[int] = []
     for migration in sorted(migrations, key=lambda m: m.version):
         if migration.version in already:

@@ -155,7 +155,10 @@ def _check_permissions(path: Path, warn: Callable[[str], None]) -> None:
     # writer side (`init`) owns setting owner-only ACLs there.
     if os.name != "posix":
         return
-    mode = path.stat().st_mode
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return  # an unreadable stat is not fatal here; _load_toml surfaces it
     if mode & 0o077:
         warn(
             f"config file {path} is accessible beyond its owner "
@@ -169,6 +172,10 @@ def _load_toml(path: Path) -> dict[str, Any]:
             return tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: invalid TOML: {exc}") from exc
+    except OSError as exc:
+        # Unreadable file, a directory at the config path, a transient I/O
+        # error: a clean ConfigError, not an uncaught traceback.
+        raise ConfigError(f"{path}: could not read config file: {exc}") from exc
 
 
 def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
