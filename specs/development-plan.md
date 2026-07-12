@@ -52,7 +52,7 @@ Everything below the API line, exercisable entirely through the CLI — `healths
 
 The FastAPI Core Service, smallest useful surface:
 
-- Startup sequence and passphrase handoff ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)); single-instance locking ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)). The launcher stays minimal in this phase (foreground execution); full supervision arrives with Phase 6.
+- Startup sequence and passphrase handoff ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)); single-instance locking ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)). This phase ships **direct-start only** (`healthspan service start`, foreground) — with a single Core Service process there is nothing for a launcher to orchestrate. The launcher (ADR-0039's migration ownership + passphrase-over-stdin handoff) arrives in Phase 4 with the MCP Server, the second process; full supervision and full-auto-unlock arrive with Phase 6 ([ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)).
 - Named scoped token authentication ([ADR-0026](adr/0026-named-scoped-tokens.md)).
 - Health and liveness endpoints ([ADR-0040](adr/0040-health-endpoint-authentication.md)); structured logging and metrics per [observability.md](observability.md) — the CI log canary gets real material here.
 - The **bulk import endpoint** ([ADR-0004](adr/0004-data-ingestion-strategy.md)): full-batch validation, dry-run, atomic transactions, audit row in the same transaction ([ADR-0027](adr/0027-audit-trail-and-corrections.md)).
@@ -75,6 +75,7 @@ The FastAPI Core Service, smallest useful surface:
 
 ## Phase 4 — AI surface: events, jobs, MCP
 
+- The **launcher** ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md), [ADR-0008](adr/0008-process-lifecycle.md)): the second process (the MCP Server) is the first thing worth orchestrating, so the launcher lands here — it owns migration execution, hands the passphrase to Core Service over stdin, and starts the stack in health-gated dependency order ([observability.md](observability.md)). Phase 2 shipped direct-start (`healthspan service start`) instead; full supervision (restart-with-backoff, circuit breaker) and full-auto-unlock are deferred to Phase 6 ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md), [ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)).
 - Event bus and SSE stream ([ADR-0011](adr/0011-event-bus.md)).
 - Job abstraction ([ADR-0012](adr/0012-job-abstraction.md)); imports become jobs ([ADR-0025](adr/0025-plugin-host-process-matrix.md)).
 - MCP server: fastmcp, Streamable HTTP ([ADR-0007](adr/0007-mcp-transport.md), [ADR-0029](adr/0029-mcp-streamable-http.md)), implementing the full **tool output contract** already specified in [api-reference.md](api-reference.md) — censoring fidelity, structured output, pagination caps, instruction-shielded free text.

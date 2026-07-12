@@ -15,6 +15,7 @@ from healthspan.config import (
     ConfigSource,
     DatabaseConfig,
     LoggingConfig,
+    ServiceConfig,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -65,6 +66,7 @@ def make_config(tmp_path: Path) -> Callable[[], Config]:
                 directory=tmp_path / "backups", schedule="daily", retention_count=14
             ),
             logging=LoggingConfig(level="INFO"),
+            service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
             path=tmp_path / "config.toml",
             source=ConfigSource.FLAG,
             loaded_from_file=True,

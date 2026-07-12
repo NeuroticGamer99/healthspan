@@ -55,6 +55,8 @@ Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-e
 | `GET /v1/metrics` | `monitor` — request counts, status histogram, job counts |
 | `POST /v1/system/process-reports` | `supervise` — launcher supervision reports, from which the Core Service emits the reserved `system.process.*`/`system.core.restarted` events ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)) |
 
+**Implemented:** `GET /v1/health` landed in Phase 2 WI-1 ([ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)) exactly as specified — a `{"status": …}` body and nothing else, answered from a cached readiness flag (no database query, [ADR-0037](adr/0037-core-service-concurrency-and-driver.md)), and carrying the per-source-address liveness rate cap (30 req/s, `429` beyond) the exemption requires ([ADR-0040](adr/0040-health-endpoint-authentication.md)). It is the platform's single `public` route, enforced at app assembly. `GET /v1/health/detail`, `GET /v1/metrics` (both `monitor`, WI-2), and `POST /v1/system/process-reports` (`supervise`, Phase 6 supervision) are not yet implemented.
+
 ### Reference data
 Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.
 

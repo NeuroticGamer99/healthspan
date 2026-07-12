@@ -155,6 +155,11 @@ path = {db_path}
 
 # [logging]
 # level = "INFO"
+
+# [service]
+# host = "127.0.0.1"
+# port = 8464
+# passphrase_file = "/path/to/os-secret/passphrase"
 """
 
 
