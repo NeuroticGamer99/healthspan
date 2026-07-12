@@ -11,6 +11,7 @@ license = "MIT"
 dependencies = [
     "argon2-cffi>=25.1.0",
     "fastapi>=0.139.0",
+    "httpx>=0.28.1",
     "keyring>=25.6",
     "platformdirs>=4.10.0",
     "qrcode>=8.0",
@@ -54,7 +55,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "hypothesis>=6.140",
     # For the editor (Pylance) and ad-hoc local runs; the CI gates still run
     # the version pinned in ci.yml via `uv run --with "pytest==..."`.

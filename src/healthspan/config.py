@@ -75,6 +75,14 @@ class ServiceConfig:
 
 
 @dataclass(frozen=True)
+class AuthConfig:
+    """Auth-failure rate-limiter settings (ADR-0026 rule 4, ADR-0051)."""
+
+    failure_threshold: int
+    max_backoff_seconds: int
+
+
+@dataclass(frozen=True)
 class Config:
     """Effective configuration: file values merged over defaults."""
 
@@ -83,6 +91,7 @@ class Config:
     backup: BackupConfig
     logging: LoggingConfig
     service: ServiceConfig
+    auth: AuthConfig
     path: Path
     source: ConfigSource
     loaded_from_file: bool
@@ -157,6 +166,9 @@ def _defaults(path: Path, source: ConfigSource) -> Config:
         # Core Service defaults (ADR-0049): loopback-only binding, a port
         # clear of the common-collision range, no OS-secret passphrase file.
         service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
+        # Limiter defaults (ADR-0051): 5 free failures per bucket, then
+        # exponential backoff capped at ADR-0026's decided 60 seconds.
+        auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
         path=path,
         source=source,
         loaded_from_file=False,
@@ -197,7 +209,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
 
     _reject_unknown_keys(
         data,
-        {"config_version", "database", "backup", "logging", "service"},
+        {"config_version", "database", "backup", "logging", "service", "auth"},
         path,
         where="top level",
     )
@@ -257,6 +269,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
         logging_cfg = LoggingConfig(level=raw_level)
 
     service = _parse_service(data, defaults.service, base, path)
+    auth = _parse_auth(data, defaults.auth, path)
 
     return Config(
         config_version=version,
@@ -264,6 +277,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
         backup=backup,
         logging=logging_cfg,
         service=service,
+        auth=auth,
         path=path,
         source=source,
         loaded_from_file=True,
@@ -294,6 +308,32 @@ def _parse_service(
         raw = _expect_str(table["passphrase_file"], path, "service.passphrase_file")
         passphrase_file = _resolve_path(raw, base, path, "service.passphrase_file")
     return ServiceConfig(host=host, port=port, passphrase_file=passphrase_file)
+
+
+def _parse_auth(data: dict[str, Any], default: AuthConfig, path: Path) -> AuthConfig:
+    """Parse the optional ``[auth]`` table (ADR-0051)."""
+    table = _section(data, "auth", {"failure_threshold", "max_backoff_seconds"}, path)
+    if table is None:
+        return default
+    threshold = default.failure_threshold
+    if "failure_threshold" in table:
+        threshold = _expect_int(
+            table["failure_threshold"], path, "auth.failure_threshold"
+        )
+        if threshold < 1:
+            raise ConfigError(
+                f"{path}: auth.failure_threshold must be >= 1, got {threshold}"
+            )
+    backoff = default.max_backoff_seconds
+    if "max_backoff_seconds" in table:
+        backoff = _expect_int(
+            table["max_backoff_seconds"], path, "auth.max_backoff_seconds"
+        )
+        if backoff < 1:
+            raise ConfigError(
+                f"{path}: auth.max_backoff_seconds must be >= 1, got {backoff}"
+            )
+    return AuthConfig(failure_threshold=threshold, max_backoff_seconds=backoff)
 
 
 def _reject_unknown_keys(

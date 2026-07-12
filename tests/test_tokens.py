@@ -82,6 +82,21 @@ def test_mint_rejects_duplicate_names(conn: sqlcipher3.Connection) -> None:
         tokens.mint_token(conn, "gui", {"read"})
 
 
+def test_store_tokens_is_all_or_nothing(conn: sqlcipher3.Connection) -> None:
+    # The bootstrap entry point (ADR-0051 §7): a failure on any row of the
+    # batch must land zero rows — a partial default set would never be
+    # re-minted (the emptiness check is the idempotence guard).
+    read = frozenset({"read"})
+    minted = [
+        (tokens.TokenSpec("alpha", read), tokens.format_token("alpha", "s1")),
+        (tokens.TokenSpec("beta", read), tokens.format_token("beta", "s2")),
+        (tokens.TokenSpec("alpha", read), tokens.format_token("alpha", "s3")),
+    ]
+    with pytest.raises(tokens.TokenError, match="alpha"):
+        tokens.store_tokens(conn, minted)
+    assert tokens.count_tokens(conn) == 0
+
+
 def test_publish_namespaces_require_the_events_scope(
     conn: sqlcipher3.Connection,
 ) -> None:

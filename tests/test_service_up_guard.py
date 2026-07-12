@@ -43,7 +43,16 @@ def _init(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(
     "command",
-    [["db", "migrate"], ["db", "backup"], ["db", "restore", "--latest"]],
+    [
+        ["db", "migrate"],
+        ["db", "backup"],
+        ["db", "restore", "--latest"],
+        # The keys rekeying commands joined the guard in WI-2b (the WI-1
+        # deferral): they open the database outside the Core Service too.
+        ["keys", "change-passphrase"],
+        ["keys", "rotate-secret-key"],
+        ["keys", "convert-mode", "--to", "passphrase-only"],
+    ],
 )
 def test_direct_db_command_refuses_when_database_held(
     tmp_path: Path, command: list[str]

@@ -20,7 +20,7 @@ This document is also the **ledger for API-surface decisions made during impleme
 
 - **`401`** — every authentication failure (missing `Authorization` header, malformed value, unknown token, revoked token) answers identically: body `{"detail": "authentication failed"}` and header `WWW-Authenticate: Bearer` (the bare scheme, no realm, no OAuth metadata). Which failure it was is recorded in the append-only `auth_audit` table ([data-model.md](data-model.md), migration 0002), never disclosed to the caller ([ADR-0026](adr/0026-named-scoped-tokens.md) uniform-denial rule).
 - **`403`** — authenticated but lacking the route's required scope: `{"detail": "token '<name>' lacks the required scope '<scope>'"}` — names the token and the missing scope, echoes nothing else ([ADR-0026](adr/0026-named-scoped-tokens.md)).
-- **`429`** — the auth-failure rate limiter (WI-2b, not yet implemented).
+- **`429`** — a throttled authentication *failure* ([ADR-0026](adr/0026-named-scoped-tokens.md) rules 1–4, defaults [ADR-0051](adr/0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md)): body `{"detail": "too many failed authentication attempts"}` plus a `Retry-After` header (integer seconds). Only failures are ever throttled — a request presenting a valid credential is never delayed or rejected by the limiter, and a `403` (authenticated, missing scope) never counts toward it. Buckets key on (source address, advisory token-name prefix) with a per-address aggregate cap; backoff starts after `auth.failure_threshold` free failures (default 5) at 1 s, doubles per failure, and caps at `auth.max_backoff_seconds` (default 60). Limiter state is in-memory only — a restart clears it, and `POST /v1/auth/reset-limits` clears it on demand. A rate-limited request writes an `auth_audit` row with the `rate-limited` outcome.
 
 Every authentication outcome — including success — writes one `auth_audit` row, and a successful authentication updates the token's `last_used_utc`, in the same transaction. Scope enforcement is a per-route FastAPI dependency created by the route's `require(<scope>)` declaration; an unknown scope name in a declaration fails at app assembly, not at request time.
 
@@ -71,6 +71,18 @@ Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-e
 - `/v1/metrics` → `{"requests_total", "requests_by_status", "active_jobs", "db_query_count", "uptime_seconds"}`. Request counts come from ASGI middleware and include every HTTP response (liveness and denials included); `requests_by_status` keys are status-code strings. **`active_jobs` is a constant `0` until the job system lands ([ADR-0012](adr/0012-job-abstraction.md), Phase 4)** — the field ships now so the response shape is stable for monitoring clients. `db_query_count` counts SQL statements executed through the Core Service connection pool since startup.
 
 `POST /v1/system/process-reports` (`supervise`, Phase 6 supervision) is not yet implemented.
+
+### Auth administration
+Defined in [ADR-0026](adr/0026-named-scoped-tokens.md) (lifecycle commands, rate limiting) and concretized in [ADR-0051](adr/0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md). Implemented in Phase 2 WI-2b. Every route requires `admin`; the `healthspan token`/`auth`/`mcp` CLI groups are thin REST clients over these endpoints, authenticating with the `cli-admin` token from its keyring entry (the Core Service must be running — there is no direct-database fallback).
+
+| Endpoint | Auth | Behavior |
+|---|---|---|
+| `GET /v1/tokens` | `admin` | `{"tokens": [{name, scopes, authorship, publish_namespaces, created_utc, last_used_utc, revoked}]}` — metadata only, never values or hashes |
+| `POST /v1/tokens` | `admin` | Mint. Body `{name, scopes, publish_namespaces?}`; `201` `{name, scopes, token}` — the plaintext appears in this response only. `409` if the name exists (a revoked name stays reserved as its revocation record; rotate to reissue), `400` on an invalid name, scope, or namespace/scope combination |
+| `POST /v1/tokens/{name}/revoke` | `admin` | Immediate revocation, no grace overlap; idempotent (`200` on an already-revoked name); `404` unknown name; `409` if `{name}` authenticates the current request (self-lockout guard — rotate instead) |
+| `POST /v1/tokens/{name}/rotate` | `admin` | Reissue under the same name/scopes as an atomic in-place hash swap; `200` `{name, token, keyring_updated}` — plaintext shown once; updates the `token:<name>` keyring entry when one exists; a revoked name rotates back to live; `404` unknown name |
+| `POST /v1/auth/reset-limits` | `admin` | Clear all auth-failure limiter state; `200` `{"reset": true}`. Always reachable — valid admin credentials are never throttled |
+| `POST /v1/mcp/rotate-client-secret` | `admin` | Regenerate the MCP client-facing secret: replace the SHA-256 hash in the MCP keyring entry, answer `200` `{secret, restart_required: true}` — plaintext shown once; the MCP Server must restart to pick it up |
 
 ### Reference data
 Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.

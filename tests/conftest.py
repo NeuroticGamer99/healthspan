@@ -10,6 +10,7 @@ import keyring.errors
 import pytest
 
 from healthspan.config import (
+    AuthConfig,
     BackupConfig,
     Config,
     ConfigSource,
@@ -67,6 +68,7 @@ def make_config(tmp_path: Path) -> Callable[[], Config]:
             ),
             logging=LoggingConfig(level="INFO"),
             service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
+            auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
             path=tmp_path / "config.toml",
             source=ConfigSource.FLAG,
             loaded_from_file=True,

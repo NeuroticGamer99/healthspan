@@ -15,9 +15,9 @@ repository write discipline: explicit ``BEGIN IMMEDIATE`` transactions.
 import hashlib
 import re
 import secrets
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import sqlcipher3
 
@@ -77,9 +77,25 @@ class TokenRecord:
     revoked: bool
 
 
+@dataclass(frozen=True)
+class TokenSpec:
+    """What to mint: a name, its scopes, and the optional attributes."""
+
+    name: str
+    scopes: frozenset[str]
+    authorship: str = "self"
+    publish_namespaces: tuple[str, ...] = field(default=())
+    job_id: int | None = None
+
+
 def format_token(name: str, secret: str) -> str:
     """``hsp_<name>_<secret>`` (ADR-0026 token format)."""
     return f"{TOKEN_PREFIX}{name}_{secret}"
+
+
+def generate_secret() -> str:
+    """A 32-byte cryptographically random base64url secret (ADR-0026)."""
+    return secrets.token_urlsafe(32)
 
 
 def parse_name(presented: str) -> str | None:
@@ -113,6 +129,61 @@ def write_transaction(conn: sqlcipher3.Connection) -> Generator[None]:
     conn.execute("COMMIT")
 
 
+def _validate_spec(spec: TokenSpec) -> None:
+    if _NAME.fullmatch(spec.name) is None:
+        raise TokenError(
+            f"invalid token name {spec.name!r}: lowercase letters, digits, '-' "
+            "and ':' only (an underscore would make the token format ambiguous)"
+        )
+    if not spec.scopes:
+        raise TokenError("a token must carry at least one scope (ADR-0026)")
+    unknown = set(spec.scopes) - SCOPES
+    if unknown:
+        raise TokenError(
+            f"unknown scope(s) {sorted(unknown)!r}; valid: {sorted(SCOPES)}"
+        )
+    if spec.publish_namespaces and "events" not in spec.scopes:
+        raise TokenError(
+            "publish_namespaces is the events-scope allowlist; it is "
+            "meaningless without the 'events' scope (ADR-0026)"
+        )
+
+
+def store_tokens(
+    conn: sqlcipher3.Connection, minted: Iterable[tuple[TokenSpec, str]]
+) -> None:
+    """Insert pre-generated tokens' hashes in one all-or-nothing transaction.
+
+    The bootstrap path (ADR-0050 §1) mints the whole default set atomically:
+    a partially-minted table would never be re-minted (the emptiness check
+    is the idempotence guard), so it must be impossible. Callers generate
+    plaintexts first — delivering them (keyring, one-time print) is theirs.
+    """
+    pairs = list(minted)
+    for spec, _ in pairs:
+        _validate_spec(spec)
+    try:
+        with write_transaction(conn):
+            for spec, token in pairs:
+                conn.execute(
+                    "INSERT INTO tokens (name, token_hash, scopes, authorship, "
+                    "publish_namespaces, job_id, created_utc) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        spec.name,
+                        hash_token(token),
+                        " ".join(sorted(spec.scopes)),
+                        spec.authorship,
+                        " ".join(spec.publish_namespaces) or None,
+                        spec.job_id,
+                        utc_now_iso(),
+                    ),
+                )
+    except sqlcipher3.IntegrityError as exc:
+        names = ", ".join(spec.name for spec, _ in pairs)
+        raise TokenError(f"could not mint token(s) {names!r}: {exc}") from exc
+
+
 def mint_token(
     conn: sqlcipher3.Connection,
     name: str,
@@ -127,43 +198,15 @@ def mint_token(
     The caller owns delivering the plaintext to its holder (keyring entry,
     one-time print); it never touches the database again.
     """
-    if _NAME.fullmatch(name) is None:
-        raise TokenError(
-            f"invalid token name {name!r}: lowercase letters, digits, '-' and "
-            "':' only (an underscore would make the token format ambiguous)"
-        )
-    if not scopes:
-        raise TokenError("a token must carry at least one scope (ADR-0026)")
-    unknown = set(scopes) - SCOPES
-    if unknown:
-        raise TokenError(
-            f"unknown scope(s) {sorted(unknown)!r}; valid: {sorted(SCOPES)}"
-        )
-    if publish_namespaces and "events" not in scopes:
-        raise TokenError(
-            "publish_namespaces is the events-scope allowlist; it is "
-            "meaningless without the 'events' scope (ADR-0026)"
-        )
-    secret = secrets.token_urlsafe(32)  # 32 random bytes, base64url (ADR-0026)
-    token = format_token(name, secret)
-    try:
-        with write_transaction(conn):
-            conn.execute(
-                "INSERT INTO tokens (name, token_hash, scopes, authorship, "
-                "publish_namespaces, job_id, created_utc) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    name,
-                    hash_token(token),
-                    " ".join(sorted(scopes)),
-                    authorship,
-                    " ".join(publish_namespaces) or None,
-                    job_id,
-                    utc_now_iso(),
-                ),
-            )
-    except sqlcipher3.IntegrityError as exc:
-        raise TokenError(f"could not mint token {name!r}: {exc}") from exc
+    spec = TokenSpec(
+        name=name,
+        scopes=frozenset(scopes),
+        authorship=authorship,
+        publish_namespaces=publish_namespaces,
+        job_id=job_id,
+    )
+    token = format_token(name, generate_secret())
+    store_tokens(conn, [(spec, token)])
     return token
 
 
@@ -177,24 +220,50 @@ def look_up(conn: sqlcipher3.Connection, presented: str) -> TokenRecord | None:
     """
     computed = hash_token(presented)
     row = conn.execute(
-        "SELECT id, name, token_hash, scopes, authorship, publish_namespaces, "
-        "job_id, created_utc, last_used_utc, revoked "
-        "FROM tokens WHERE token_hash = ?",
+        _RECORD_SELECT + " WHERE token_hash = ?",
         (computed,),
     ).fetchone()
     if row is None or not secrets.compare_digest(str(row[2]), computed):
         return None
+    return _record_from_row(row)
+
+
+_RECORD_SELECT = (
+    "SELECT id, name, token_hash, scopes, authorship, publish_namespaces, "
+    "job_id, created_utc, last_used_utc, revoked FROM tokens"
+)
+
+
+def _record_from_row(row: tuple[object, ...]) -> TokenRecord:
     return TokenRecord(
-        id=row[0],
-        name=row[1],
+        id=int(str(row[0])),
+        name=str(row[1]),
         scopes=frozenset(str(row[3]).split()),
-        authorship=row[4],
+        authorship=str(row[4]),
         publish_namespaces=tuple(str(row[5]).split()) if row[5] else (),
-        job_id=row[6],
-        created_utc=row[7],
-        last_used_utc=row[8],
+        job_id=int(str(row[6])) if row[6] is not None else None,
+        created_utc=str(row[7]),
+        last_used_utc=str(row[8]) if row[8] is not None else None,
         revoked=bool(row[9]),
     )
+
+
+def find_by_name(conn: sqlcipher3.Connection, name: str) -> TokenRecord | None:
+    """The token row for a name (revoked included), or ``None`` if unknown."""
+    row = conn.execute(_RECORD_SELECT + " WHERE name = ?", (name,)).fetchone()
+    return None if row is None else _record_from_row(row)
+
+
+def list_tokens(conn: sqlcipher3.Connection) -> list[TokenRecord]:
+    """Every token row, by name — metadata only, hashes never leave here."""
+    rows = conn.execute(_RECORD_SELECT + " ORDER BY name").fetchall()
+    return [_record_from_row(row) for row in rows]
+
+
+def count_tokens(conn: sqlcipher3.Connection) -> int:
+    """How many token rows exist (the bootstrap emptiness check, ADR-0050)."""
+    row = conn.execute("SELECT count(*) FROM tokens").fetchone()
+    return int(str(row[0])) if row is not None else 0
 
 
 def revoke_token(conn: sqlcipher3.Connection, name: str) -> bool:
@@ -206,6 +275,29 @@ def revoke_token(conn: sqlcipher3.Connection, name: str) -> bool:
             (utc_now_iso(), name),
         )
     return cursor.rowcount > 0
+
+
+def rotate_token(conn: sqlcipher3.Connection, name: str) -> str | None:
+    """Reissue a token under its name; return the new plaintext, once.
+
+    ADR-0026's "revoke + reissue same name/scopes" realized as an atomic
+    in-place hash replacement (ADR-0051): ``tokens.name`` is UNIQUE, so a
+    revoked row and its replacement cannot coexist, and swapping the hash
+    in one UPDATE makes the old value dead and the new one live with no
+    window between. Scopes and attributes are untouched; ``last_used_utc``
+    resets (the new credential has never been used); a revoked token
+    rotates back to live — rotation is the sanctioned reissue path for a
+    revoked name. ``None`` if the name is unknown.
+    """
+    token = format_token(name, generate_secret())
+    with write_transaction(conn):
+        cursor = conn.execute(
+            "UPDATE tokens SET token_hash = ?, created_utc = ?, "
+            "last_used_utc = NULL, revoked = 0, revoked_utc = NULL "
+            "WHERE name = ?",
+            (hash_token(token), utc_now_iso(), name),
+        )
+    return token if cursor.rowcount > 0 else None
 
 
 def record_outcome(
