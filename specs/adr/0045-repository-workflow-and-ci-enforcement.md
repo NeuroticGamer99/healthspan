@@ -1,7 +1,7 @@
 # ADR-0045: Repository Workflow and CI Enforcement
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 [testing-strategy.md](../testing-strategy.md) (CI Gates) specifies the *content* of the platform's CI gates — log canary, secret scanning, strict typing, lint/format, dependency audit — and the sequencing rule that the code gates ship in the same PR as the first code. What no document decides is the **enforcement mechanics around them**: how the main branch is protected, which merge strategies are allowed, where CI runs, how pinned tools and actions stay current, and *when* protection begins. With coding imminent (fixtures are the last precursor), these need deciding now, before the first agent-authored PR exists.

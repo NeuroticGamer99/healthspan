@@ -1,7 +1,7 @@
 # ADR-0048: Migration File Packaging and Discovery
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 [ADR-0009](0009-database-migration.md) (Accepted) chose a custom migration runner over numbered plain-SQL files and, in its "Migration File Convention" section, located those files under a repository-root `sql/migrations/` directory — echoed in [design-rationale.md](../design-rationale.md) ("Schema Versioning") and the [glossary](../glossary.md) "Migration 0001" entry. That location predates any code.
