@@ -58,6 +58,11 @@ class ConnectionPool:
         """Whether this thread can reach the database (``SELECT 1``)."""
         try:
             return self.connection().execute("SELECT 1").fetchone() == (1,)
+        # PEP 758 (Python 3.14): an `except` with no `as` may omit the
+        # parentheses around its exception tuple. This is valid — the
+        # project floor is 3.14 — and `ruff format` actively strips the
+        # parens, so this bare form is the formatter-stable one. (It reads
+        # like the Python 2 `except A, e:` syntax but is unrelated.)
         except sqlcipher3.Error, db.DatabaseError, PoolClosedError:
             return False
 

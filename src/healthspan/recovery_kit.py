@@ -19,10 +19,23 @@ from healthspan.fsperm import set_owner_only
 from healthspan.kdf import encode_secret_key
 from healthspan.keyparams import utc_now_iso
 
-# ADR-0033: recognizable naming, matched by the repo .gitignore pattern.
+# ADR-0033: recognizable naming, matched by the repo's broad `*recovery-kit*`
+# .gitignore pattern (git hygiene — no kit is ever committed). This is the
+# *deliberate* copy a user requests with `--output`; it is their custody.
 KIT_FILENAME_TEMPLATE = "healthspan-recovery-kit-{date}.txt"
-# The same pattern the orphan sweep and .gitignore recognize.
-KIT_FILENAME_GLOB = "*recovery-kit*"
+
+# The startup sweep targets ONLY transient spool files the (deferred) OS
+# print pathway writes — never a deliberate `--output` kit. The two name
+# spaces are disjoint by construction: a spool file is a dotfile with a
+# `.spool` suffix, which the deliberate `.txt` template can never match, so
+# a user who saves their kit into the data directory (a natural reading of
+# ADR-0033's "encrypted storage") does not have it silently disposed on the
+# next `service start`. Both still carry the `recovery-kit` infix, so the
+# broad .gitignore pattern covers each. The print pathway MUST write its
+# spool file under :func:`orphan_spool_filename` for the sweep to catch a
+# crash between render and disposal (ADR-0033/0047, open-questions.md).
+ORPHAN_SPOOL_GLOB = ".healthspan-recovery-kit-*.spool"
+ORPHAN_SPOOL_TEMPLATE = ".healthspan-recovery-kit-{token}.spool"
 
 OUTPUT_WARNING = (
     "This file contains the secret key. Store it only on encrypted storage "
@@ -81,6 +94,18 @@ def default_kit_filename() -> str:
     return KIT_FILENAME_TEMPLATE.format(date=utc_now_iso()[:10])
 
 
+def orphan_spool_filename(token: str) -> str:
+    """The spool filename the deferred print pathway must use (ADR-0033).
+
+    Named so the startup sweep (:func:`sweep_orphans`) recognizes a crashed
+    render, and disjoint from :func:`default_kit_filename` so a deliberate
+    ``--output`` kit is never a sweep target. ``token`` distinguishes
+    concurrent spools (e.g. a uuid or pid); it never contains a path
+    separator.
+    """
+    return ORPHAN_SPOOL_TEMPLATE.format(token=token)
+
+
 def write_kit(secret_key: bytes, output: Path) -> Path:
     """Write a deliberate digital copy (ADR-0033 ``--output`` pathway)."""
     if output.is_dir():
@@ -98,22 +123,24 @@ def write_kit(secret_key: bytes, output: Path) -> Path:
 
 
 def sweep_orphans(private_dir: Path) -> list[Path]:
-    """Dispose orphaned Recovery Kit plaintext at startup (ADR-0033).
+    """Dispose orphaned Recovery Kit *spool* plaintext at startup (ADR-0033).
 
-    A crash between a kit render and its disposal — the Windows shell-print
-    pathway is the only producer, still deferred (ADR-0047) — could leave a
-    plaintext kit in the platform's private data directory. The Core Service
+    A crash between a kit render and its disposal — the OS print pathway is
+    the only producer, still deferred (ADR-0047) — could leave a plaintext
+    spool file in the platform's private data directory. The Core Service
     sweeps it on startup so an interrupted render is caught at the next
     start. Disposal is best-effort (overwrite-then-unlink): honest about
     what modern storage can and cannot erase (ADR-0033's disposal policy).
 
-    Scans only ``private_dir`` (non-recursive) for the recognizable kit
-    naming; a deliberate ``--output`` copy the user placed elsewhere is
-    their custody and is untouched. Returns the paths disposed of.
+    Scans only ``private_dir`` (non-recursive) and only for the
+    :data:`ORPHAN_SPOOL_GLOB` spool naming, which is disjoint from the
+    deliberate ``--output`` kit filename — so a kit a user deliberately
+    saved (even into this very directory) is never a sweep target. Returns
+    the paths disposed of.
     """
     disposed: list[Path] = []
     try:
-        candidates = sorted(private_dir.glob(KIT_FILENAME_GLOB))
+        candidates = sorted(private_dir.glob(ORPHAN_SPOOL_GLOB))
     except OSError:
         return disposed
     for path in candidates:
