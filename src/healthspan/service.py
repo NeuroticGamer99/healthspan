@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TextIO, cast
 from uuid import uuid4
 
+import sqlcipher3
 import structlog
 import uvicorn
 from anyio import to_thread
@@ -322,7 +323,12 @@ def bootstrap_tokens(runtime: ServiceRuntime) -> bool:
     conn = db.connect(runtime.cfg.database.path, runtime.key)
     try:
         minted = token_bootstrap.bootstrap_default_tokens(conn, _console)
-    except (keychain.KeychainError, tokens_module.TokenError) as exc:
+    except (
+        keychain.KeychainError,
+        tokens_module.TokenError,
+        sqlcipher3.Error,  # locked past busy_timeout, I/O error, corrupt page
+        db.DatabaseError,
+    ) as exc:
         raise ServiceStartupError(
             f"could not mint the default token set: {exc}"
         ) from exc

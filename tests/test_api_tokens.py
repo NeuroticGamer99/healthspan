@@ -220,6 +220,34 @@ def test_revoke_unknown_name_is_404(harness: Harness) -> None:
     assert response.status_code == 404
 
 
+def test_revoking_the_last_live_admin_is_refused(harness: Harness) -> None:
+    # A second admin makes revoking the first legal; once only one live
+    # admin remains, its revocation answers 409. Sequentially that is the
+    # request-layer self-guard (the only caller left standing IS the last
+    # admin); the store-level LastAdminError backstop exists for the
+    # concurrent race two admins revoking each other would win past the
+    # name check — it is exercised directly in test_tokens.py, since the
+    # race window is not constructible through sequential requests.
+    second = _call(
+        harness.client,
+        "POST",
+        TOKENS_PATH,
+        harness.admin_token,
+        json={"name": "second-admin", "scopes": ["admin"]},
+    ).json()["token"]
+    assert (
+        _call(
+            harness.client, "POST", f"{TOKENS_PATH}/admin-probe/revoke", second
+        ).status_code
+        == 200
+    )
+    # admin-probe is revoked; second-admin is now the last live admin. Its
+    # own revocation trips the self-guard; the store guard backs it up for
+    # any concurrent path that slips past the name check.
+    denied = _call(harness.client, "POST", f"{TOKENS_PATH}/second-admin/revoke", second)
+    assert denied.status_code == 409
+
+
 def test_self_revocation_is_refused(harness: Harness) -> None:
     response = _call(
         harness.client,

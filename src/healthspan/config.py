@@ -315,25 +315,21 @@ def _parse_auth(data: dict[str, Any], default: AuthConfig, path: Path) -> AuthCo
     table = _section(data, "auth", {"failure_threshold", "max_backoff_seconds"}, path)
     if table is None:
         return default
-    threshold = default.failure_threshold
-    if "failure_threshold" in table:
-        threshold = _expect_int(
-            table["failure_threshold"], path, "auth.failure_threshold"
-        )
-        if threshold < 1:
-            raise ConfigError(
-                f"{path}: auth.failure_threshold must be >= 1, got {threshold}"
-            )
-    backoff = default.max_backoff_seconds
-    if "max_backoff_seconds" in table:
-        backoff = _expect_int(
-            table["max_backoff_seconds"], path, "auth.max_backoff_seconds"
-        )
-        if backoff < 1:
-            raise ConfigError(
-                f"{path}: auth.max_backoff_seconds must be >= 1, got {backoff}"
-            )
-    return AuthConfig(failure_threshold=threshold, max_backoff_seconds=backoff)
+
+    def positive_int(key: str, fallback: int) -> int:
+        if key not in table:
+            return fallback
+        value = _expect_int(table[key], path, f"auth.{key}")
+        if value < 1:
+            raise ConfigError(f"{path}: auth.{key} must be >= 1, got {value}")
+        return value
+
+    return AuthConfig(
+        failure_threshold=positive_int("failure_threshold", default.failure_threshold),
+        max_backoff_seconds=positive_int(
+            "max_backoff_seconds", default.max_backoff_seconds
+        ),
+    )
 
 
 def _reject_unknown_keys(

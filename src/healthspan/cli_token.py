@@ -14,7 +14,7 @@ from typing import Annotated, Any
 import httpx
 import typer
 
-from healthspan import keychain
+from healthspan import keychain, tokens
 from healthspan.api_tokens import (
     RESET_LIMITS_PATH,
     ROTATE_MCP_SECRET_PATH,
@@ -57,8 +57,11 @@ def _admin_token() -> str:
     if token is None:
         raise fail(
             "no cli-admin token in the OS keyring (entry 'token:cli-admin'). "
-            "The default token set is minted at the first 'healthspan service "
-            "start' (ADR-0050); start the service once, then retry."
+            "If this machine never ran 'healthspan service start', start it "
+            "once - the default token set is minted at first start "
+            "(ADR-0050). If the set was already minted and the keyring "
+            "entry was lost, restore the entry, or rotate cli-admin from a "
+            "client still holding a valid admin credential."
         )
     return token
 
@@ -89,7 +92,13 @@ def _request(ctx: typer.Context, method: str, path: str, **kwargs: Any) -> Any:
     if response.status_code >= 400:
         detail = _detail(response)
         raise fail(f"the Core Service answered {response.status_code}: {detail}")
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise fail(
+            f"the Core Service answered {response.status_code} with a "
+            "non-JSON body; is something else listening on its port?"
+        ) from exc
 
 
 def _detail(response: httpx.Response) -> str:
@@ -104,6 +113,21 @@ def _detail(response: httpx.Response) -> str:
 
 def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _path_name(name: str) -> str:
+    """Validate a name destined for a URL path segment.
+
+    The token-name charset (``tokens.valid_name``) is URL-safe by
+    construction, so a valid name embeds verbatim; anything else — path
+    separators, query markers, uppercase — is rejected here with the mint
+    rule's vocabulary rather than sent on to be misread as URL structure.
+    """
+    if not tokens.valid_name(name):
+        raise fail(
+            f"invalid token name {name!r}: lowercase letters, digits, '-' and ':' only"
+        )
+    return name
 
 
 @token_app.command("create")
@@ -158,14 +182,14 @@ def token_list(ctx: typer.Context) -> None:
 @token_app.command("revoke")
 def token_revoke(ctx: typer.Context, name: str) -> None:
     """Revoke immediately; the name stays reserved (rotate to reissue)."""
-    _request(ctx, "POST", f"{TOKENS_PATH}/{name}/revoke")
+    _request(ctx, "POST", f"{TOKENS_PATH}/{_path_name(name)}/revoke")
     typer.echo(f"Token '{name}' revoked.")
 
 
 @token_app.command("rotate")
 def token_rotate(ctx: typer.Context, name: str) -> None:
     """Revoke and reissue under the same name and scopes; print once."""
-    result = _request(ctx, "POST", f"{TOKENS_PATH}/{name}/rotate")
+    result = _request(ctx, "POST", f"{TOKENS_PATH}/{_path_name(name)}/rotate")
     typer.echo(f"Token '{name}' rotated.")
     typer.echo(f"  {result['token']}")
     if result["keyring_updated"]:

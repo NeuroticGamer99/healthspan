@@ -67,14 +67,6 @@ def create_token(request: Request, body: TokenCreateBody) -> dict[str, object]:
     """Mint a named token; the plaintext appears in this response only."""
     runtime = cast(ServiceRuntime, request.app.state.runtime)
     conn = runtime.pool.connection()
-    if tokens.find_by_name(conn, body.name) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"token '{body.name}' already exists (a revoked name stays "
-                "reserved as its revocation record; rotate it to reissue)"
-            ),
-        )
     try:
         token = tokens.mint_token(
             conn,
@@ -83,6 +75,18 @@ def create_token(request: Request, body: TokenCreateBody) -> dict[str, object]:
             publish_namespaces=tuple(body.publish_namespaces),
         )
     except tokens.TokenError as exc:
+        # Classify after the fact rather than check-then-insert: concurrent
+        # creates race a pre-check, and the INSERT's UNIQUE constraint is
+        # the authoritative duplicate detector either way.
+        if tokens.find_by_name(conn, body.name) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"token '{body.name}' already exists (a revoked name "
+                    "stays reserved as its revocation record; rotate it to "
+                    "reissue)"
+                ),
+            ) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _log.info("token minted", name=body.name, scopes=sorted(set(body.scopes)))
     return {"name": body.name, "scopes": sorted(set(body.scopes)), "token": token}
@@ -90,14 +94,19 @@ def create_token(request: Request, body: TokenCreateBody) -> dict[str, object]:
 
 @router.post(TOKENS_PATH + "/{name}/revoke", dependencies=[require("admin")])
 def revoke_token(request: Request, name: str) -> dict[str, object]:
-    """Immediate revocation (no grace overlap, ADR-0026); idempotent."""
+    """Immediate revocation (no grace overlap, ADR-0026); idempotent.
+
+    Two lockout guards (ADR-0051): the request-layer refusal of the
+    requester's own token, and the store-level refusal of the last live
+    ``admin`` token — the latter inside the revocation transaction, so
+    concurrent revocations of each other's admin tokens cannot both land.
+    """
     requester = cast(tokens.TokenRecord, request.state.token)
     if requester.name == name:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"refusing to revoke '{name}': it authenticates this request, "
-                "and no other path could ever reissue admin capability "
+                f"refusing to revoke '{name}': it authenticates this request "
                 "(rotate it instead, ADR-0051)"
             ),
         )
@@ -107,7 +116,10 @@ def revoke_token(request: Request, name: str) -> dict[str, object]:
     if record is None:
         raise HTTPException(status_code=404, detail=f"no token named '{name}'")
     if not record.revoked:
-        tokens.revoke_token(conn, name)
+        try:
+            tokens.revoke_token(conn, name)
+        except tokens.LastAdminError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         _log.info("token revoked", name=name)
     return {"name": name, "revoked": True}
 

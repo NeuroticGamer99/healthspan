@@ -98,6 +98,16 @@ def generate_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def valid_name(name: str) -> bool:
+    """Whether ``name`` is a legal token name (the mint-time rule).
+
+    The charset is URL-safe by construction, so callers embedding a valid
+    name in a request path never need escaping; an invalid name is rejected
+    before it can be misread as path structure.
+    """
+    return _NAME.fullmatch(name) is not None
+
+
 def parse_name(presented: str) -> str | None:
     """The advisory name segment, or ``None`` if the shape does not parse.
 
@@ -130,7 +140,7 @@ def write_transaction(conn: sqlcipher3.Connection) -> Generator[None]:
 
 
 def _validate_spec(spec: TokenSpec) -> None:
-    if _NAME.fullmatch(spec.name) is None:
+    if not valid_name(spec.name):
         raise TokenError(
             f"invalid token name {spec.name!r}: lowercase letters, digits, '-' "
             "and ':' only (an underscore would make the token format ambiguous)"
@@ -266,9 +276,37 @@ def count_tokens(conn: sqlcipher3.Connection) -> int:
     return int(str(row[0])) if row is not None else 0
 
 
+class LastAdminError(TokenError):
+    """Revocation refused: it would leave no live ``admin`` credential."""
+
+
 def revoke_token(conn: sqlcipher3.Connection, name: str) -> bool:
-    """Revoke immediately (no grace overlap, ADR-0026); False if unknown."""
+    """Revoke immediately (no grace overlap, ADR-0026); False if unknown.
+
+    Refuses (``LastAdminError``) to revoke the last live token carrying
+    ``admin`` (ADR-0051): bootstrap never re-mints into a non-empty table
+    and no direct-database escape hatch exists, so losing the final admin
+    credential is irreversible. The check runs inside the same
+    ``BEGIN IMMEDIATE`` transaction as the update, so two concurrent
+    requests revoking each other's admin tokens serialize — the second one
+    is refused, and at least one live admin credential always survives.
+    """
     with write_transaction(conn):
+        target = conn.execute(
+            "SELECT scopes FROM tokens WHERE name = ? AND revoked = 0", (name,)
+        ).fetchone()
+        if target is not None and "admin" in str(target[0]).split():
+            others = conn.execute(
+                "SELECT count(*) FROM tokens WHERE revoked = 0 AND name != ? "
+                "AND (' ' || scopes || ' ') LIKE '% admin %'",
+                (name,),
+            ).fetchone()
+            if others is None or int(str(others[0])) == 0:
+                raise LastAdminError(
+                    f"refusing to revoke '{name}': it is the last live token "
+                    "carrying the 'admin' scope, and no path could reissue "
+                    "admin capability (rotate it instead, ADR-0051)"
+                )
         cursor = conn.execute(
             "UPDATE tokens SET revoked = 1, revoked_utc = ? "
             "WHERE name = ? AND revoked = 0",

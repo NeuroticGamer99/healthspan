@@ -59,9 +59,20 @@ _AUTH_FAILED_HEADERS = {"WWW-Authenticate": "Bearer"}
 RATE_LIMITED_DETAIL = "too many failed authentication attempts"
 
 # ADR-0026 rule 3: the per-address aggregate threshold is a fixed multiple
-# of the per-bucket one (ADR-0051) — high enough that only name-cycling
-# trips it, never one misconfigured client.
+# of the per-bucket one (ADR-0051). Name-cycling trips it quickly; a single
+# very persistent client can also reach it over time — rule 1 bounds the
+# impact either way to that address's *failing* requests.
 ADDRESS_THRESHOLD_MULTIPLIER = 5
+
+# Bounds on limiter state (ADR-0051): the advisory name is attacker-supplied
+# text, so the bucket key is truncated and per-address bucket count capped
+# (overflow shares the `invalid` bucket); buckets idle past the prune window
+# are dropped — the time decay that gives a client that stopped failing a
+# clean slate — and a sweep runs at most once per interval.
+BUCKET_NAME_MAX_CHARS = 64
+MAX_BUCKETS_PER_ADDRESS = 256
+PRUNE_IDLE_SECONDS = 900.0
+SWEEP_INTERVAL_SECONDS = 60.0
 
 # Liveness abuse cap (ADR-0049): 30 requests per rolling 1-second window per
 # source address. Generous for every legitimate poller at one address
@@ -100,6 +111,7 @@ class _PublicMarker(ScopeRequirement):
 class _FailureBucket:
     failures: int = 0
     blocked_until: float = 0.0
+    last_failure: float = 0.0
 
 
 @dataclass
@@ -108,9 +120,9 @@ class _AddressState:
         default_factory=dict[str, _FailureBucket]
     )
     blocked_until: float = 0.0
-
-    def total_failures(self) -> int:
-        return sum(bucket.failures for bucket in self.buckets.values())
+    # Running total across live buckets — kept incrementally so the hot
+    # path never sums an attacker-sized dict (ADR-0051).
+    total_failures: int = 0
 
 
 class AuthFailureRateLimiter:
@@ -123,6 +135,16 @@ class AuthFailureRateLimiter:
     a per-address aggregate cap catches name-cycling. Backoff starts after
     ``failure_threshold`` free failures at 1 s, doubles per failure, and
     caps at ``max_backoff_seconds`` (default 60, ADR-0026 rule 4).
+
+    A throttled attempt is *not* a new failure: while a window is armed,
+    :meth:`register_failure` returns the accurate remaining time without
+    extending the block or allocating state — so the advertised
+    ``Retry-After`` is honest, a client that honors it escapes once the
+    window serves out, and hammering a 429 neither doubles the backoff nor
+    grows memory. State is bounded (name truncation, per-address bucket cap
+    with overflow into the ``invalid`` bucket) and idle buckets are pruned
+    after :data:`PRUNE_IDLE_SECONDS` — the decay that gives a client that
+    stopped failing a clean slate.
 
     State is in-memory and deliberately unpersisted (ADR-0051): the cap
     bounds a misconfigured client's recovery, a restart clears everything,
@@ -141,55 +163,96 @@ class AuthFailureRateLimiter:
         self._clock = clock
         self._lock = threading.Lock()
         self._addresses: dict[str, _AddressState] = {}
+        self._last_sweep = 0.0
 
-    def retry_after(self, address: str, name: str) -> float | None:
-        """Seconds until this bucket may fail again, or ``None`` if unblocked."""
+    def register_failure(self, address: str, name: str) -> float | None:
+        """Assess and record one failed authentication, atomically.
+
+        Returns the seconds to advertise as ``Retry-After`` when the failure
+        is throttled (already inside an armed window — nothing is recorded),
+        or ``None`` when it passes through as a plain denial (recorded, and
+        possibly arming the *next* window). One locked call, so concurrent
+        failures at the threshold boundary cannot each read a stale verdict.
+        """
         now = self._clock()
+        name = name[:BUCKET_NAME_MAX_CHARS]
         with self._lock:
-            state = self._addresses.get(address)
-            if state is None:
-                return None
+            self._maybe_sweep(now)
+            state = self._addresses.setdefault(address, _AddressState())
             bucket = state.buckets.get(name)
             blocked_until = max(
                 state.blocked_until, bucket.blocked_until if bucket else 0.0
             )
-        remaining = blocked_until - now
-        return remaining if remaining > 0 else None
-
-    def record_failure(self, address: str, name: str) -> None:
-        """Count a failed authentication and (re-)arm the backoff windows."""
-        now = self._clock()
-        with self._lock:
-            state = self._addresses.setdefault(address, _AddressState())
-            bucket = state.buckets.setdefault(name, _FailureBucket())
+            if blocked_until > now:
+                # Throttled: report the honest remainder; never extend.
+                return blocked_until - now
+            if bucket is None:
+                if len(state.buckets) >= MAX_BUCKETS_PER_ADDRESS:
+                    name = tokens.INVALID_NAME  # overflow shares one bucket
+                bucket = state.buckets.setdefault(name, _FailureBucket())
             bucket.failures += 1
+            bucket.last_failure = now
+            state.total_failures += 1
             delay = self._backoff(bucket.failures - self._threshold)
             if delay > 0:
                 bucket.blocked_until = max(bucket.blocked_until, now + delay)
             aggregate_threshold = self._threshold * ADDRESS_THRESHOLD_MULTIPLIER
-            delay = self._backoff(state.total_failures() - aggregate_threshold)
+            delay = self._backoff(state.total_failures - aggregate_threshold)
             if delay > 0:
                 state.blocked_until = max(state.blocked_until, now + delay)
+            return None
 
     def record_success(self, address: str, name: str) -> None:
         """Clear the bucket a now-valid credential was failing in (rule 1).
 
-        The cleared failures also leave the address aggregate, so a client
-        recovering from a rotated-out token stops counting against its
-        neighbors at the same address.
+        The cleared failures also leave the address aggregate — and if that
+        drops the total back under the aggregate threshold, an armed
+        address-wide block is released with it, so a recovered client stops
+        penalizing its neighbors at the same address.
         """
+        if not self._addresses:  # lock-free fast path for the common case
+            return
         with self._lock:
             state = self._addresses.get(address)
             if state is None:
                 return
-            state.buckets.pop(name, None)
-            if not state.buckets and state.blocked_until <= self._clock():
+            bucket = state.buckets.pop(name[:BUCKET_NAME_MAX_CHARS], None)
+            if bucket is None:
+                return
+            state.total_failures -= bucket.failures
+            aggregate_threshold = self._threshold * ADDRESS_THRESHOLD_MULTIPLIER
+            if state.total_failures <= aggregate_threshold:
+                state.blocked_until = 0.0
+            if not state.buckets:
                 del self._addresses[address]
 
     def reset(self) -> None:
         """Clear all limiter state (``auth reset-limits``, ADR-0026 rule 4)."""
         with self._lock:
             self._addresses.clear()
+
+    def _maybe_sweep(self, now: float) -> None:
+        """Drop idle, unblocked buckets (at most once per sweep interval).
+
+        Called with the lock held. This is the memory bound and the time
+        decay in one: a bucket that has not failed for the prune window and
+        holds no live block is forgotten entirely.
+        """
+        if now - self._last_sweep < SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_sweep = now
+        for address in list(self._addresses):
+            state = self._addresses[address]
+            for name in list(state.buckets):
+                bucket = state.buckets[name]
+                if (
+                    bucket.blocked_until <= now
+                    and now - bucket.last_failure >= PRUNE_IDLE_SECONDS
+                ):
+                    state.total_failures -= bucket.failures
+                    del state.buckets[name]
+            if not state.buckets and state.blocked_until <= now:
+                del self._addresses[address]
 
     def _backoff(self, failures_over: int) -> float:
         """1 s doubling per failure past the threshold, capped (ADR-0051)."""
@@ -262,8 +325,7 @@ class _ScopedRequirement(ScopeRequirement):
         bucket_name = bucket if bucket is not None else tokens.INVALID_NAME
         audit_name = record.name if record is not None else tokens.INVALID_NAME
 
-        retry_after = limiter.retry_after(source_addr, bucket_name)
-        limiter.record_failure(source_addr, bucket_name)
+        retry_after = limiter.register_failure(source_addr, bucket_name)
         if retry_after is not None:
             tokens.record_outcome(
                 conn,
