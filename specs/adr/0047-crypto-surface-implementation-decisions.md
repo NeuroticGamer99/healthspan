@@ -1,7 +1,7 @@
 # ADR-0047: Crypto-Surface Implementation Decisions (WI-2)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Implementing the Phase-1 crypto core (ADR-0013/0028/0033: KDF, sidecar, connection factory, `healthspan init`, the `keys` commands) surfaced decisions those ADRs deliberately left open, plus one owner decision made at Phase-1 planning that needs a spec record. ADR-0028 and ADR-0033 are Accepted and immutable, so per governance these land as one batched extension ADR (the ADR-0035/0037/0038 pattern) in the same PR as the implementing change.

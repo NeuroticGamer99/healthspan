@@ -1,7 +1,7 @@
 # ADR-0046: Filesystem Layout and Configuration Discovery
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

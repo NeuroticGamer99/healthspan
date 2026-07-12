@@ -97,7 +97,7 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Accepted |
 | [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
 | [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |
-| [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) | Repository Workflow and CI Enforcement | Proposed |
-| [ADR-0046](0046-filesystem-layout-and-config-discovery.md) | Filesystem Layout and Configuration Discovery | Proposed |
-| [ADR-0047](0047-crypto-surface-implementation-decisions.md) | Crypto-Surface Implementation Decisions (WI-2) | Proposed |
-| [ADR-0048](0048-migration-file-packaging.md) | Migration File Packaging and Discovery | Proposed |
+| [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) | Repository Workflow and CI Enforcement | Accepted |
+| [ADR-0046](0046-filesystem-layout-and-config-discovery.md) | Filesystem Layout and Configuration Discovery | Accepted |
+| [ADR-0047](0047-crypto-surface-implementation-decisions.md) | Crypto-Surface Implementation Decisions (WI-2) | Accepted |
+| [ADR-0048](0048-migration-file-packaging.md) | Migration File Packaging and Discovery | Accepted |
