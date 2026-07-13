@@ -67,11 +67,16 @@ class LoggingConfig:
 
 @dataclass(frozen=True)
 class ServiceConfig:
-    """Core Service HTTP listener and passphrase-channel settings (ADR-0049)."""
+    """Core Service HTTP listener and passphrase-channel settings (ADR-0049).
+
+    ``page_cap`` is the server-enforced read-endpoint page bound (ADR-0053):
+    the single enforcement point every client inherits.
+    """
 
     host: str
     port: int
     passphrase_file: Path | None
+    page_cap: int
 
 
 @dataclass(frozen=True)
@@ -165,7 +170,10 @@ def _defaults(path: Path, source: ConfigSource) -> Config:
         logging=LoggingConfig(level="INFO"),
         # Core Service defaults (ADR-0049): loopback-only binding, a port
         # clear of the common-collision range, no OS-secret passphrase file.
-        service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
+        # Read page cap default 100 rows (ADR-0053).
+        service=ServiceConfig(
+            host="127.0.0.1", port=8464, passphrase_file=None, page_cap=100
+        ),
         # Limiter defaults (ADR-0051): 5 free failures per bucket, then
         # exponential backoff capped at ADR-0026's decided 60 seconds.
         auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
@@ -288,7 +296,9 @@ def _parse_service(
     data: dict[str, Any], default: ServiceConfig, base: Path, path: Path
 ) -> ServiceConfig:
     """Parse the optional ``[service]`` table (ADR-0049)."""
-    table = _section(data, "service", {"host", "port", "passphrase_file"}, path)
+    table = _section(
+        data, "service", {"host", "port", "passphrase_file", "page_cap"}, path
+    )
     if table is None:
         return default
     host = default.host
@@ -307,7 +317,14 @@ def _parse_service(
     if "passphrase_file" in table:
         raw = _expect_str(table["passphrase_file"], path, "service.passphrase_file")
         passphrase_file = _resolve_path(raw, base, path, "service.passphrase_file")
-    return ServiceConfig(host=host, port=port, passphrase_file=passphrase_file)
+    page_cap = default.page_cap
+    if "page_cap" in table:
+        page_cap = _expect_int(table["page_cap"], path, "service.page_cap")
+        if page_cap < 1:
+            raise ConfigError(f"{path}: service.page_cap must be >= 1, got {page_cap}")
+    return ServiceConfig(
+        host=host, port=port, passphrase_file=passphrase_file, page_cap=page_cap
+    )
 
 
 def _parse_auth(data: dict[str, Any], default: AuthConfig, path: Path) -> AuthConfig:

@@ -1,0 +1,178 @@
+"""The read/query endpoints (ADR-0027, ADR-0053) — Phase 2 WI-4.
+
+Eight ``read``-scoped GET routes: list/get over the current-state views for
+the import-populated tables (``lab-draws``, ``lab-results``) and the two
+catalog tables a client needs to resolve their foreign keys (``labs``,
+``biomarkers``). List responses are ``{"items": [...], "next_cursor":
+...}``; pagination is keyset, bounded by the server-enforced page cap
+(``service.page_cap``, default 100) — the single enforcement point every
+client inherits (api-reference.md, MCP tool-convention rule 3). A ``limit``
+above the cap clamps to
+it; the cap can only shrink a page, never grow one.
+
+Handlers are synchronous (ADR-0037): FastAPI runs them on the AnyIO worker
+threadpool, where the thread-affine pool hands each its thread's
+connection. Reads write no audit rows — ``audit_log`` records mutations
+(ADR-0027), ``auth_audit`` records authentication outcomes (ADR-0050).
+"""
+
+from typing import Literal, cast
+
+from fastapi import APIRouter, HTTPException, Request
+
+from healthspan import reads
+from healthspan.api_security import require
+from healthspan.service_runtime import ServiceRuntime
+
+router = APIRouter()
+
+LAB_DRAWS_PATH = "/v1/lab-draws"
+LAB_RESULTS_PATH = "/v1/lab-results"
+LABS_PATH = "/v1/labs"
+BIOMARKERS_PATH = "/v1/biomarkers"
+
+Order = Literal["asc", "desc"]
+
+
+def _effective_limit(request: Request, limit: int | None) -> int:
+    """Clamp the requested page size to the server-enforced cap (ADR-0053)."""
+    cap = _runtime(request).cfg.service.page_cap
+    if limit is None:
+        return cap
+    if limit < 1:
+        raise HTTPException(status_code=422, detail="limit must be >= 1")
+    return min(limit, cap)
+
+
+def _runtime(request: Request) -> ServiceRuntime:
+    return cast(ServiceRuntime, request.app.state.runtime)
+
+
+def _page(page: reads.Page) -> dict[str, object]:
+    return {"items": page.items, "next_cursor": page.next_cursor}
+
+
+def _found(row: reads.Row | None, what: str, row_id: int) -> reads.Row:
+    if row is None:
+        # Absent and superseded ids answer identically: the current view has
+        # no such row (ADR-0027 readers consume current state by name).
+        raise HTTPException(status_code=404, detail=f"no current {what} {row_id}")
+    return row
+
+
+@router.get(LAB_DRAWS_PATH, dependencies=[require("read")])
+def list_lab_draws(
+    request: Request,
+    lab_id: int | None = None,
+    draw_from: str | None = None,
+    draw_to: str | None = None,
+    order: Order = "desc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_lab_draws(
+            _runtime(request).pool.connection(),
+            lab_id=lab_id,
+            draw_from=draw_from,
+            draw_to=draw_to,
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(LAB_DRAWS_PATH + "/{row_id}", dependencies=[require("read")])
+def get_lab_draw(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_lab_draw(_runtime(request).pool.connection(), row_id)
+    return _found(row, "lab draw", row_id)
+
+
+@router.get(LAB_RESULTS_PATH, dependencies=[require("read")])
+def list_lab_results(
+    request: Request,
+    biomarker_id: int | None = None,
+    lab_draw_id: int | None = None,
+    lab_id: int | None = None,
+    draw_from: str | None = None,
+    draw_to: str | None = None,
+    order: Order = "desc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_lab_results(
+            _runtime(request).pool.connection(),
+            biomarker_id=biomarker_id,
+            lab_draw_id=lab_draw_id,
+            lab_id=lab_id,
+            draw_from=draw_from,
+            draw_to=draw_to,
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(LAB_RESULTS_PATH + "/{row_id}", dependencies=[require("read")])
+def get_lab_result(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_lab_result(_runtime(request).pool.connection(), row_id)
+    return _found(row, "lab result", row_id)
+
+
+@router.get(LABS_PATH, dependencies=[require("read")])
+def list_labs(
+    request: Request,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_labs(
+            _runtime(request).pool.connection(),
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(LABS_PATH + "/{row_id}", dependencies=[require("read")])
+def get_lab(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_lab(_runtime(request).pool.connection(), row_id)
+    return _found(row, "lab", row_id)
+
+
+@router.get(BIOMARKERS_PATH, dependencies=[require("read")])
+def list_biomarkers(
+    request: Request,
+    category: str | None = None,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_biomarkers(
+            _runtime(request).pool.connection(),
+            category=category,
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(BIOMARKERS_PATH + "/{row_id}", dependencies=[require("read")])
+def get_biomarker(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_biomarker(_runtime(request).pool.connection(), row_id)
+    return _found(row, "biomarker", row_id)

@@ -80,6 +80,7 @@ The Core Service app is built with `openapi_url=None`, `docs_url=None`, `redoc_u
 - **[ADR-0046](0046-filesystem-layout-and-config-discovery.md)**: navigation link — the config gains a `[service]` section (its keys and defaults live here)
 
 ## Links
+- Extended by: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the `[service]` section gains `page_cap` (read-endpoint page bound)
 - Extends: [ADR-0006](0006-application-architecture.md) — supplies the `[service]` config-section shape and defaults ADR-0006 leaves open
 - Extends: [ADR-0046](0046-filesystem-layout-and-config-discovery.md) — the `[service]` section parsed under its strict discovery/validation rules
 - Related: [ADR-0037](0037-core-service-concurrency-and-driver.md) — the concurrency model the skeleton is built to (async liveness off a cached flag; sync repository + threadpool bridge for later WIs)

@@ -105,3 +105,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0050](0050-token-store-and-auth-implementation-decisions.md) | Token-Store and Auth-Enforcement Implementation Decisions (Phase 2 WI-2) | Proposed |
 | [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) | Auth Lifecycle, Rate-Limiting, and Bootstrap Implementation Decisions (Phase 2 WI-2b) | Proposed |
 | [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) | Bulk-Import Identity, Natural Keys, and Conflict Resolution (Phase 2 WI-3) | Proposed |
+| [ADR-0053](0053-read-endpoint-surface-and-pagination.md) | Read-Endpoint Surface, Keyset Pagination, and Value-Fidelity Serialization (Phase 2 WI-4) | Proposed |

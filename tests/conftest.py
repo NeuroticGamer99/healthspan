@@ -67,7 +67,9 @@ def make_config(tmp_path: Path) -> Callable[[], Config]:
                 directory=tmp_path / "backups", schedule="daily", retention_count=14
             ),
             logging=LoggingConfig(level="INFO"),
-            service=ServiceConfig(host="127.0.0.1", port=8464, passphrase_file=None),
+            service=ServiceConfig(
+                host="127.0.0.1", port=8464, passphrase_file=None, page_cap=100
+            ),
             auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
             path=tmp_path / "config.toml",
             source=ConfigSource.FLAG,
