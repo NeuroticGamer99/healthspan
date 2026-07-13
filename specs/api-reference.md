@@ -89,9 +89,26 @@ A `lab_draws` match is *reused* so its id stays stable and its results stay atta
 `data.imported`/`data.corrected` event emission is deferred to Phase 4 with the event bus; the `audit_log` rows are the durable record until then.
 
 ### Data query and retrieval
-The primary read path for the GUI, MCP server, and CLI. Endpoint design will follow from the schema and the MCP tool definitions in [design-rationale.md](design-rationale.md).
+The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)): generic list/get over the current-state views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)) for the import-populated tables, plus the two catalog tables that make their foreign keys interpretable. All routes require scope `read`. Semantic query endpoints (biomarker history, panel by date — the MCP tool shapes in [design-rationale.md](design-rationale.md)) are deferred to Phase 4; the filters below already express them.
 
-*Endpoints TBD during implementation.*
+| Endpoint | List filters |
+|---|---|
+| `GET /v1/lab-draws`, `GET /v1/lab-draws/{id}` | `lab_id`, `draw_from`, `draw_to` |
+| `GET /v1/lab-results`, `GET /v1/lab-results/{id}` | `biomarker_id`, `lab_draw_id`, `lab_id`, `draw_from`, `draw_to` |
+| `GET /v1/labs`, `GET /v1/labs/{id}` | — |
+| `GET /v1/biomarkers`, `GET /v1/biomarkers/{id}` | `category` |
+
+**Pagination** — every list route takes `limit`, `cursor`, and `order`, and answers `{"items": [...], "next_cursor": <token|null>}`. The cursor is an opaque token; pass it back verbatim (with filters and `order` unchanged) to fetch the next page; `null` means exhaustion. Ordering is fixed per resource: `lab-draws`/`lab-results` by draw time, **newest-first** by default (`order=asc` for chronological walks); `labs`/`biomarkers` by name ascending. Page sizes are bounded by the server-enforced cap (`service.page_cap`, default 100 — the single enforcement point, MCP tool-convention rule 3 below): an omitted `limit` means a full capped page, an oversized `limit` **clamps** to the cap, `limit < 1`, a malformed cursor, or a cursor replayed under the other `order` is a `422`.
+
+`draw_from`/`draw_to` compare lexically against the stored ISO-8601 UTC `draw_utc`, so date-only prefixes (`draw_from=2024-06-01`) work naturally.
+
+**Response rows** mirror the table columns (minus `superseded_by`, `NULL` on every current row by construction). `lab_results` rows additionally carry:
+
+- the explicit value triple `value_num` / `comparator` / `value_text` ([ADR-0030](adr/0030-biomarker-identity.md)), the UCUM `unit` as stored ([ADR-0031](adr/0031-units-and-ucum.md)), and the lab's own `reference_low`/`reference_high`/`reference_text` (framework ranges are Phase 3 reference data)
+- `display` — a derived presentation string that preserves the comparator (`"<0.1"`, never a bare `0.1`); clients doing arithmetic use the triple
+- `draw_utc` and `lab_id` — read-only draw context embedded from the joined draw, so a biomarker-history page is plottable without per-row draw fetches
+
+**Get-by-id** answers `200` with the row, or `404` for an id that is absent *or superseded* — the current view has no such row. Reads are not audited (`audit_log` records mutations, `auth_audit` records authentication outcomes).
 
 ### Data export
 Defined in [ADR-0015](adr/0015-data-export.md). Platform-native JSON and CSV export with date range, data type, and biomarker filtering.

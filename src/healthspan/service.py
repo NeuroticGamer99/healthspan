@@ -39,6 +39,7 @@ from healthspan.api_health import router as health_router
 from healthspan.api_import import router as import_router
 from healthspan.api_metrics import MetricsCounters, MetricsMiddleware
 from healthspan.api_metrics import router as metrics_router
+from healthspan.api_read import router as read_router
 from healthspan.api_security import (
     AuthFailureRateLimiter,
     LivenessRateLimiter,
@@ -276,6 +277,7 @@ def create_app(runtime: ServiceRuntime) -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(tokens_router)
     app.include_router(import_router)
+    app.include_router(read_router)
 
     public_paths = assert_all_routes_declared(app)
     if public_paths != [LIVENESS_PATH]:

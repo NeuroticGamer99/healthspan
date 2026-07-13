@@ -124,6 +124,7 @@ def _render_toml(cfg: Config) -> str:
                 # document (an empty path would be rejected on reload).
                 else '# passphrase_file = ""  (unset; an OS-secret file path)'
             ),
+            f"page_cap = {cfg.service.page_cap}",
             "",
             "[auth]",
             f"failure_threshold = {cfg.auth.failure_threshold}",
