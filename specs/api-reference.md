@@ -29,9 +29,64 @@ Every authentication outcome — including success — writes one `auth_audit` r
 ## Endpoint Groups
 
 ### Data import
-Defined in [ADR-0004](adr/0004-data-ingestion-strategy.md). Bulk import with full-batch validation, atomic transactions, dry-run mode, and explicit conflict policies.
+Defined in [ADR-0004](adr/0004-data-ingestion-strategy.md) and concretized in [ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md). Implemented in Phase 2 WI-3.
 
-*Endpoints TBD during implementation.*
+| Endpoint | Auth | Behavior |
+|---|---|---|
+| `POST /v1/import` | `import` | Validate a per-table batch (all errors collected first), then apply it in one atomic transaction under an explicit conflict policy; `?dry_run=true` validates and reports counts without writing |
+
+**Request body** (`application/json`):
+
+```json
+{
+  "source": "manual",
+  "adapter_id": null,
+  "adapter_version": null,
+  "note": null,
+  "conflict_policy": "reject | skip | upsert",
+  "lab_draws":   [ { /* row */ } ],
+  "lab_results": [ { /* row */ } ]
+}
+```
+
+- `conflict_policy` is **required** — there is no implicit default that mutates data ([ADR-0004](adr/0004-data-ingestion-strategy.md)). Unknown top-level keys (a mistyped field or an unregistered table name) are rejected `422`.
+- Phase 2 registers exactly two importable tables — `lab_draws` and `lab_results` ([development-plan.md](development-plan.md)); others land with their Phase-7 adapters. Each is a list of row objects whose columns are the [data-model.md](data-model.md) columns of that table.
+- **Row `id` is a batch-local handle** ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md)): it wires intra-batch foreign keys (a `lab_results` row's `lab_draw_id` names a `lab_draws` row's payload `id`) and is never persistent identity — the server assigns real primary keys and rewrites the child FK. A `lab_results` row must reference a `lab_draws` row present in the same batch. `import_batch_id`/`superseded_by` in a payload row are ignored (server-owned).
+- **Conflict identity is a natural key per table**, enforced as a partial-unique index over current rows (migration 0003): `lab_draws` = `(lab_id, draw_utc)`, `lab_results` = `(lab_draw_id, biomarker_id)`. External foreign keys (`lab_id`, `biomarker_id`) must already exist in the catalog (no name resolution or catalog seeding this phase). The [ADR-0030](adr/0030-biomarker-identity.md) value model is enforced structurally: a result needs `value_num` or `value_text`, and a `comparator` (`<`, `<=`, `>=`, `>`) requires `value_num`.
+
+**Conflict resolution** ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md), [ADR-0027](adr/0027-audit-trail-and-corrections.md)) — a *conflict* is an incoming row whose natural key exists and whose compared columns differ:
+
+| Policy | New key | Identical | Differs — `lab_results` (value) | Differs — `lab_draws` (metadata) |
+|---|---|---|---|---|
+| `reject` | insert | no-op | batch fails `422`, all conflicts listed | batch fails `422` |
+| `skip` | insert | `rows_unchanged` | keep existing, `rows_skipped` | keep existing, `rows_skipped` |
+| `upsert` | insert | `rows_unchanged` | supersede (insert + chain, per-row `correct` audit), `rows_corrected` | in-place `update` (per-row image audit), `rows_corrected` |
+
+A `lab_draws` match is *reused* so its id stays stable and its results stay attached; only its designated-metadata columns are repaired in place. A `lab_results` value difference supersedes, so no clinical value is lost. Inserts are audited at batch level (one `import` row per (batch, table), zero per-row insert rows — [ADR-0027](adr/0027-audit-trail-and-corrections.md)); the audit `actor` is the token name.
+
+**Success response** (`200`):
+
+```json
+{
+  "batch_id": 12,
+  "dry_run": false,
+  "conflict_policy": "upsert",
+  "summary": {
+    "lab_draws":   {"rows_inserted": 1, "rows_corrected": 0, "rows_skipped": 0, "rows_unchanged": 0},
+    "lab_results": {"rows_inserted": 3, "rows_corrected": 1, "rows_skipped": 0, "rows_unchanged": 2}
+  }
+}
+```
+
+`batch_id` is the `import_batches` provenance id, or `null` on a dry-run. The four per-table counts partition every input row for that table.
+
+**Validation error** (`422`) — the whole batch is rejected before any write; `detail` is the full collected error list, one entry per offending row:
+
+```json
+{"detail": [{"table": "lab_results", "row_index": 2, "message": "biomarker_id=99 does not exist in biomarkers"}]}
+```
+
+`data.imported`/`data.corrected` event emission is deferred to Phase 4 with the event bus; the `audit_log` rows are the durable record until then.
 
 ### Data query and retrieval
 The primary read path for the GUI, MCP server, and CLI. Endpoint design will follow from the schema and the MCP tool definitions in [design-rationale.md](design-rationale.md).
@@ -115,6 +170,7 @@ The contract is the AI-facing half of the [ADR-0030](adr/0030-biomarker-identity
 
 ## Links
 - Related: [ADR-0004](adr/0004-data-ingestion-strategy.md) — import endpoint behavior
+- Related: [ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md) — import identity, natural keys, conflict resolution
 - Related: [ADR-0006](adr/0006-application-architecture.md) — Core Service as the API owner
 - Related: [ADR-0007](adr/0007-mcp-transport.md) — MCP server as an API client
 - Related: [ADR-0011](adr/0011-event-bus.md) — event stream endpoints

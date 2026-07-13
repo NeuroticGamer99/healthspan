@@ -1,0 +1,684 @@
+"""Bulk import engine: validation, conflict resolution, and audit (ADR-0004/0027/0052).
+
+The single validated write path (ADR-0004). One import is: full-batch
+validation collecting *every* error before any write; then, if clean, one
+atomic transaction that resolves each row against its table's natural key and
+applies the caller's explicit conflict policy. A dry-run runs the identical
+apply and rolls it back, so its counts are truthful and it writes nothing.
+
+Identity (ADR-0052): the payload is a per-table row map; a row's ``id`` is a
+*batch-local handle* that wires intra-batch foreign keys (a ``lab_results``
+row's ``lab_draw_id`` names a ``lab_draws`` row's payload ``id``), never
+persistent identity. The server owns primary keys. Matching is by a defined
+natural key per table, enforced as a partial-unique index over current rows
+(migration 0003):
+
+* ``lab_draws`` = ``(lab_id, draw_utc)`` — an identity/container row. A match
+  is *reused* (its id resolves child FKs); a genuine metadata difference is an
+  in-place ``update`` (ADR-0027 designated-metadata carve-out), never a
+  supersession, so the draw id never moves and its results stay attached.
+* ``lab_results`` = ``(lab_draw_id, biomarker_id)`` — a value row. A genuine
+  difference *supersedes* (insert the corrected row, chain the old one, per-row
+  ``correct`` audit with both images), so no clinical value is ever lost.
+
+Only these two tables are registered this phase; the primitives are
+table-agnostic and the registry extends for the Phase-7 adapters (ADR-0052).
+"""
+
+import contextlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+import sqlcipher3
+
+from healthspan import audit
+from healthspan.keyparams import utc_now_iso
+
+# Conflict policies (ADR-0004): explicit and required, no silent default.
+REJECT = "reject"
+SKIP = "skip"
+UPSERT = "upsert"
+POLICIES = frozenset({REJECT, SKIP, UPSERT})
+
+# Table classifications (ADR-0052): a value row supersedes on a genuine
+# difference; an identity row reuses and repairs metadata in place.
+CLASSIFICATION_VALUE = "value"
+CLASSIFICATION_IDENTITY = "identity"
+
+# Payload keys that are recognized but not data columns: the batch-local
+# handle and the two server-owned provenance columns (ignored if supplied).
+_RESERVED_KEYS = frozenset({"id", "import_batch_id", "superseded_by"})
+
+_COMPARATORS = frozenset({"<", "<=", ">=", ">"})
+
+
+@dataclass(frozen=True)
+class ImportableTable:
+    """A table the import endpoint may write, and how it is matched (ADR-0052)."""
+
+    name: str
+    natural_key: tuple[str, ...]
+    columns: tuple[str, ...]  # client-supplyable data columns, in insert order
+    defaults: Mapping[str, object]  # fill for an omitted non-key column
+    classification: str
+    parent_fk: tuple[str, str] | None  # (fk column, parent table) intra-batch handle
+    external_fks: tuple[tuple[str, str], ...]  # (fk column, referenced table)
+    requires_value_model: bool = False
+
+    @property
+    def compared(self) -> tuple[str, ...]:
+        """Non-key columns whose difference counts as a change (ADR-0052)."""
+        return tuple(c for c in self.columns if c not in self.natural_key)
+
+
+TABLES: dict[str, ImportableTable] = {
+    "lab_draws": ImportableTable(
+        name="lab_draws",
+        natural_key=("lab_id", "draw_utc"),
+        columns=(
+            "lab_id",
+            "draw_utc",
+            "draw_local_recorded",
+            "draw_local_tz",
+            "draw_tz_inferred",
+            "draw_context",
+            "fasting",
+            "notes",
+        ),
+        defaults={
+            "draw_local_recorded": None,
+            "draw_local_tz": None,
+            "draw_tz_inferred": 0,
+            "draw_context": None,
+            "fasting": None,
+            "notes": None,
+        },
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(("lab_id", "labs"),),
+    ),
+    "lab_results": ImportableTable(
+        name="lab_results",
+        natural_key=("lab_draw_id", "biomarker_id"),
+        columns=(
+            "lab_draw_id",
+            "biomarker_id",
+            "value_num",
+            "comparator",
+            "value_text",
+            "unit",
+            "reference_low",
+            "reference_high",
+            "reference_text",
+            "notes",
+        ),
+        defaults={
+            "value_num": None,
+            "comparator": None,
+            "value_text": None,
+            "unit": None,
+            "reference_low": None,
+            "reference_high": None,
+            "reference_text": None,
+            "notes": None,
+        },
+        classification=CLASSIFICATION_VALUE,
+        parent_fk=("lab_draw_id", "lab_draws"),
+        external_fks=(("biomarker_id", "biomarkers"),),
+        requires_value_model=True,
+    ),
+}
+
+# Parent-before-child order (ADR-0052): a child's handles resolve to ids the
+# parent pass has already assigned.
+IMPORT_ORDER: tuple[str, ...] = ("lab_draws", "lab_results")
+
+Row = Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class BatchMeta:
+    """Provenance for one import batch (the ``import_batches`` row, ADR-0004)."""
+
+    source: str
+    adapter_id: str | None = None
+    adapter_version: str | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class RowError:
+    """One collected validation failure (ADR-0004: all errors, then no write)."""
+
+    table: str
+    row_index: int  # 0-based within its table's list; -1 for a table-level error
+    message: str
+
+
+@dataclass(frozen=True)
+class TableSummary:
+    """Per-table reconciliation counts; the four partition every input row."""
+
+    rows_inserted: int = 0
+    rows_corrected: int = 0
+    rows_skipped: int = 0
+    rows_unchanged: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "rows_inserted": self.rows_inserted,
+            "rows_corrected": self.rows_corrected,
+            "rows_skipped": self.rows_skipped,
+            "rows_unchanged": self.rows_unchanged,
+        }
+
+
+@dataclass(frozen=True)
+class ImportOutcome:
+    """The result of an import: the batch id (``None`` on dry-run) and counts."""
+
+    batch_id: int | None
+    dry_run: bool
+    conflict_policy: str
+    summaries: dict[str, TableSummary]
+
+
+class ImportValidationError(Exception):
+    """Full-batch validation failed; ``errors`` names every offending row."""
+
+    def __init__(self, errors: list[RowError]) -> None:
+        self.errors = errors
+        super().__init__(f"{len(errors)} import validation error(s)")
+
+
+@dataclass
+class _Counts:
+    inserted: int = 0
+    corrected: int = 0
+    skipped: int = 0
+    unchanged: int = 0
+
+    def summary(self) -> TableSummary:
+        return TableSummary(
+            rows_inserted=self.inserted,
+            rows_corrected=self.corrected,
+            rows_skipped=self.skipped,
+            rows_unchanged=self.unchanged,
+        )
+
+
+# --------------------------------------------------------------------------
+# Public entry
+# --------------------------------------------------------------------------
+
+
+def run_import(
+    conn: sqlcipher3.Connection,
+    *,
+    batch: BatchMeta,
+    payload: Mapping[str, Sequence[Row]],
+    conflict_policy: str,
+    actor: str | None,
+    dry_run: bool,
+) -> ImportOutcome:
+    """Validate, then atomically apply (or dry-run) an import (ADR-0004/0052).
+
+    Raises :class:`ImportValidationError` with the full error list if the
+    batch does not validate — before any transaction opens. On a clean batch
+    the apply runs in one ``BEGIN IMMEDIATE`` transaction; a dry-run rolls it
+    back (writing nothing) while returning the same truthful counts.
+    """
+    if conflict_policy not in POLICIES:
+        raise ImportValidationError(
+            [RowError("", -1, f"unknown conflict_policy {conflict_policy!r}")]
+        )
+    errors = _validate(conn, payload, conflict_policy)
+    if errors:
+        raise ImportValidationError(errors)
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        batch_id, summaries = _apply(conn, batch, payload, conflict_policy, actor)
+    except BaseException:
+        _rollback(conn)
+        raise
+    if dry_run:
+        conn.execute("ROLLBACK")
+        return ImportOutcome(None, True, conflict_policy, summaries)
+    conn.execute("COMMIT")
+    return ImportOutcome(batch_id, False, conflict_policy, summaries)
+
+
+def _rollback(conn: sqlcipher3.Connection) -> None:
+    with contextlib.suppress(sqlcipher3.Error):
+        conn.execute("ROLLBACK")
+
+
+# --------------------------------------------------------------------------
+# Validation (reads only; collects every error before any write)
+# --------------------------------------------------------------------------
+
+
+def _validate(
+    conn: sqlcipher3.Connection,
+    payload: Mapping[str, Sequence[Row]],
+    policy: str,
+) -> list[RowError]:
+    errors: list[RowError] = []
+    for name in payload:
+        if name not in TABLES:
+            errors.append(
+                RowError(
+                    name,
+                    -1,
+                    f"unknown import table {name!r}; importable: {sorted(TABLES)}",
+                )
+            )
+
+    draws = payload.get("lab_draws") or ()
+    results = payload.get("lab_results") or ()
+    draw_spec = TABLES["lab_draws"]
+    result_spec = TABLES["lab_results"]
+    assert result_spec.parent_fk is not None  # noqa: S101 - registry invariant
+    parent_col = result_spec.parent_fk[0]
+
+    # handle -> existing current draw id (or None if the draw is new to the DB)
+    handle_existing: dict[object, int | None] = {}
+    handle_seen: set[object] = set()
+    draw_keys_seen: set[tuple[object, ...]] = set()
+
+    for i, raw in enumerate(draws):
+        row_errs = _row_errors(conn, draw_spec, raw)
+        handle = raw.get("id")
+        if handle is not None:
+            if handle in handle_seen:
+                row_errs.append(f"duplicate batch-local id {handle!r} in lab_draws")
+            handle_seen.add(handle)
+        if all(raw.get(c) is not None for c in draw_spec.natural_key):
+            key = tuple(raw.get(c) for c in draw_spec.natural_key)
+            if key in draw_keys_seen:
+                row_errs.append(f"duplicate natural key {key} in lab_draws")
+            draw_keys_seen.add(key)
+            existing = _find_id(conn, draw_spec, key)
+            if handle is not None:
+                handle_existing[handle] = existing
+            if existing is not None and policy == REJECT:
+                normalized = _normalize(draw_spec, raw)
+                image = audit.row_image(conn, draw_spec.name, existing)
+                if _differs(draw_spec, image, normalized):
+                    row_errs.append(
+                        f"conflict: a lab_draws row {key} already exists "
+                        "(policy 'reject')"
+                    )
+        errors.extend(RowError("lab_draws", i, m) for m in row_errs)
+
+    result_keys_seen: set[tuple[object, object]] = set()
+    for i, raw in enumerate(results):
+        row_errs = _row_errors(conn, result_spec, raw)
+        handle = raw.get(parent_col)
+        if handle is None:
+            row_errs.append(
+                f"missing {parent_col} (the batch-local id of a lab_draws row "
+                "in this import)"
+            )
+        elif handle not in handle_seen:
+            row_errs.append(
+                f"{parent_col}={handle!r} matches no lab_draws row in this import"
+            )
+        biomarker = raw.get("biomarker_id")
+        if handle is not None and biomarker is not None:
+            within = (handle, biomarker)
+            if within in result_keys_seen:
+                row_errs.append(
+                    f"duplicate ({parent_col}, biomarker_id)={within} in lab_results"
+                )
+            result_keys_seen.add(within)
+            existing_parent = handle_existing.get(handle)
+            if existing_parent is not None and policy == REJECT:
+                key = (existing_parent, biomarker)
+                existing = _find_id(conn, result_spec, key)
+                if existing is not None:
+                    normalized = _normalize(
+                        result_spec, raw, resolved_parent=existing_parent
+                    )
+                    image = audit.row_image(conn, result_spec.name, existing)
+                    if _differs(result_spec, image, normalized):
+                        row_errs.append(
+                            f"conflict: a lab_results row for biomarker "
+                            f"{biomarker!r} in this draw already exists "
+                            "(policy 'reject')"
+                        )
+        errors.extend(RowError("lab_results", i, m) for m in row_errs)
+
+    return errors
+
+
+def _row_errors(
+    conn: sqlcipher3.Connection, spec: ImportableTable, raw: Row
+) -> list[str]:
+    """Shape, required-column, foreign-key, domain, and value-model errors."""
+    errs: list[str] = []
+    allowed = set(spec.columns) | _RESERVED_KEYS
+    for key in raw:
+        if key not in allowed:
+            errs.append(f"unknown column {key!r} for {spec.name}")
+
+    for col in spec.natural_key:
+        if spec.parent_fk is not None and col == spec.parent_fk[0]:
+            continue  # the handle's presence is checked in the child orchestration
+        if raw.get(col) is None:
+            errs.append(f"missing required column {col!r} for {spec.name}")
+
+    for col, ref in spec.external_fks:
+        value = raw.get(col)
+        if value is not None and not _fk_exists(conn, ref, value):
+            errs.append(f"{col}={value!r} does not exist in {ref}")
+
+    errs.extend(_domain_errors(spec, raw))
+    if spec.requires_value_model:
+        errs.extend(_value_model_errors(raw))
+    return errs
+
+
+def _domain_errors(spec: ImportableTable, raw: Row) -> list[str]:
+    errs: list[str] = []
+    if spec.name == "lab_draws":
+        inferred = raw.get("draw_tz_inferred")
+        if inferred is not None and inferred not in (0, 1):
+            errs.append("draw_tz_inferred must be 0 or 1")
+        fasting = raw.get("fasting")
+        if fasting is not None and fasting not in (0, 1):
+            errs.append("fasting must be 0 or 1")
+    elif spec.name == "lab_results":
+        comparator = raw.get("comparator")
+        if comparator is not None and comparator not in _COMPARATORS:
+            errs.append("comparator must be one of <, <=, >=, > (ADR-0030)")
+    return errs
+
+
+def _value_model_errors(raw: Row) -> list[str]:
+    errs: list[str] = []
+    if raw.get("value_num") is None and raw.get("value_text") is None:
+        errs.append("a result needs value_num or value_text (ADR-0030)")
+    if raw.get("comparator") is not None and raw.get("value_num") is None:
+        errs.append("comparator requires a value_num (ADR-0030)")
+    return errs
+
+
+# --------------------------------------------------------------------------
+# Apply (writes; inside the caller's BEGIN IMMEDIATE)
+# --------------------------------------------------------------------------
+
+
+def _apply(
+    conn: sqlcipher3.Connection,
+    batch: BatchMeta,
+    payload: Mapping[str, Sequence[Row]],
+    policy: str,
+    actor: str | None,
+) -> tuple[int, dict[str, TableSummary]]:
+    batch_id = _insert_batch(conn, batch)
+    summaries: dict[str, TableSummary] = {}
+    handle_real: dict[object, int] = {}
+
+    for table in IMPORT_ORDER:
+        rows = payload.get(table) or ()
+        if not rows:
+            continue
+        spec = TABLES[table]
+        counts = _apply_table(conn, spec, rows, policy, actor, batch_id, handle_real)
+        summaries[table] = counts.summary()
+        audit.record_import(
+            conn,
+            table_name=table,
+            summary=_batch_summary(counts, policy, batch),
+            actor=actor,
+            import_batch_id=batch_id,
+        )
+    return batch_id, summaries
+
+
+def _apply_table(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    rows: Sequence[Row],
+    policy: str,
+    actor: str | None,
+    batch_id: int,
+    handle_real: dict[object, int],
+) -> _Counts:
+    counts = _Counts()
+    for raw in rows:
+        resolved_parent = _resolve_parent(spec, raw, handle_real)
+        normalized = _normalize(spec, raw, resolved_parent=resolved_parent)
+        key = tuple(normalized[c] for c in spec.natural_key)
+        match = _find_id(conn, spec, key)
+        if match is None:
+            row_id = _insert_row(conn, spec, normalized, batch_id)
+            counts.inserted += 1
+        else:
+            row_id = _reconcile(
+                conn, spec, match, normalized, policy, actor, batch_id, counts
+            )
+        handle = raw.get("id")
+        if handle is not None:
+            handle_real[handle] = row_id
+    return counts
+
+
+def _reconcile(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    existing_id: int,
+    normalized: dict[str, object],
+    policy: str,
+    actor: str | None,
+    batch_id: int,
+    counts: _Counts,
+) -> int:
+    """A natural-key match: no-op, skip, supersede, or in-place repair.
+
+    Returns the row id that now holds this key (the reused/updated existing id
+    for identity rows, the new superseding id for a corrected value row) so a
+    child's foreign key resolves to a current row.
+    """
+    image = audit.row_image(conn, spec.name, existing_id)
+    if not _differs(spec, image, normalized):
+        counts.unchanged += 1
+        return existing_id
+    if policy == SKIP:
+        counts.skipped += 1
+        return existing_id
+    # UPSERT (REJECT was rejected during validation).
+    counts.corrected += 1
+    if spec.classification == CLASSIFICATION_VALUE:
+        return _supersede(conn, spec, existing_id, image, normalized, actor, batch_id)
+    _update_in_place(conn, spec, existing_id, image, normalized, actor, batch_id)
+    return existing_id
+
+
+def _supersede(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    old_id: int,
+    old_image: audit.RowImage,
+    normalized: dict[str, object],
+    actor: str | None,
+    batch_id: int,
+) -> int:
+    """Value correction: insert the new row, chain the old (ADR-0027).
+
+    The partial-unique index (migration 0003) forbids two *current* rows on
+    one natural key even transiently, so the new row is inserted already
+    parked out of the index (``superseded_by`` = the old id), the old row is
+    then chained to it, and only then is the new row released to current — no
+    instant has two current rows for the key.
+    """
+    new_id = _insert_row(conn, spec, normalized, batch_id, superseded_by=old_id)
+    conn.execute(
+        f"UPDATE {spec.name} SET superseded_by = ? WHERE id = ?",  # noqa: S608 - table from registry
+        (new_id, old_id),
+    )
+    conn.execute(
+        f"UPDATE {spec.name} SET superseded_by = NULL WHERE id = ?",  # noqa: S608
+        (new_id,),
+    )
+    new_image = audit.row_image(conn, spec.name, new_id)
+    audit.record_correct(
+        conn,
+        table_name=spec.name,
+        row_id=new_id,
+        old_image=old_image,
+        new_image=new_image,
+        actor=actor,
+        import_batch_id=batch_id,
+        reason=f"upsert re-import, batch {batch_id}",
+    )
+    return new_id
+
+
+def _update_in_place(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    row_id: int,
+    old_image: audit.RowImage,
+    normalized: dict[str, object],
+    actor: str | None,
+    batch_id: int,
+) -> None:
+    """Designated-metadata repair on an identity row: in-place ``update`` (ADR-0027)."""
+    assignments = ", ".join(f"{c} = ?" for c in spec.compared)
+    conn.execute(
+        f"UPDATE {spec.name} SET {assignments} WHERE id = ?",  # noqa: S608 - registry
+        (*(normalized[c] for c in spec.compared), row_id),
+    )
+    new_image = audit.row_image(conn, spec.name, row_id)
+    audit.record_update(
+        conn,
+        table_name=spec.name,
+        row_id=row_id,
+        old_image=old_image,
+        new_image=new_image,
+        actor=actor,
+        import_batch_id=batch_id,
+    )
+
+
+# --------------------------------------------------------------------------
+# Row primitives
+# --------------------------------------------------------------------------
+
+
+def _resolve_parent(
+    spec: ImportableTable, raw: Row, handle_real: dict[object, int]
+) -> int | None:
+    if spec.parent_fk is None:
+        return None
+    handle = raw.get(spec.parent_fk[0])
+    # Validation guaranteed the handle names an in-batch parent already applied.
+    return handle_real[handle]
+
+
+def _normalize(
+    spec: ImportableTable, raw: Row, resolved_parent: int | None = None
+) -> dict[str, object]:
+    """A full data-column image: supplied values, defaults for omitted ones.
+
+    The parent foreign key (a handle in the payload) is replaced by the
+    resolved real parent id, so the natural key and the insert use identity,
+    never the batch-local handle (ADR-0052).
+    """
+    out: dict[str, object] = {}
+    for col in spec.columns:
+        if (
+            spec.parent_fk is not None
+            and col == spec.parent_fk[0]
+            and resolved_parent is not None
+        ):
+            out[col] = resolved_parent
+        elif col in raw:
+            out[col] = raw[col]
+        else:
+            out[col] = spec.defaults[col]
+    return out
+
+
+def _insert_row(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    normalized: Mapping[str, object],
+    batch_id: int,
+    superseded_by: int | None = None,
+) -> int:
+    columns = (*spec.columns, "import_batch_id", "superseded_by")
+    values = (*(normalized[c] for c in spec.columns), batch_id, superseded_by)
+    placeholders = ", ".join("?" for _ in columns)
+    cursor = conn.execute(
+        f"INSERT INTO {spec.name} ({', '.join(columns)}) "  # noqa: S608 - registry
+        f"VALUES ({placeholders})",
+        values,
+    )
+    return _last_id(cursor)
+
+
+def _insert_batch(conn: sqlcipher3.Connection, batch: BatchMeta) -> int:
+    cursor = conn.execute(
+        "INSERT INTO import_batches (source, adapter_id, adapter_version, "
+        "created_utc, note) VALUES (?, ?, ?, ?, ?)",
+        (
+            batch.source,
+            batch.adapter_id,
+            batch.adapter_version,
+            utc_now_iso(),
+            batch.note,
+        ),
+    )
+    return _last_id(cursor)
+
+
+def _last_id(cursor: sqlcipher3.Cursor) -> int:
+    row_id = cursor.lastrowid
+    if row_id is None:  # pragma: no cover - INSERT always assigns a rowid
+        raise RuntimeError("INSERT did not assign a rowid")
+    return int(row_id)
+
+
+def _find_id(
+    conn: sqlcipher3.Connection, spec: ImportableTable, key: tuple[object, ...]
+) -> int | None:
+    where = " AND ".join(f"{c} = ?" for c in spec.natural_key)
+    row = conn.execute(
+        f"SELECT id FROM {spec.name} "  # noqa: S608 - table and columns from registry
+        f"WHERE {where} AND superseded_by IS NULL",
+        key,
+    ).fetchone()
+    return None if row is None else int(row[0])
+
+
+def _fk_exists(conn: sqlcipher3.Connection, table: str, value: object) -> bool:
+    row = conn.execute(
+        f"SELECT 1 FROM {table} WHERE id = ?",  # noqa: S608 - table from registry
+        (value,),
+    ).fetchone()
+    return row is not None
+
+
+def _differs(
+    spec: ImportableTable, image: audit.RowImage, normalized: Mapping[str, object]
+) -> bool:
+    """Whether any compared column differs between stored and incoming rows."""
+    return any(image[c] != normalized[c] for c in spec.compared)
+
+
+def _batch_summary(counts: _Counts, policy: str, batch: BatchMeta) -> audit.RowImage:
+    """The ``import`` audit row's summary JSON (ADR-0027 batch-level audit)."""
+    return {
+        "rows_inserted": counts.inserted,
+        "rows_corrected": counts.corrected,
+        "rows_skipped": counts.skipped,
+        "rows_unchanged": counts.unchanged,
+        "conflict_policy": policy,
+        "source": batch.source,
+        "adapter_id": batch.adapter_id,
+        "adapter_version": batch.adapter_version,
+    }

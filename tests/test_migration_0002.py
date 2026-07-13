@@ -35,14 +35,14 @@ def conn(tmp_path: Path) -> Iterator[sqlcipher3.Connection]:
 # --------------------------------------------------------------------------
 
 
-def test_fresh_database_reaches_schema_version_2(
+def test_fresh_database_reaches_latest_schema(
     conn: sqlcipher3.Connection,
 ) -> None:
-    assert db.schema_version(conn) == 2
+    assert db.schema_version(conn) == 3
     ledger = conn.execute(
         "SELECT version, filename FROM schema_version ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in ledger] == [1, 2]
+    assert [row[0] for row in ledger] == [1, 2, 3]
     assert ledger[1][1] == "0002_tokens_and_auth_audit.sql"
 
 
@@ -58,7 +58,10 @@ def test_runner_applies_0002_incrementally_over_an_0001_database(
         path, KEY, [m for m in all_migrations if m.version == 1]
     )
     assert first.applied == (1,)
-    second = migrate.migrate_database(path, KEY, all_migrations)
+    # Scoped to versions ≤2 so this stays a focused 0002 incremental test even
+    # as later migrations (0003+) ship.
+    through_0002 = [m for m in all_migrations if m.version <= 2]
+    second = migrate.migrate_database(path, KEY, through_0002)
     assert second.applied == (2,)
     assert second.final_version == 2
 

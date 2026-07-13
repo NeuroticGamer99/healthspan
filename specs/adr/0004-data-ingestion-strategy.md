@@ -106,3 +106,4 @@ The specific interface contract is not finalized — it will be refined as the f
 - Related: [ADR-0010](0010-cli-plugin-model.md) — plugins can add new import sources
 - Related: [specs/security.md](../security.md) — bulk import validation requirements
 - Related: [open-questions.md](../open-questions.md) — per-source export format research
+- Related: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the Phase 2 implementation: payload identity, natural keys, per-table conflict resolution
