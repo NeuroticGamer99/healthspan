@@ -273,3 +273,17 @@ The data types above are realized as concrete tables by **migration 0001**, the 
 - **Append-only via `BEFORE UPDATE`/`BEFORE DELETE` `RAISE(ABORT)` triggers** — the `audit_log` pattern. Deliberately a separate table from `audit_log`: that one records data mutations ([ADR-0027](adr/0027-audit-trail-and-corrections.md)); this one records control-plane access, with different columns, retention, and query patterns.
 - Timestamps are UTC-only system event times — the four-column local-time quadruple is for clinically meaningful times, which these are not.
 - Retention/pruning is deferred to the jobs-table pruning pattern ([ADR-0012](adr/0012-job-abstraction.md), Phase 4).
+
+## Migration 0003 — Import conflict keys
+
+**Migration 0003** ([`src/healthspan/migrations/0003_import_conflict_keys.sql`](../src/healthspan/migrations/0003_import_conflict_keys.sql), Phase 2 WI-3) adds the natural-key invariants the bulk import endpoint matches on ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md)). It adds no columns — only two partial-unique indexes over *current* rows — so the [`*_current` view / `ALTER TABLE ADD COLUMN` recreation convention](open-questions.md) does not apply.
+
+- `ux_lab_draws_natural_key` — `UNIQUE (lab_id, draw_utc) WHERE superseded_by IS NULL`. One current draw per (lab, instant): a draw is one blood-draw event at one lab.
+- `ux_lab_results_natural_key` — `UNIQUE (lab_draw_id, biomarker_id) WHERE superseded_by IS NULL`. One current result per biomarker within a draw.
+
+Scoping the uniqueness to `superseded_by IS NULL` lets supersession chains coexist with the invariant — a superseded row leaves the index, so its replacement is the key's single current occupant. These are the conflict-detection keys for `/v1/import` ([ADR-0004](adr/0004-data-ingestion-strategy.md)/[ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md)), and the schema-level backstop that a bug or a direct writer cannot create a duplicate current row.
+
+### Import identity and mutation classes ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md))
+
+- **`import_batches` is the import provenance record.** One row per committed batch (`source`, optional `adapter_id`/`adapter_version`/`note`, `created_utc`); every row an import writes carries its `import_batch_id`, and the batch-level `audit_log` `import` row (one per (batch, table), summary counts) references it. Conflict policy and counts live in that audit summary, not on `import_batches`.
+- **`lab_draws` is an identity/container row; its non-key columns are designated metadata.** Under import upsert, a matched draw is *reused* (its id stays stable, keeping its results attached) and a genuine difference on `draw_local_recorded`/`draw_local_tz`/`draw_tz_inferred`/`draw_context`/`fasting`/`notes` is an in-place `update` ([ADR-0027](adr/0027-audit-trail-and-corrections.md)'s designated-metadata carve-out), not a supersession. `lab_draws` therefore never supersedes through import — it carries no clinical value to lose; the value rows are `lab_results`, which supersede on any difference.

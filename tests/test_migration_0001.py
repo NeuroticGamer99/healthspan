@@ -193,6 +193,17 @@ def test_value_model_accepts_exact_censored_and_qualitative(
     conn: sqlcipher3.Connection,
 ) -> None:
     draw_id, bm_id = _seed_lab_context(conn)
+    # Distinct biomarkers per row: the value-model CHECK is per-row, and the
+    # (lab_draw_id, biomarker_id) natural-key index (migration 0003) forbids
+    # two current results for one biomarker in a draw.
+    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('TestMarker2')")
+    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('TestMarker3')")
+    bm_id2 = _scalar(
+        conn, "SELECT id FROM biomarkers WHERE canonical_name = 'TestMarker2'"
+    )
+    bm_id3 = _scalar(
+        conn, "SELECT id FROM biomarkers WHERE canonical_name = 'TestMarker3'"
+    )
     conn.execute(
         "INSERT INTO lab_results (lab_draw_id, biomarker_id, value_num) "
         "VALUES (?, ?, 92.0)",
@@ -201,12 +212,12 @@ def test_value_model_accepts_exact_censored_and_qualitative(
     conn.execute(
         "INSERT INTO lab_results (lab_draw_id, biomarker_id, value_num, comparator) "
         "VALUES (?, ?, 0.1, '<')",
-        (draw_id, bm_id),
+        (draw_id, bm_id2),
     )  # below-detection: magnitude is the threshold, comparator marks it censored
     conn.execute(
         "INSERT INTO lab_results (lab_draw_id, biomarker_id, value_text) "
         "VALUES (?, ?, 'Not Detected')",
-        (draw_id, bm_id),
+        (draw_id, bm_id3),
     )  # qualitative
     assert conn.execute("SELECT count(*) FROM lab_results").fetchone() == (3,)
 

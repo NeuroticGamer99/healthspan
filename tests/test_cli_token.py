@@ -77,7 +77,7 @@ def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CliEnv]
         key=key,
         lock=lock,
         pool=ConnectionPool(cfg.database.path, key),
-        schema_version=2,
+        schema_version=3,
     )
     application = create_app(runtime)
     with TestClient(application):

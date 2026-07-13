@@ -184,6 +184,7 @@ The full command/query split is rejected along with event sourcing. What remains
 - Related: [ADR-0011](0011-event-bus.md) — reserved `data.*` events emitted by Core on validated mutations
 - Related: [ADR-0012](0012-job-abstraction.md) — `job_id` provenance on job-performed mutations
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — `import_batch_id` provenance; the single validated write path
+- Related: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — how the batch-level/per-row audit granularity and supersession map onto `lab_draws`/`lab_results` in the Phase 2 import path
 - Related: [ADR-0009](0009-database-migration.md) — `audit_log` and its immutability triggers land in migration 0001
 - Related: [ADR-0019](0019-multi-device-sync.md) / [ADR-0013](0013-encryption-at-rest.md) — encrypted backups own the recovery story that replay would otherwise provide
 - Related: [design-rationale.md](../design-rationale.md) — timezone correction workflow (the designated in-place metadata repair)

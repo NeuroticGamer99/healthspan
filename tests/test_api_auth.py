@@ -65,7 +65,7 @@ def harness(make_config: Callable[[], Config]) -> Iterator[Harness]:
         key=key,
         lock=lock,
         pool=ConnectionPool(cfg.database.path, key),
-        schema_version=2,
+        schema_version=3,
     )
     application = create_app(runtime)
     with TestClient(application) as client:
@@ -174,7 +174,7 @@ def test_health_detail_shape_and_values(harness: Harness) -> None:
         "uptime_seconds",
     }
     assert body["status"] == "healthy"
-    assert body["schema_version"] == 2
+    assert body["schema_version"] == 3
     assert body["db_connected"] is True
     assert body["uptime_seconds"] >= 0
 
