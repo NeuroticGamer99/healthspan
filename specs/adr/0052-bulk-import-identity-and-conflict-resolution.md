@@ -95,6 +95,7 @@ ADR-0004's "structured response" lists *rows rejected* as a success-response fie
 
 ## Links
 
+- Extended by: [ADR-0054](0054-biomarker-name-alias-fallback.md) — `lab_results` rows may carry `biomarker_name`, resolved before conflict detection
 - Implements: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import endpoint behavior
 - Implements: [ADR-0027](0027-audit-trail-and-corrections.md) — in-transaction audit, supersession, batch-level insert audit
 - Related: [ADR-0030](0030-biomarker-identity.md) — the value model import round-trips (comparator, qualitative results)

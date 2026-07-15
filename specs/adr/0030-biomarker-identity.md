@@ -113,6 +113,8 @@ These constraints compose unchanged with the `STRICT` table declaration recorded
 - Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — one biomarker concept, many LOINC codes; where the reported code is stored
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — framework range comparison relies on this value model and the canonical unit
 - Related: [ADR-0018](0018-fhir-interoperability.md) — `Observation.code` is a LOINC coding; `valueQuantity.comparator` is the value model adopted here
+- Concretized by: [ADR-0055](0055-biomarker-category-taxonomy.md) — the sketched `category` column becomes a `category_id` FK to a first-class `categories` table (identity/LOINC/value model unchanged)
+- Fallback specified by: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the name-based alias fallback this ADR anticipated
 - Related: [open-questions.md](../open-questions.md) — biomarker alias table (reduced, not replaced, by LOINC)
 - Related: [design-rationale.md](../design-rationale.md) — canonical biomarker names and the multi-source lab data rationale
 - Resolves review item 3.E (biomarker identity portion) from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)

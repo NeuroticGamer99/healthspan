@@ -69,7 +69,10 @@ The FastAPI Core Service, smallest useful surface:
 **Decision gates entering this phase** (owned by the database owner):
 
 1. ~~The [ADR-0031](adr/0031-units-and-ucum.md) conversion-engine sub-decision~~ — **resolved 2026-07-09: `ucumvert` (+ `pint`) behind an internal units module** ([ADR-0031](adr/0031-units-and-ucum.md), now Accepted). The property-based suite in [testing-strategy.md](testing-strategy.md) is the acceptance harness. `ucumvert`/`pint` land as new runtime dependencies here (the pip-audit CI gate has covered the dependency tree since Phase 1's first runtime dependencies — [ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)).
-2. **Biomarker category taxonomy** and the **name-based alias fallback** ([open-questions.md](open-questions.md), Schema) — both flagged "before bulk data entry begins." The only decision gate remaining on the critical path.
+2. ~~**Biomarker category taxonomy**~~ — **resolved 2026-07-14: first-class `categories` table + `category_id` FK, reserved `not_assigned` default, physiological-system seed vocabulary** ([ADR-0055](adr/0055-biomarker-category-taxonomy.md), Proposed). Lands with this phase's reference-data work item.
+3. ~~The **name-based alias fallback**~~ — **resolved 2026-07-14: `biomarker_aliases` table with server-side exact-match resolution; the import endpoint accepts `biomarker_name`** ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md), Proposed). Lands with this phase's reference-data work item.
+
+Both critical-path gates are now decided; Phase 3 is fully ungated.
 
 **Milestone:** real lab results entered into the encrypted database via the CLI, range-flagged correctly, queryable. Real data begins accumulating — which starts the clock on the accumulation-triggered deferrals.
 
@@ -137,8 +140,8 @@ Deliberately the vaguest phase; it will be re-planned when Phase 7 is underway.
 | Gate | Needed by | Owner |
 |---|---|---|
 | ~~[ADR-0031](adr/0031-units-and-ucum.md) conversion engine~~ — **decided 2026-07-09: `ucumvert` + `pint`** | — | — |
-| Biomarker category taxonomy | Phase 3 (bulk entry) | Database owner |
-| Name-based alias fallback | Phase 3 (bulk entry) | Database owner |
+| ~~Biomarker category taxonomy~~ — **decided 2026-07-14: `categories` table + `category_id` FK, reserved default ([ADR-0055](adr/0055-biomarker-category-taxonomy.md))** | — | — |
+| ~~Name-based alias fallback~~ — **decided 2026-07-14: `biomarker_aliases` + server-side exact-match resolution ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md))** | — | — |
 | [ADR-0014](adr/0014-websocket.md) disposition | Phase 4 (during SSE work) | Database owner |
 | [ADR-0016](adr/0016-automation-plugin-type.md)/[ADR-0017](adr/0017-notification-channels.md) promotion | Phase 8 | Database owner |
 | Per-source format investigations | Phase 7 (per adapter) | Database owner |
