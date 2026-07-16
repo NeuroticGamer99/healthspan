@@ -132,6 +132,21 @@ def is_findings_review(review: Review, spec: BotSpec) -> bool:
 
     GitHub models a bot's reply to a review comment as a review whose body is
     empty. Only the body distinguishes the two, so recency alone is not enough.
+
+    **The evidence behind this rule is uneven, and the next reader should not
+    assume otherwise.** It is verified for CodeRabbit, which acks every reply and
+    produced three empty-bodied reply-reviews on PR #27. Copilot has never been
+    observed acking at all — every Copilot review seen carried a body, and it
+    stayed silent through two replies on PR #26 — so for Copilot this rule is
+    inert rather than tested. Were Copilot ever to ack with a *non-empty* body,
+    that ack would be misclassified as findings.
+
+    That residual risk is accepted deliberately, because of which way it fails.
+    The alternative discriminator — require the body's finding-count marker —
+    is more precise, but a bot rewording its body would then make its review
+    invisible and time the wait out: a silent wrong answer. This rule instead
+    fails toward triaging an ack, which :func:`count_note` immediately flags
+    ("states no finding count"). Loudly wrong beats quietly wrong.
     """
     if not spec.author.search(_login_of(review)):
         return False
