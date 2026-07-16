@@ -15,11 +15,24 @@ gate.
 
 - `/land` has run in this session and proposed a commit message the user has seen. If it hasn't,
   run `/land` first and stop — never invent a commit message here.
-- Re-run the gates if anything changed since `/land` (or if you are unsure): `uvx "ruff@<pinned>"
-  check .`, `uvx "ruff@<pinned>" format --check .`, `uv run --with "pyright==<pinned>" pyright`,
-  `uv run pytest -q -n auto`, and `uv run python scripts/check_adr_index.py` when `specs/adr/` is
-  touched. Pinned versions live in the `env:` block of `.github/workflows/ci.yml` — match CI, don't
-  guess. A gate that has gone red since `/land` stops the ship.
+- Re-run the gates if anything changed since `/land`, or if you are unsure. Read the pinned
+  versions out of the `env:` block of `.github/workflows/ci.yml` (`RUFF_VERSION`,
+  `PYRIGHT_VERSION`, `PYTEST_VERSION`) — match CI, don't guess:
+
+  ```bash
+  uvx "ruff@$RUFF_VERSION" check .
+  uvx "ruff@$RUFF_VERSION" format --check .
+  uv run --with "pyright==$PYRIGHT_VERSION" --with "pytest==$PYTEST_VERSION" pyright
+  uv run --with "pytest==$PYTEST_VERSION" pytest -q -n auto
+  uv run python scripts/check_adr_index.py   # when specs/adr/ is touched
+  ```
+
+  The `--with "pytest==…"` on the **pyright** line is not redundant: it is how CI resolves the test
+  files' imports, so dropping it can typecheck differently than CI does. The `-n auto` on pytest is
+  a deliberate divergence — CI runs the suite serially so the log-canary gate sees one stream
+  (testing-strategy.md) — but the version pin still matches.
+
+  A gate that has gone red since `/land` stops the ship.
 - Confirm the branch is not `main`. If it is, stop — branch first.
 
 ## 2. Commit and push
