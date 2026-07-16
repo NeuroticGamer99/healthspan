@@ -37,6 +37,23 @@ Checks a bot routinely misses — run them yourself:
   under the access model this system actually has. Say which, with numbers, rather than accepting
   or dismissing on instinct.
 
+## 1a. Verify your own tooling, not just the findings
+
+The same skepticism applies to the commands this procedure runs. Two failure modes, both learned
+the hard way on PR #27:
+
+- **A success code is not proof.** Verify the *state* a call was supposed to produce, not its exit
+  status. Requesting a reviewer GitHub does not accept returns `200` with an empty
+  `requested_reviewers` — a silent no-op that a `2>&1 || report` guard never catches, and that then
+  costs a 30-minute poll and a false "no review arrived".
+- **An empty result is a claim, and claims get checked.** If a query for findings returns nothing,
+  prove it is nothing before reporting it. Cross-check against something independent: the review
+  body states `generated N comments`; a mismatch means the filter is wrong, not that the review was
+  clean. `/copilot-review` filtered comments on the review's author login and silently returned
+  empty on a review that had findings — the count cross-check is what caught it.
+
+Silence is the failure mode to distrust most: a wrong answer argues with you, a silent one doesn't.
+
 ## 2. Reply on the PR
 
 Post one threaded reply per finding:

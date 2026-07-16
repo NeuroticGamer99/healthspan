@@ -17,24 +17,52 @@ gh pr view --json number,url,headRefName,state
 
 If there is no open PR for the current branch, stop and say so — run `/ship` first.
 
-## 2. Request the review
+## 2. Request the review — then verify it took
 
 Capture the floor timestamp first, then request:
 
 ```bash
 SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-gh api repos/OWNER/REPO/pulls/N/requested_reviewers -f "reviewers[]=Copilot"
+gh api repos/OWNER/REPO/pulls/N/requested_reviewers \
+  -f "reviewers[]=copilot-pull-request-reviewer[bot]"
 ```
 
-**The logins are asymmetric, and it matters:** you *request* the reviewer `Copilot`, but the review
-arrives from `copilot-pull-request-reviewer[bot]`. Requesting the bot login fails; waiting on the
-`Copilot` login never fires. (Verified from PR #26's timeline:
-`requested_by=NeuroticGamer99 -> reviewer=Copilot`.)
+**Verify the reviewer was actually added before waiting. Never trust the 200:**
+
+```bash
+gh api repos/OWNER/REPO/pulls/N --jq '.requested_reviewers[].login'   # expect: Copilot
+```
+
+If that is empty, **stop** — do not start the poll. Requesting a login GitHub does not accept
+returns **HTTP 200 with `"requested_reviewers": []`**: a silent no-op, no error to catch. Skipping
+this check buys a 30-minute poll that times out on a review nobody ever asked for, and a
+"no review arrived" report that sends the reader hunting for an outage that does not exist.
+
+### Copilot's four identities
+
+This bot presents under different logins depending on where you look. Getting one wrong fails
+silently, never loudly:
+
+| Where | Login |
+|---|---|
+| **Request** it as (REST `reviewers[]`) | `copilot-pull-request-reviewer[bot]` |
+| Appears in `requested_reviewers` as | `Copilot` |
+| The **review** is authored by | `copilot-pull-request-reviewer[bot]` |
+| The **inline comments** are authored by | `Copilot` |
+
+They are one entity (`id: 175728472`, `node_id: BOT_kgDOCnlnWA`, `type: Bot`) wearing two names.
+Do not infer the request login from the timeline's `requested_reviewer.login` — that is the display
+identity *after* the fact, not the value you pass. Match with a case-insensitive
+`test("copilot";"i")` filter rather than an exact login, in both directions.
+
+It is a **Bot**, which is why REST's user-only `reviewers[]` silently drops a bad value. GraphQL's
+`RequestReviewsInput` has a separate `botIds` field — `userIds` rejects a bot node id outright
+(`Could not resolve to User node`) — if the REST path ever stops working.
 
 There is no auto-review ruleset on this repo — Copilot reviews only when asked.
 
-If the request errors (unavailable on the plan, already requested, insufficient permission), report
-the error verbatim and stop. Do not retry blindly.
+If the request errors outright (unavailable on the plan, insufficient permission), report the error
+verbatim and stop. Do not retry blindly.
 
 ## 3. Wait for the review
 
@@ -57,16 +85,24 @@ review**.
 
 ## 4. Triage and reply
 
-Copilot puts an overview in the review body and its findings in inline comments:
+Copilot puts an overview in the review body and its findings in inline comments — **authored under
+different logins** (§2), so match case-insensitively in both queries:
 
 ```bash
 gh api repos/OWNER/REPO/pulls/N/reviews \
-  --jq '.[] | select(.user.login=="copilot-pull-request-reviewer[bot]") | .body'
+  --jq '.[] | select(.user.login|test("copilot";"i")) | "[\(.state)] \(.submitted_at)\n\(.body)"'
 
 gh api repos/OWNER/REPO/pulls/N/comments \
-  --jq '.[] | select(.user.login=="copilot-pull-request-reviewer[bot]")
+  --jq '.[] | select(.user.login|test("copilot";"i"))
         | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
 ```
+
+An exact-login filter on the *review* author silently returns nothing for the *comments*, because
+the comments come from `Copilot` — you would report "no findings" on a review that has them.
+
+**Cross-check the count.** The review body states `generated N comments`. If the number of comments
+you fetched does not match, your filter is wrong — go find them. An empty result is only a clean
+review when the body says zero.
 
 Then follow **`.claude/bot-review-triage.md`**: verify each finding against the real code, reply
 per finding, report the verdict table, and **stop for the user's go before changing any code**.
