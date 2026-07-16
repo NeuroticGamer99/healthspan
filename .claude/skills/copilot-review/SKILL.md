@@ -71,11 +71,11 @@ gh api repos/OWNER/REPO/pulls/N/comments \
 Then follow **`.claude/bot-review-triage.md`**: verify each finding against the real code, reply
 per finding, report the verdict table, and **stop for the user's go before changing any code**.
 
-Copilot's findings skew toward performance and internal-consistency observations. Both of its PR
-#26 findings were instructive rather than simply right or wrong, and both are worked through in the
-triage doc: a true complexity observation whose suggested fix would have defeated a fail-loud
-safety guard, and an inverted diagnosis where the code was correct and the comment was the bug. The
-lesson is not that Copilot is unreliable — both findings were worth the read — but that the
+Copilot's findings skew toward performance and internal-consistency observations. Both of the
+findings it raised on PR #26 were instructive rather than simply right or wrong, and both are worked
+through in the triage doc: a true complexity observation whose suggested fix would have defeated a
+fail-loud safety guard, and an inverted diagnosis where the code was correct and the comment was the
+bug. The lesson is not that Copilot is unreliable — both findings were worth the read — but that the
 suggested remedy needs its own review, separately from the observation.
 
 ## 5. After the fixes land

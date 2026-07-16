@@ -24,6 +24,20 @@ gate.
 
 ## 2. Commit and push
 
+**Capture the review floor before the push**, in the same command — this timestamp is what step 4
+waits on, and it is only correct if it is taken before the push that triggers the review:
+
+```bash
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)   # BEFORE the push below; step 4 waits on this
+```
+
+Capturing it after the push is a real bug, not a style point: a review submitted in the gap would
+fail step 4's `submitted_at > $SINCE` filter, and the poll would spin to a false timeout on a review
+that had already landed. CodeRabbit has answered in under four minutes, so the gap is not
+theoretical.
+
+Then:
+
 - Commit with the message `/land` proposed, unchanged, including its `Decisions:` section.
 - The co-author trailer must name the model running **this** session — read it from the system
   prompt; never carry a trailer forward from an earlier commit.
@@ -39,14 +53,12 @@ gate.
 
 ## 4. Wait for CodeRabbit
 
-Capture the timestamp **before** pushing — it is the floor that distinguishes this review from the
-bot's review of an earlier commit:
+Use `$SINCE` from step 2 — the floor captured before the push, which distinguishes this review from
+the bot's review of an earlier commit. If you reached this step without it, you pushed first: take
+the floor from the push's own timestamp (`git log -1 --format=%cI`) rather than `date` now, which
+would be after the review may already have landed.
 
-```bash
-SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)   # capture BEFORE the push in step 2
-```
-
-Then poll in the background so the wait costs nothing:
+Poll in the background so the wait costs nothing:
 
 ```bash
 DEADLINE=$(( $(date +%s) + 1800 ))
