@@ -45,6 +45,10 @@ Compose the commit message:
 - Imperative-mood title summarizing the change.
 - Body explaining what and why, referencing the ADRs/specs involved.
 - The `Decisions:` section from step 5.
-- The co-author trailer per the session's convention.
+- The co-author trailer naming the model running *this* session (read it from the system prompt; never carry one forward).
 
-Present the message and **wait for the user's explicit "commit"**. On "commit": commit and push (`git push` is part of landing — publish-as-we-go). Never commit or push without that explicit go.
+Present the message and **stop**. `/land` proposes; `/ship` disposes.
+
+The user lands it by invoking **`/ship`**, which commits with this message, pushes, opens the PR, waits for CodeRabbit's review, and triages it. If the user instead replies "commit" (the pre-`/ship` habit), treat that as the go and run `/ship`.
+
+**Never commit or push from this skill**, and never without that explicit go.
