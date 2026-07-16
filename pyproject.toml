@@ -61,4 +61,8 @@ dev = [
     # For the editor (Pylance) and ad-hoc local runs; the CI gates still run
     # the version pinned in ci.yml via `uv run --with "pytest==..."`.
     "pytest>=9.1.1",
+    # Parallel test execution (pytest -n auto). The suite is crypto/IO-bound and
+    # well-isolated (per-tmp_path DBs and locks, in-memory keychain, uvicorn
+    # monkeypatched out), so worker parallelism is a pure wall-clock win.
+    "pytest-xdist>=3.6",
 ]
