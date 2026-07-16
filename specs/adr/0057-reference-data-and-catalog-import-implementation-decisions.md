@@ -61,9 +61,13 @@ For the identical reason, **`biomarker_aliases` is created after the `biomarkers
 
 These checks run over **both already-stored rows and other rows in the same import batch** — a batch that introduces a colliding biomarker and alias pair in the same call is caught, not just a batch colliding with prior state. Alias-to-alias collision is handled separately, by the schema-level `UNIQUE` constraint on `alias_normalized` (a natural key, not this function's concern).
 
+Because this cross-table check has no schema constraint backing it (unlike the single-table `UNIQUE`s, which the database enforces at INSERT), a read-then-write check is only race-free while a write lock is held. `run_import` therefore takes `BEGIN IMMEDIATE` **before** resolution and validation, not merely before apply: two concurrent imports serialize on the lock, so the second validates against the first's committed state and a canonical/alias collision cannot slip through the TOCTOU window an outside-the-lock check would leave open. A validation failure rolls the transaction back (releasing the lock) and writes nothing. The lock-before-validation ordering is regression-tested (a locked second connection makes even a would-be-invalid batch raise `database is locked` before validation runs); the serialization it depends on is SQLite's single-writer `BEGIN IMMEDIATE` guarantee, not bespoke logic, so a full two-writer interleaving harness is deliberately not added.
+
 ### 7. Server-derived `alias_normalized` / `created_utc`
 
 `biomarker_aliases` import rows accept `biomarker_id`, `alias`, and optional `source` from the client. `alias_normalized` (via `normalize_name`) and `created_utc` (via `utc_now_iso`) are always derived server-side; any client-supplied values for these two columns are overwritten, never trusted. This matches the existing posture toward `import_batch_id` and `superseded_by` on content tables — provenance and derived-identity columns are never client-authoritative.
+
+`created_utc` is a **`server_owned`** column (a new `ImportableTable` field): stamped once at insert, but excluded from the `compared` set and left untouched by an in-place reconcile update. Without this it would be a compared non-key column re-stamped on every import, so an otherwise-identical re-import (the WI-4 CLI's confirm-and-record flow re-recording a known alias) would be classified as a conflict/correction rather than `unchanged` — churning the timestamp and, under `reject`, failing loud spuriously. A blank (whitespace-only) `alias`, whose normalized form is empty, is rejected in validation rather than stored with an empty `alias_normalized`.
 
 ### 8. A single `_resolve_payload` pass, applied once, before both validation and apply
 
@@ -105,6 +109,7 @@ Notable seeding judgment calls, each following an explicit ADR-0055 §6 steer or
 - The same-batch constraint (decision 9) means catalog-then-content imports need at least two calls when introducing a brand-new biomarker and its first result together — accepted as consistent with the existing `lab_results.biomarker_id` pre-existing-FK model, but it is a real usability cost the CLI (WI-4) must design around
 - A single primary category per biomarker still forces "best home" choices (decision 11) for double-booking markers, inherited from ADR-0055 and not reopened here
 - Two write paths (aliases, biomarkers) now carry application-enforced normalized-uniqueness validation that SQLite's schema cannot express — it needs, and has, dedicated test coverage, but it is a durable maintenance surface
+- Holding `BEGIN IMMEDIATE` across resolution and validation (not just apply) lengthens the write-lock hold for a large batch by the validation-read time — accepted under the single-writer model ([ADR-0037](0037-core-service-concurrency-and-driver.md)); it is the price of making the application-level cross-table check race-free
 
 ## Consequences for Other Documents
 
