@@ -48,6 +48,10 @@ class ImportRequest(BaseModel):
     adapter_version: str | None = None
     note: str | None = None
     conflict_policy: Literal["reject", "skip", "upsert"]
+    categories: list[dict[str, Any]] = []
+    labs: list[dict[str, Any]] = []
+    biomarkers: list[dict[str, Any]] = []
+    biomarker_aliases: list[dict[str, Any]] = []
     lab_draws: list[dict[str, Any]] = []
     lab_results: list[dict[str, Any]] = []
 
@@ -66,6 +70,10 @@ def import_data(
         note=body.note,
     )
     payload: dict[str, list[dict[str, Any]]] = {
+        "categories": body.categories,
+        "labs": body.labs,
+        "biomarkers": body.biomarkers,
+        "biomarker_aliases": body.biomarker_aliases,
         "lab_draws": body.lab_draws,
         "lab_results": body.lab_results,
     }

@@ -2,7 +2,7 @@
   "lab_draws": [
     {
       "id": 1,
-      "lab_id": 1,
+      "lab_id": 501,
       "draw_utc": "2024-03-14T13:30:00Z",
       "draw_local_recorded": "2024-03-14T09:30:00",
       "draw_local_tz": "America/New_York",
@@ -13,7 +13,7 @@
     },
     {
       "id": 2,
-      "lab_id": 1,
+      "lab_id": 501,
       "draw_utc": "2024-06-20T14:00:00Z",
       "draw_local_recorded": "2024-06-20T10:00:00",
       "draw_local_tz": "America/New_York",
@@ -27,7 +27,7 @@
     {
       "id": 1,
       "lab_draw_id": 1,
-      "biomarker_id": 1,
+      "biomarker_id": 501,
       "value_num": 104.73921,
       "unit": "mg/dL",
       "reference_low": 70,
@@ -37,7 +37,7 @@
     {
       "id": 2,
       "lab_draw_id": 1,
-      "biomarker_id": 2,
+      "biomarker_id": 502,
       "value_num": 62.481037,
       "unit": "mg/dL",
       "reference_low": 40,
@@ -47,7 +47,7 @@
     {
       "id": 3,
       "lab_draw_id": 1,
-      "biomarker_id": 3,
+      "biomarker_id": 503,
       "value_num": 88.529164,
       "unit": "mg/dL",
       "reference_low": 40,
@@ -57,7 +57,7 @@
     {
       "id": 4,
       "lab_draw_id": 2,
-      "biomarker_id": 1,
+      "biomarker_id": 501,
       "value_num": 96.407183,
       "unit": "mg/dL",
       "reference_low": 70,
@@ -68,7 +68,7 @@
     {
       "id": 5,
       "lab_draw_id": 2,
-      "biomarker_id": 3,
+      "biomarker_id": 503,
       "value_text": "CANARY-qual-indeterminate",
       "notes": "qualitative-only result, no numeric magnitude",
       "import_batch_id": 1

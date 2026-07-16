@@ -21,19 +21,39 @@ def _key() -> DbKey:
     return DbKey(bytearray(range(1, 33)))
 
 
+# Migration 0004 seeds ~64 starter biomarkers (ids 1-64, ADR-0055 §6) and the
+# common labs (ids 1-4), so this fixture's own rows use a high id range that
+# cannot collide with the seed, now or as the seed catalog grows. 'allergy'
+# and 'body_composition' are two of the 19 seeded categories the starter
+# catalog leaves empty, so filtering by them below sees only these fixture
+# rows, never a seeded biomarker.
+_FIXTURE_BIOMARKER_1 = 1001  # category 'allergy'
+_FIXTURE_BIOMARKER_2 = 1002  # category 'body_composition'
+_FIXTURE_BIOMARKER_3 = 1003  # reserved not_assigned category (id 0)
+
+
 def _build_db(directory: Path) -> sqlcipher3.Connection:
     path = directory / "healthspan.db"
     db.provision(path, _key())
     migrate.migrate_database(path, _key())
     conn = db.connect(path, _key())
     conn.execute("BEGIN IMMEDIATE")
-    conn.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
-    conn.execute("INSERT INTO labs (id, name) VALUES (2, 'LabCorp')")
-    for biomarker_id, category in ((1, "lipids"), (2, "thyroid"), (3, None)):
+    # Quest (id 1) and LabCorp (id 2) are seeded by migration 0004 itself
+    # (ADR-0055 §6), ahead of Function Health (Quest)/(LabCorp) — no need to
+    # (re-)insert them here.
+    for biomarker_id, category_name in (
+        (_FIXTURE_BIOMARKER_1, "allergy"),
+        (_FIXTURE_BIOMARKER_2, "body_composition"),
+    ):
         conn.execute(
-            "INSERT INTO biomarkers (id, canonical_name, category) VALUES (?, ?, ?)",
-            (biomarker_id, f"Biomarker {biomarker_id}", category),
+            "INSERT INTO biomarkers (id, canonical_name, category_id) "
+            "VALUES (?, ?, (SELECT id FROM categories WHERE name = ?))",
+            (biomarker_id, f"Biomarker {biomarker_id}", category_name),
         )
+    conn.execute(
+        "INSERT INTO biomarkers (id, canonical_name) VALUES (?, ?)",
+        (_FIXTURE_BIOMARKER_3, f"Biomarker {_FIXTURE_BIOMARKER_3}"),
+    )
     conn.execute("COMMIT")
     return conn
 
@@ -231,25 +251,27 @@ def test_results_embed_draw_context_and_display(
 def test_result_filters(conn: sqlcipher3.Connection) -> None:
     d1 = _insert_draw(conn, "2024-01-01T08:00:00Z", lab_id=1)
     d2 = _insert_draw(conn, "2024-06-01T08:00:00Z", lab_id=2)
-    r1 = _insert_result(conn, d1, 1)
-    r2 = _insert_result(conn, d1, 2)
-    r3 = _insert_result(conn, d2, 1)
-    by_biomarker = reads.list_lab_results(conn, biomarker_id=1, limit=10)
+    r1 = _insert_result(conn, d1, _FIXTURE_BIOMARKER_1)
+    r2 = _insert_result(conn, d1, _FIXTURE_BIOMARKER_2)
+    r3 = _insert_result(conn, d2, _FIXTURE_BIOMARKER_1)
+    by_biomarker = reads.list_lab_results(
+        conn, biomarker_id=_FIXTURE_BIOMARKER_1, limit=10
+    )
     assert [row["id"] for row in by_biomarker.items] == [r3, r1]
     by_draw = reads.list_lab_results(conn, lab_draw_id=d1, limit=10)
     assert {row["id"] for row in by_draw.items} == {r1, r2}
     by_lab = reads.list_lab_results(conn, lab_id=2, limit=10)
     assert [row["id"] for row in by_lab.items] == [r3]
     windowed = reads.list_lab_results(
-        conn, biomarker_id=1, draw_to="2024-03-01", limit=10
+        conn, biomarker_id=_FIXTURE_BIOMARKER_1, draw_to="2024-03-01", limit=10
     )
     assert [row["id"] for row in windowed.items] == [r1]
 
 
 def test_superseded_rows_invisible(conn: sqlcipher3.Connection) -> None:
     draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
-    old = _insert_result(conn, draw, 1, value_num=100.0)
-    new = _insert_result(conn, draw, 2, value_num=105.0)
+    old = _insert_result(conn, draw, _FIXTURE_BIOMARKER_1, value_num=100.0)
+    new = _insert_result(conn, draw, _FIXTURE_BIOMARKER_2, value_num=105.0)
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("UPDATE lab_results SET superseded_by = ? WHERE id = ?", (new, old))
     conn.execute("COMMIT")
@@ -266,41 +288,189 @@ def test_get_absent_returns_none(conn: sqlcipher3.Connection) -> None:
     assert reads.get_lab_result(conn, 999) is None
     assert reads.get_lab(conn, 999) is None
     assert reads.get_biomarker(conn, 999) is None
+    assert reads.get_category(conn, 999) is None
+    assert reads.get_range_framework(conn, 999) is None
+    assert reads.get_framework_range(conn, 999) is None
 
 
 def test_catalog_reads(conn: sqlcipher3.Connection) -> None:
+    # Migration 0004 seeds all four common labs (ADR-0055 §6); name asc.
     labs = reads.list_labs(conn, limit=10)
-    assert [row["name"] for row in labs.items] == ["LabCorp", "Quest"]  # name asc
+    assert [row["name"] for row in labs.items] == [
+        "Function Health (LabCorp)",
+        "Function Health (Quest)",
+        "LabCorp",
+        "Quest",
+    ]
     lab = reads.get_lab(conn, 1)
     assert lab is not None
     assert lab["name"] == "Quest"
-    lipids = reads.list_biomarkers(conn, category="lipids", limit=10)
-    assert [row["id"] for row in lipids.items] == [1]
-    marker = reads.get_biomarker(conn, 3)
+    # 'allergy' is one of the 19 seeded categories with no starter-catalog
+    # biomarker (ADR-0055 §6), so the fixture's own row is the only match.
+    allergy = reads.list_biomarkers(conn, category="allergy", limit=10)
+    assert [row["id"] for row in allergy.items] == [_FIXTURE_BIOMARKER_1]
+    marker = reads.get_biomarker(conn, _FIXTURE_BIOMARKER_3)
     assert marker is not None
-    assert marker["category"] is None
+    # Unassigned in the fixture -> the reserved not_assigned row (id 0),
+    # surfaced by name, not a null category (ADR-0055 §2).
+    assert marker["category"] == "not_assigned"
+    assert marker["category_id"] == 0
+
+
+def test_category_filter_is_case_insensitive(conn: sqlcipher3.Connection) -> None:
+    lower = reads.list_biomarkers(conn, category="body_composition", limit=10)
+    mixed = reads.list_biomarkers(conn, category="Body_Composition", limit=10)
+    assert [row["id"] for row in lower.items] == [_FIXTURE_BIOMARKER_2]
+    assert [row["id"] for row in mixed.items] == [_FIXTURE_BIOMARKER_2]
+
+
+def test_category_filter_unknown_name_yields_empty_page(
+    conn: sqlcipher3.Connection,
+) -> None:
+    page = reads.list_biomarkers(conn, category="not-a-real-category", limit=10)
+    assert page.items == []
+    assert page.next_cursor is None
 
 
 def test_catalog_cursor_walk(conn: sqlcipher3.Connection) -> None:
     """Catalog listings paginate by name through the same keyset machinery."""
     conn.execute("BEGIN IMMEDIATE")
-    for biomarker_id in range(4, 10):
+    for biomarker_id in range(9001, 9007):
         conn.execute(
             "INSERT INTO biomarkers (id, canonical_name) VALUES (?, ?)",
             (biomarker_id, f"Biomarker {biomarker_id}"),
         )
     conn.execute("COMMIT")
+    row = conn.execute("SELECT count(*) FROM biomarkers").fetchone()
+    assert row is not None
+    total = int(row[0])
     names: list[str] = []
     cursor: str | None = None
-    for _ in range(20):
-        page = reads.list_biomarkers(conn, limit=2, cursor=cursor)
-        assert len(page.items) <= 2
-        names.extend(str(row["canonical_name"]) for row in page.items)
+    for _ in range(200):  # bounded generously: the seed catalog plus 6 inserted
+        page = reads.list_biomarkers(conn, limit=5, cursor=cursor)
+        assert len(page.items) <= 5
+        names.extend(str(row_item["canonical_name"]) for row_item in page.items)
         cursor = page.next_cursor
         if cursor is None:
             break
     assert names == sorted(names)
-    assert len(names) == 9  # 3 fixture + 6 inserted, each exactly once
+    # The starter catalog (migration 0004) + the 3 _build_db fixture rows +
+    # the 6 inserted here, each exactly once.
+    assert len(names) == total
+
+
+# --------------------------------------------------------------------------
+# Reference-data resources (ADR-0055/ADR-0057): categories, range_frameworks,
+# framework_ranges. Migration 0004 seeds the reserved row plus 19 categories;
+# frameworks/ranges are deferred to WI-3, so tests insert a couple directly.
+# --------------------------------------------------------------------------
+
+
+def test_categories_list_and_get(conn: sqlcipher3.Connection) -> None:
+    page = reads.list_categories(conn, limit=3)
+    assert [row["name"] for row in page.items] == [
+        "allergy",
+        "autoimmunity",
+        "body_composition",
+    ]
+    reserved = reads.get_category(conn, 0)
+    assert reserved is not None
+    assert reserved["name"] == "not_assigned"
+
+
+def test_categories_pagination_partition(conn: sqlcipher3.Connection) -> None:
+    all_names = [row["name"] for row in reads.list_categories(conn, limit=100).items]
+    names: list[str] = []
+    cursor: str | None = None
+    for _ in range(50):
+        page = reads.list_categories(conn, limit=3, cursor=cursor)
+        assert len(page.items) <= 3
+        names.extend(str(row["name"]) for row in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert names == all_names
+    assert names == sorted(names)
+
+
+def _insert_framework(
+    conn: sqlcipher3.Connection, framework_id: int, name: str
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "INSERT INTO range_frameworks (id, name) VALUES (?, ?)", (framework_id, name)
+    )
+    conn.execute("COMMIT")
+
+
+def _insert_range(
+    conn: sqlcipher3.Connection,
+    range_id: int,
+    framework_id: int,
+    biomarker_id: int,
+    *,
+    range_low: float | None = 0.0,
+    range_high: float | None = 10.0,
+    unit: str = "mg/dL",
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "INSERT INTO framework_ranges "
+        "(id, framework_id, biomarker_id, range_low, range_high, unit) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (range_id, framework_id, biomarker_id, range_low, range_high, unit),
+    )
+    conn.execute("COMMIT")
+
+
+def test_range_frameworks_list_and_get(conn: sqlcipher3.Connection) -> None:
+    _insert_framework(conn, 1, "Lab Standard")
+    _insert_framework(conn, 2, "Attia")
+    page = reads.list_range_frameworks(conn, limit=10)
+    assert [row["name"] for row in page.items] == ["Attia", "Lab Standard"]  # name asc
+    got = reads.get_range_framework(conn, 1)
+    assert got is not None
+    assert got["name"] == "Lab Standard"
+
+
+def test_framework_ranges_list_get_and_filters(conn: sqlcipher3.Connection) -> None:
+    _insert_framework(conn, 1, "Lab Standard")
+    _insert_framework(conn, 2, "Attia")
+    _insert_range(conn, 1, 1, 1)
+    _insert_range(conn, 2, 1, 2)
+    _insert_range(conn, 3, 2, 1)
+
+    page = reads.list_framework_ranges(conn, limit=10)
+    assert [row["id"] for row in page.items] == [1, 2, 3]  # id asc, stable
+
+    by_framework = reads.list_framework_ranges(conn, framework_id=1, limit=10)
+    assert [row["id"] for row in by_framework.items] == [1, 2]
+
+    by_biomarker = reads.list_framework_ranges(conn, biomarker_id=1, limit=10)
+    assert [row["id"] for row in by_biomarker.items] == [1, 3]
+
+    got = reads.get_framework_range(conn, 1)
+    assert got is not None
+    assert (got["range_low"], got["range_high"], got["unit"]) == (0.0, 10.0, "mg/dL")
+
+
+def test_framework_ranges_pagination_partition(conn: sqlcipher3.Connection) -> None:
+    _insert_framework(conn, 1, "Lab Standard")
+    # Distinct biomarker_id per range: the dateless-default unique index
+    # (migration 0001) allows only one (framework_id, biomarker_id) row with
+    # effective_date NULL.
+    for range_id in range(1, 8):
+        _insert_range(conn, range_id, 1, range_id)
+    ids: list[int] = []
+    cursor: str | None = None
+    for _ in range(50):
+        page = reads.list_framework_ranges(conn, limit=2, cursor=cursor)
+        assert len(page.items) <= 2
+        ids.extend(int(row["id"]) for row in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert ids == list(range(1, 8))
 
 
 # --------------------------------------------------------------------------

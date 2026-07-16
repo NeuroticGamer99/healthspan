@@ -9,36 +9,36 @@
   ],
   "biomarkers": [
     {
-      "id": 1,
-      "canonical_name": "Glucose",
+      "id": 501,
+      "canonical_name": "Fixture Glucose",
       "loinc_code": "2345-7",
       "canonical_unit": "mg/dL",
-      "category": "metabolic"
+      "category_id": 0
     },
     {
-      "id": 2,
-      "canonical_name": "HDL Cholesterol",
+      "id": 502,
+      "canonical_name": "Fixture HDL Cholesterol",
       "loinc_code": "2085-9",
       "canonical_unit": "mg/dL",
-      "category": "lipids"
+      "category_id": 0
     },
     {
-      "id": 3,
-      "canonical_name": "Apolipoprotein B",
+      "id": 503,
+      "canonical_name": "Fixture Apolipoprotein B",
       "loinc_code": "1884-6",
       "canonical_unit": "mg/dL",
-      "category": "lipids"
+      "category_id": 0
     }
   ],
   "labs": [
-    {"id": 1, "name": "Synthetic Labs Co", "description": "fictional lab source for tests"}
+    {"id": 501, "name": "Synthetic Labs Co", "description": "fictional lab source for tests"}
   ],
   "range_frameworks": [
-    {"id": 1, "name": "Synthetic Standard", "description": "fictional reference framework"}
+    {"id": 501, "name": "Synthetic Standard", "description": "fictional reference framework"}
   ],
   "framework_ranges": [
-    {"id": 1, "framework_id": 1, "biomarker_id": 1, "range_low": 70, "range_high": 99, "unit": "mg/dL"},
-    {"id": 2, "framework_id": 1, "biomarker_id": 2, "range_low": 40, "range_high": 90, "unit": "mg/dL"},
-    {"id": 3, "framework_id": 1, "biomarker_id": 3, "range_low": 40, "range_high": 100, "unit": "mg/dL"}
+    {"id": 501, "framework_id": 501, "biomarker_id": 501, "range_low": 70, "range_high": 99, "unit": "mg/dL"},
+    {"id": 502, "framework_id": 501, "biomarker_id": 502, "range_low": 40, "range_high": 90, "unit": "mg/dL"},
+    {"id": 503, "framework_id": 501, "biomarker_id": 503, "range_low": 40, "range_high": 100, "unit": "mg/dL"}
   ]
 }

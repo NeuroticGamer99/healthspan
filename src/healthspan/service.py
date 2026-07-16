@@ -162,18 +162,31 @@ def build_runtime(
 def verify_schema(cfg: Config, key: DbKey) -> int:
     """Refuse to serve against a schema this build does not expect (ADR-0039).
 
+    Also asserts the ADR-0055 reserved ``not_assigned`` category row (id 0)
+    is present: ``foreign_key_check`` proves every ``category_id`` points at
+    an existing row but not that id 0 itself exists, so a missing reserved
+    row must fail loudly here, at open, rather than surfacing as a confusing
+    far-from-cause FK failure mid-import.
+
     Returns the verified schema version (also this build's target)."""
     conn = db.connect(cfg.database.path, key)
     try:
         current = db.schema_version(conn)
+        target = migrate.target_version()
+        if current is None or current != target:
+            raise ServiceStartupError(
+                _schema_mismatch_message(cfg.database.path, current, target)
+            )
+        if not db.reserved_category_present(conn):
+            raise ServiceStartupError(
+                f"database {cfg.database.path} is missing the reserved "
+                "'not_assigned' category row (categories id 0, ADR-0055). "
+                "This row must never be deleted; restore from a backup or "
+                "re-seed it before starting the Core Service."
+            )
+        return current
     finally:
         db.close(conn)
-    target = migrate.target_version()
-    if current is not None and current == target:
-        return current
-    raise ServiceStartupError(
-        _schema_mismatch_message(cfg.database.path, current, target)
-    )
 
 
 def _schema_mismatch_message(

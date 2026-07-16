@@ -32,12 +32,23 @@ def _key() -> DbKey:
 
 
 def _build_db(directory: Path) -> sqlcipher3.Connection:
-    """A migrated database with a seeded catalog (labs 1, biomarkers 1-6)."""
+    """A migrated database with a seeded catalog (labs 1, biomarkers 1-6).
+
+    Migration 0004 (Phase 3 WI-2) now seeds its own generic reference catalog
+    (labs, biomarkers) with autoincrement ids on every fresh database. This
+    suite's tests hardcode ``lab_id=1`` and ``biomarker_id`` 1-6 pervasively,
+    so replace the migration's seed with this fixed test catalog rather than
+    add to it — inserting id 1 alongside the migration's own id-1 rows would
+    collide on both the primary key and the natural-key unique index.
+    """
     path = directory / "healthspan.db"
     db.provision(path, _key())
     migrate.migrate_database(path, _key())
     conn = db.connect(path, _key())
     conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM biomarker_aliases")
+    conn.execute("DELETE FROM biomarkers")
+    conn.execute("DELETE FROM labs")
     conn.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
     for biomarker_id in range(1, 7):
         conn.execute(
@@ -640,3 +651,594 @@ def test_import_summary_reconciles(policy: str, batch: list[tuple[int, float]]) 
             assert superseded == corrected
         finally:
             db.close(conn)
+
+
+@settings(deadline=None, max_examples=30)
+@given(
+    policy=st.sampled_from([imports.REJECT, imports.SKIP, imports.UPSERT]),
+    batch=st.lists(
+        st.tuples(
+            st.sampled_from(
+                ["prop_a", "prop_b", "prop_c", "prop_d", "prop_e", "prop_f"]
+            ),
+            st.sampled_from(["base", "changed"]),
+        ),
+        unique_by=lambda pair: pair[0],  # one row per name: no dup key in a batch
+        max_size=6,
+    ),
+)
+def test_catalog_import_summary_reconciles(
+    policy: str, batch: list[tuple[str, str]]
+) -> None:
+    # The reconciliation property (testing-strategy.md) on the catalog
+    # (``has_supersession=False``) path: the four counts partition every input
+    # row and reconcile against the table delta — but a catalog table never
+    # supersedes, so a genuine difference is an in-place UPDATE (the row count
+    # grows only by inserts) and every row must hold its expected post-reconcile
+    # value. ``categories`` stands in for the four catalog tables — they all
+    # travel the identical generalized ``_reconcile`` branch.
+    with tempfile.TemporaryDirectory() as directory:
+        conn = _build_db(Path(directory))
+        try:
+            baseline = {"prop_a": "base", "prop_b": "base", "prop_c": "base"}
+            _run(
+                conn,
+                {
+                    "categories": [
+                        {"name": n, "description": d} for n, d in baseline.items()
+                    ]
+                },
+                imports.REJECT,
+            )
+            count_before = int(_one(conn, "SELECT count(*) FROM categories"))
+
+            # Expected partition, derived independently from the batch.
+            inserted = corrected = unchanged = 0
+            for name, desc in batch:
+                if name not in baseline:
+                    inserted += 1
+                elif desc == baseline[name]:
+                    unchanged += 1
+                elif policy == imports.UPSERT:
+                    corrected += 1
+                # SKIP leaves a differing row untouched; REJECT fails the batch.
+            differing = sum(1 for n, d in batch if n in baseline and d != baseline[n])
+            skipped = len(batch) - inserted - corrected - unchanged
+
+            payload = {"categories": [{"name": n, "description": d} for n, d in batch]}
+
+            if policy == imports.REJECT and differing > 0:
+                # Any conflict fails the whole batch and writes nothing.
+                with pytest.raises(imports.ImportValidationError):
+                    _run(conn, payload, policy)
+                assert (
+                    int(_one(conn, "SELECT count(*) FROM categories")) == count_before
+                )
+                return
+
+            outcome = _run(conn, payload, policy)
+            summary = outcome.summaries.get("categories", imports.TableSummary())
+
+            assert summary.rows_inserted == inserted
+            assert summary.rows_corrected == corrected
+            assert summary.rows_skipped == skipped
+            assert summary.rows_unchanged == unchanged
+            # Every input row lands in exactly one bucket.
+            assert inserted + corrected + skipped + unchanged == len(batch)
+
+            # No supersession: the row count grows only by inserts, and each row
+            # holds the value its bucket implies (UPSERT applied the change,
+            # SKIP kept the old value, an insert took the new one).
+            assert (
+                int(_one(conn, "SELECT count(*) FROM categories"))
+                == count_before + inserted
+            )
+            for name, desc in batch:
+                stored = _one(
+                    conn, "SELECT description FROM categories WHERE name = ?", name
+                )
+                if name not in baseline:
+                    assert stored == desc
+                elif desc == baseline[name] or policy == imports.SKIP:
+                    assert stored == baseline[name]
+                else:  # UPSERT on a genuine difference
+                    assert stored == desc
+        finally:
+            db.close(conn)
+
+
+# --------------------------------------------------------------------------
+# Catalog tables (Phase 3 WI-2, ADR-0055/0054): insert/update/skip/reject,
+# no supersession, catalog updates audit as 'update' not 'correct', no
+# per-row 'insert' audit rows (batch-level only, like every other table).
+# --------------------------------------------------------------------------
+
+
+def test_category_import_inserts_and_batch_audits_only(
+    conn: sqlcipher3.Connection,
+) -> None:
+    outcome = _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "a new category"}]},
+        imports.REJECT,
+    )
+    assert outcome.summaries["categories"].rows_inserted == 1
+    assert _one(conn, "SELECT count(*) FROM categories WHERE name = 'cat_new'") == 1
+    # No superseded_by/import_batch_id columns exist on a catalog table; a
+    # fresh insert is audited at batch level only, same as every other table.
+    assert _audit_ops(conn) == {"import": 1}
+
+
+def test_category_upsert_updates_in_place_not_correct(
+    conn: sqlcipher3.Connection,
+) -> None:
+    _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "old text"}]},
+        imports.REJECT,
+    )
+    cat_id = int(_one(conn, "SELECT id FROM categories WHERE name = 'cat_new'"))
+
+    outcome = _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "new text"}]},
+        imports.UPSERT,
+    )
+    assert outcome.summaries["categories"].rows_corrected == 1
+    # Same row id: an in-place repair, never a supersession (there is no
+    # superseded_by column on categories to supersede into).
+    assert _one(conn, "SELECT id FROM categories WHERE name = 'cat_new'") == cat_id
+    assert (
+        _one(conn, "SELECT description FROM categories WHERE id = ?", cat_id)
+        == "new text"
+    )
+    ops = _audit_ops(conn)
+    assert ops.get("correct", 0) == 0
+    update_rows = conn.execute(
+        "SELECT row_id, old_values, new_values FROM audit_log "
+        "WHERE table_name = 'categories' AND operation = 'update'"
+    ).fetchall()
+    assert len(update_rows) == 1
+    assert int(update_rows[0][0]) == cat_id
+    assert json.loads(str(update_rows[0][1]))["description"] == "old text"
+    assert json.loads(str(update_rows[0][2]))["description"] == "new text"
+
+
+def test_category_skip_leaves_existing_row(conn: sqlcipher3.Connection) -> None:
+    _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "old text"}]},
+        imports.REJECT,
+    )
+    outcome = _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "new text"}]},
+        imports.SKIP,
+    )
+    assert outcome.summaries["categories"].rows_skipped == 1
+    assert (
+        _one(conn, "SELECT description FROM categories WHERE name = 'cat_new'")
+        == "old text"
+    )
+    assert "update" not in _audit_ops(conn)
+
+
+def test_category_reject_conflict_fails_and_writes_nothing(
+    conn: sqlcipher3.Connection,
+) -> None:
+    _run(
+        conn,
+        {"categories": [{"name": "cat_new", "description": "old text"}]},
+        imports.REJECT,
+    )
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"categories": [{"name": "cat_new", "description": "new text"}]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "categories" and "already exists" in e.message
+        for e in excinfo.value.errors
+    )
+    assert (
+        _one(conn, "SELECT description FROM categories WHERE name = 'cat_new'")
+        == "old text"
+    )
+
+
+def test_labs_catalog_import_insert_and_update(conn: sqlcipher3.Connection) -> None:
+    outcome = _run(
+        conn, {"labs": [{"name": "New Lab", "description": None}]}, imports.REJECT
+    )
+    assert outcome.summaries["labs"].rows_inserted == 1
+    lab_id = int(_one(conn, "SELECT id FROM labs WHERE name = 'New Lab'"))
+
+    outcome = _run(
+        conn,
+        {"labs": [{"name": "New Lab", "description": "now with a description"}]},
+        imports.UPSERT,
+    )
+    assert outcome.summaries["labs"].rows_corrected == 1
+    assert _one(conn, "SELECT id FROM labs WHERE name = 'New Lab'") == lab_id
+    assert "correct" not in _audit_ops(conn)
+
+
+def test_biomarker_catalog_import_defaults_category_to_reserved(
+    conn: sqlcipher3.Connection,
+) -> None:
+    outcome = _run(
+        conn, {"biomarkers": [{"canonical_name": "New Marker"}]}, imports.REJECT
+    )
+    assert outcome.summaries["biomarkers"].rows_inserted == 1
+    assert (
+        _one(
+            conn,
+            "SELECT category_id FROM biomarkers WHERE canonical_name = ?",
+            "New Marker",
+        )
+        == 0
+    )
+
+
+def test_biomarker_catalog_import_rejects_unknown_category(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"biomarkers": [{"canonical_name": "New Marker", "category_id": 999999}]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarkers" and "does not exist in categories" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+# --------------------------------------------------------------------------
+# biomarker_aliases: server-derived alias_normalized/created_utc
+# --------------------------------------------------------------------------
+
+
+def test_biomarker_alias_import_derives_normalized_and_timestamp(
+    conn: sqlcipher3.Connection,
+) -> None:
+    outcome = _run(
+        conn,
+        {"biomarker_aliases": [{"biomarker_id": 1, "alias": "  Total   Chol  "}]},
+        imports.REJECT,
+    )
+    assert outcome.summaries["biomarker_aliases"].rows_inserted == 1
+    row = conn.execute(
+        "SELECT alias, alias_normalized, created_utc, source "
+        "FROM biomarker_aliases WHERE biomarker_id = 1"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "  Total   Chol  "
+    assert row[1] == "total chol"  # NFKC -> casefold -> trim -> collapse
+    assert row[2] is not None
+    assert row[3] is None
+    # No per-row 'insert' audit row; batch level only.
+    assert _audit_ops(conn) == {"import": 1}
+
+
+def test_biomarker_alias_import_ignores_client_supplied_derived_fields(
+    conn: sqlcipher3.Connection,
+) -> None:
+    _run(
+        conn,
+        {
+            "biomarker_aliases": [
+                {
+                    "biomarker_id": 1,
+                    "alias": "Alt Name",
+                    "alias_normalized": "malicious-override",
+                    "created_utc": "1999-01-01T00:00:00Z",
+                    "source": "import test",
+                }
+            ]
+        },
+        imports.REJECT,
+    )
+    row = conn.execute(
+        "SELECT alias_normalized, created_utc, source FROM biomarker_aliases "
+        "WHERE biomarker_id = 1"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "alt name"  # server-derived, not the client's override
+    assert row[1] != "1999-01-01T00:00:00Z"
+    assert row[2] == "import test"  # a legitimate client-supplyable column
+
+
+def test_biomarker_alias_missing_alias_is_a_validation_error(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"biomarker_aliases": [{"biomarker_id": 1}]}, imports.REJECT)
+    assert any(
+        e.table == "biomarker_aliases"
+        and "missing required column 'alias'" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_biomarker_alias_missing_biomarker_id_is_a_validation_error(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"biomarker_aliases": [{"alias": "Some Alias"}]}, imports.REJECT)
+    assert any(
+        e.table == "biomarker_aliases"
+        and "missing required column 'biomarker_id'" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+# --------------------------------------------------------------------------
+# Cross-table normalized-name uniqueness (ADR-0054 §3)
+# --------------------------------------------------------------------------
+
+
+def test_alias_colliding_with_existing_canonical_name_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"biomarker_aliases": [{"biomarker_id": 2, "alias": "biomarker 1"}]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarker_aliases"
+        and "collides with an existing biomarker canonical_name" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_alias_equal_to_own_biomarkers_exact_canonical_spelling_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    """The explicitly-called-out redundant case: aliasing a biomarker to its
+    own exact canonical spelling — a strict subset of the general
+    canonical-vs-alias collision rule."""
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"biomarker_aliases": [{"biomarker_id": 1, "alias": "Biomarker 1"}]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarker_aliases"
+        and "collides with an existing biomarker canonical_name" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_new_biomarker_colliding_with_existing_alias_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    _run(
+        conn,
+        {"biomarker_aliases": [{"biomarker_id": 1, "alias": "Cholesterol Alt"}]},
+        imports.REJECT,
+    )
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"biomarkers": [{"canonical_name": "Cholesterol Alt"}]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarkers"
+        and "collides with an existing biomarker_aliases entry" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_in_batch_biomarker_canonical_name_collision_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "biomarkers": [
+                    {"canonical_name": "New Marker"},
+                    {"canonical_name": "new   marker"},
+                ]
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarkers"
+        and "normalizes the same as another biomarker in this batch" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_in_batch_alias_colliding_with_in_batch_biomarker_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "biomarkers": [{"canonical_name": "Brand New Marker"}],
+                "biomarker_aliases": [{"biomarker_id": 1, "alias": "brand new marker"}],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarker_aliases"
+        and "collides with a biomarker's canonical_name in this batch" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+# --------------------------------------------------------------------------
+# lab_results.biomarker_name resolution (ADR-0054 §4)
+# --------------------------------------------------------------------------
+
+
+def test_lab_result_resolves_biomarker_name_canonical_hit(
+    conn: sqlcipher3.Connection,
+) -> None:
+    outcome = _run(
+        conn,
+        {
+            "lab_draws": [_draw()],
+            "lab_results": [
+                {"lab_draw_id": 1, "biomarker_name": "  biomarker 1 ", "value_num": 5.0}
+            ],
+        },
+        imports.REJECT,
+    )
+    assert outcome.summaries["lab_results"].rows_inserted == 1
+    assert _one(conn, "SELECT biomarker_id FROM lab_results_current") == 1
+
+
+def test_lab_result_resolves_biomarker_name_alias_hit(
+    conn: sqlcipher3.Connection,
+) -> None:
+    _run(
+        conn,
+        {"biomarker_aliases": [{"biomarker_id": 2, "alias": "B2 Alias"}]},
+        imports.REJECT,
+    )
+    outcome = _run(
+        conn,
+        {
+            "lab_draws": [_draw()],
+            "lab_results": [
+                {"lab_draw_id": 1, "biomarker_name": "b2 alias", "value_num": 5.0}
+            ],
+        },
+        imports.REJECT,
+    )
+    assert outcome.summaries["lab_results"].rows_inserted == 1
+    assert _one(conn, "SELECT biomarker_id FROM lab_results_current") == 2
+
+
+def test_lab_result_unresolved_biomarker_name_is_a_validation_error(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "lab_draws": [_draw()],
+                "lab_results": [
+                    {
+                        "lab_draw_id": 1,
+                        "biomarker_name": "Nonexistent Marker",
+                        "value_num": 1.0,
+                    }
+                ],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "lab_results" and "did not resolve" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_lab_result_both_biomarker_id_and_name_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "lab_draws": [_draw()],
+                "lab_results": [
+                    {
+                        "lab_draw_id": 1,
+                        "biomarker_id": 1,
+                        "biomarker_name": "Biomarker 1",
+                        "value_num": 1.0,
+                    }
+                ],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "lab_results" and "exactly one of biomarker_id" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_lab_result_neither_biomarker_id_nor_name_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "lab_draws": [_draw()],
+                "lab_results": [{"lab_draw_id": 1, "value_num": 1.0}],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "lab_results" and "exactly one of biomarker_id" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_biomarker_name_does_not_resolve_against_a_same_batch_biomarker(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # The same-batch visibility rule (ADR-0057 §9): name resolution consults
+    # only already-stored catalog rows, never a biomarkers row introduced
+    # earlier in the same batch. A biomarker must land in a prior import before
+    # a lab_results row can reference it by name — so this batch fails loud, and
+    # (rejected atomically) writes nothing, not even the new biomarker.
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "biomarkers": [{"canonical_name": "Same Batch Marker"}],
+                "lab_draws": [_draw()],
+                "lab_results": [
+                    {
+                        "lab_draw_id": 1,
+                        "biomarker_name": "Same Batch Marker",
+                        "value_num": 1.0,
+                    }
+                ],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "lab_results" and "did not resolve" in e.message
+        for e in excinfo.value.errors
+    )
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM biomarkers WHERE canonical_name = ?",
+            "Same Batch Marker",
+        )
+        == 0
+    )
+
+
+def test_resolve_biomarker_name_fails_loud_on_an_ambiguous_match(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # The resolver's >1-match branch (ADR-0057 §5) is guarded-unreachable through
+    # the ordinary import path by the cross-table uniqueness checks, so force the
+    # ambiguous state directly with raw SQL (two byte-distinct canonical names
+    # that normalize identically) and assert the resolver fails loud rather than
+    # silently picking one.
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('Ambig Marker')")
+    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('ambig  marker')")
+    conn.execute("COMMIT")
+    assert imports.normalize_name("Ambig Marker") == imports.normalize_name(
+        "ambig  marker"
+    )
+    with pytest.raises(ValueError, match="did not resolve to exactly one"):
+        imports.resolve_biomarker_name(conn, "Ambig Marker")

@@ -246,7 +246,7 @@ The data types above are realized as concrete tables by **migration 0001**, the 
 
 ### Deferred, with triggers
 
-- `biomarker_aliases` → **Phase 3**, landing with the taxonomy + name-alias-fallback gate ([open-questions.md](open-questions.md)); additive migration.
+- `biomarker_aliases` → realized in **migration 0004** (Phase 3 WI-2), landing with the taxonomy + name-alias-fallback gate; see below.
 - Levels **zones / activity / nutrition** tables → **Phase 7**; they are "Not yet designed" pending inspection of a real Levels export, so 0001 does not invent their shape.
 - Clinical-document **original-binary storage** (content-addressed BLOBs) → **Phase 5** ([ADR-0034](adr/0034-clinical-document-storage.md)); 0001 records only the `source_file_hash` dedup key on `clinical_documents`. The FTS-indexed `body` text ships now because [ADR-0041](adr/0041-clinical-document-fts.md) requires the index in 0001.
 - The lab's **reported LOINC per result** → deferred to [ADR-0032](adr/0032-biomarker-loinc-cardinality.md) (one concept, many codes); `lab_results` carries no `reported_loinc` column yet.
@@ -287,3 +287,66 @@ Scoping the uniqueness to `superseded_by IS NULL` lets supersession chains coexi
 
 - **`import_batches` is the import provenance record.** One row per committed batch (`source`, optional `adapter_id`/`adapter_version`/`note`, `created_utc`); every row an import writes carries its `import_batch_id`, and the batch-level `audit_log` `import` row (one per (batch, table), summary counts) references it. Conflict policy and counts live in that audit summary, not on `import_batches`.
 - **`lab_draws` is an identity/container row; its non-key columns are designated metadata.** Under import upsert, a matched draw is *reused* (its id stays stable, keeping its results attached) and a genuine difference on `draw_local_recorded`/`draw_local_tz`/`draw_tz_inferred`/`draw_context`/`fasting`/`notes` is an in-place `update` ([ADR-0027](adr/0027-audit-trail-and-corrections.md)'s designated-metadata carve-out), not a supersession. `lab_draws` therefore never supersedes through import — it carries no clinical value to lose; the value rows are `lab_results`, which supersede on any difference.
+
+## Migration 0004 — Categories and Aliases
+
+**Migration 0004** ([`src/healthspan/migrations/0004_categories_and_aliases.sql`](../src/healthspan/migrations/0004_categories_and_aliases.sql), Phase 3 WI-2) resolves the two Phase 3 decision gates — [ADR-0055](adr/0055-biomarker-category-taxonomy.md) (D1, category taxonomy) and [ADR-0054](adr/0054-biomarker-name-alias-fallback.md) (D2, name-alias fallback) — as concrete schema. Same convention as 0001–0003: the DDL is the source of truth; this records what it doesn't say.
+
+### `categories` — first-class catalog, reserved default row
+
+```sql
+CREATE TABLE categories (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT
+) STRICT;
+```
+
+- Replaces the free-text `biomarkers.category` column 0001 sketched ([ADR-0030](adr/0030-biomarker-identity.md)) with a proper catalog table + FK, closing the same drift class ([ADR-0031](adr/0031-units-and-ucum.md) closed for units, [ADR-0054](adr/0054-biomarker-name-alias-fallback.md) closes for names).
+- **Reserved default row: id 0, name `not_assigned`.** Seeded by the migration itself — not owner-editable catalog data, unlike the 19 rows that follow it. The reserved row is identified **by id, not name**: the display text may be renamed freely (`UPDATE categories SET name = ... WHERE id = 0` is unrestricted), but *deleting* id 0 is structurally forbidden by a `BEFORE DELETE ... WHEN OLD.id = 0` trigger (`categories_reserved_no_delete`) — the same append-only-trigger idiom migration 0001 uses for `audit_log`, applied here to a single protected row rather than a whole table.
+- **19 owner-editable system-axis categories** seed alongside the reserved row (`autoimmunity`, `allergy`, `body_composition`, `electrolytes`, `environmental_toxins`, `heart`, `hematology`, `hormones`, `immune`, `inflammation`, `kidney`, `liver`, `lipoproteins`, `metabolic`, `nutrients`, `pancreas`, `screening`, `thyroid`, `urine`) — a curated starting point the owner will edit over time, not an authoritative external standard ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §6). Like other catalog tables, `categories` carries no `superseded_by`/`*_current` view; edits and deletes (of non-reserved rows) are ordinary catalog writes, audited insert/update/delete ([ADR-0027](adr/0027-audit-trail-and-corrections.md)).
+
+### `biomarkers` rebuild — `category_id` FK replaces free-text `category`
+
+SQLite cannot `ALTER` a column's type, so 0004 rebuilds the table (rename-old → create-new → copy-with-mapping → drop-old), mapping any existing free-text `category` value to the matching `categories.id` (falling back to 0 if no match) — written correctly for the general case even though the table is empty on every database this migration will actually run against.
+
+```sql
+CREATE TABLE biomarkers (
+    id             INTEGER PRIMARY KEY,
+    canonical_name TEXT NOT NULL UNIQUE,
+    loinc_code     TEXT UNIQUE,
+    canonical_unit TEXT,
+    category_id    INTEGER NOT NULL DEFAULT 0 REFERENCES categories(id),
+    description    TEXT
+) STRICT;
+
+CREATE INDEX ix_biomarkers_category ON biomarkers (category_id);
+```
+
+- **`category_id` is `NOT NULL DEFAULT 0`** — a reserved-sentinel FK, not a nullable "uncategorized" column. This is deliberate ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §2): a nullable FK makes a naive `JOIN categories` silently drop uncategorized biomarkers (a wrong-answer-not-an-error bug), while `NOT NULL` + sentinel makes the naive join and "count by category" aggregations correct by construction. An import row that omits a category falls to the default explicitly; the server never guesses.
+- **The `= 0` convention.** "Needs categorizing" is `WHERE category_id = 0`, never `IS NULL` — id 0's meaning (reserved, not "no category selected") is part of the spec. Downstream code (reads, imports, the future CLI/MCP surface) must use this convention, not a null check.
+- **Reserved-row presence is an application invariant, not a schema one.** `PRAGMA foreign_key_check` (the integrity gate `db.py`/`migrate.py` enforce) proves every `category_id` points at *some* existing row, but not that id 0 specifically survives. `db.reserved_category_present()` plus the assertion in `service.verify_schema` (Core Service startup, ADR-0039) close that gap: a database missing the reserved row refuses to start, alongside the existing `schema_version` check, rather than surfacing as a confusing far-from-cause FK failure the first time an import defaults a biomarker to `category_id = 0`.
+- The `?category=` read filter ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)) resolves the category *name* case-insensitively to `category_id` server-side; clients never handle raw ids ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1).
+
+### `biomarker_aliases` — the name-based resolution fallback
+
+```sql
+CREATE TABLE biomarker_aliases (
+    id               INTEGER PRIMARY KEY,
+    biomarker_id     INTEGER NOT NULL REFERENCES biomarkers(id),
+    alias            TEXT NOT NULL,
+    alias_normalized TEXT NOT NULL UNIQUE,
+    source           TEXT,
+    created_utc      TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX ix_biomarker_aliases_biomarker ON biomarker_aliases (biomarker_id);
+```
+
+- `alias` is the display form as encountered/curated (e.g. a lab's own label); `alias_normalized` is its normalization ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md) §2, below) and the resolver's actual lookup key — `UNIQUE`, so no two aliases can normalize to the same string.
+- `source` is cheap provenance (`'seed'`, `'manual-entry'`, a lab name, …) for auditing a suspect alias later; `created_utc` is stamped server-side, never client-supplied.
+- Catalog data like `biomarkers` itself: no `superseded_by`, no `*_current` view; deletes are hard deletes with the mandatory audit row ([ADR-0027](adr/0027-audit-trail-and-corrections.md)). This table ships empty in 0004 — aliases accrue as real name forms are encountered (Phase 3 WI-2 registers it as an importable table; the CLI's confirm-and-record flow, WI-4, is its first practical writer).
+
+### Name normalization rule ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md) §2)
+
+The normalized form of a name is: Unicode NFKC → casefold → trim → collapse each internal run of whitespace to a single space. Nothing else — no punctuation stripping, no stemming, no edit distance. The biomarker-name resolver (a Core Service capability, one place) looks up this normalized form in the **union** of normalized `biomarkers.canonical_name` and `biomarker_aliases.alias_normalized`, both mapping to `biomarker_id`; resolution is exact-match only; anything less than exact fails loudly, naming the unresolved string. Because a plain `UNIQUE` cannot express cross-table uniqueness, write-time validation (over both stored rows and other rows in the same import batch) rejects an alias whose normalized form collides with any canonical name, and rejects a biomarker whose normalized canonical name collides with an existing alias or another canonical name — the wrong-biomarker-resolution failure mode is closed structurally, not by convention.

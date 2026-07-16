@@ -48,6 +48,13 @@ def harness(make_config: Callable[[], Config]) -> Iterator[Harness]:
         import_token = tokens.mint_token(setup, "watch-import", {"import"})
         reader_token = tokens.mint_token(setup, "reader", {"read"})
         setup.execute("BEGIN IMMEDIATE")
+        # Migration 0004 (Phase 3 WI-2) now seeds its own catalog (labs,
+        # biomarkers) on every fresh database; replace it with this fixed
+        # test catalog rather than add to it, to avoid colliding on id 1
+        # and on the natural-key unique indexes.
+        setup.execute("DELETE FROM biomarker_aliases")
+        setup.execute("DELETE FROM biomarkers")
+        setup.execute("DELETE FROM labs")
         setup.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
         for biomarker_id in (1, 2, 3):
             setup.execute(
@@ -216,3 +223,157 @@ def test_import_audit_actor_is_the_token_name(harness: Harness) -> None:
     finally:
         db.close(conn)
     assert [str(a[0]) for a in actors] == ["watch-import"]
+
+
+# --------------------------------------------------------------------------
+# Catalog tables (Phase 3 WI-2, ADR-0055/0054) are wired through the route
+# --------------------------------------------------------------------------
+
+
+def test_import_accepts_catalog_tables(harness: Harness) -> None:
+    body = _panel(
+        lab_draws=[],
+        lab_results=[],
+        categories=[{"name": "new_category", "description": None}],
+        labs=[{"name": "New Lab", "description": None}],
+        biomarkers=[{"canonical_name": "New Marker"}],
+        biomarker_aliases=[{"biomarker_id": 1, "alias": "New Marker Alt"}],
+    )
+    response = _post(harness.client, harness.import_token, body)
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["categories"]["rows_inserted"] == 1
+    assert summary["labs"]["rows_inserted"] == 1
+    assert summary["biomarkers"]["rows_inserted"] == 1
+    assert summary["biomarker_aliases"]["rows_inserted"] == 1
+    assert (
+        _count(
+            harness.db_path,
+            "SELECT count(*) FROM categories WHERE name = 'new_category'",
+        )
+        == 1
+    )
+    alias_row = db.connect(harness.db_path, _key())
+    try:
+        row = alias_row.execute(
+            "SELECT alias_normalized, created_utc FROM biomarker_aliases "
+            "WHERE alias = 'New Marker Alt'"
+        ).fetchone()
+    finally:
+        db.close(alias_row)
+    assert row is not None
+    assert row[0] == "new marker alt"  # server-derived, never client input
+    assert row[1] is not None
+
+
+def test_import_catalog_update_audits_as_update_not_correct(
+    harness: Harness,
+) -> None:
+    first = _post(
+        harness.client,
+        harness.import_token,
+        _panel(
+            lab_draws=[],
+            lab_results=[],
+            categories=[{"name": "new_category", "description": "old"}],
+        ),
+    )
+    assert first.status_code == 200
+
+    second = _post(
+        harness.client,
+        harness.import_token,
+        _panel(
+            lab_draws=[],
+            lab_results=[],
+            categories=[{"name": "new_category", "description": "new"}],
+            conflict_policy="upsert",
+        ),
+    )
+    assert second.status_code == 200
+    assert second.json()["summary"]["categories"]["rows_corrected"] == 1
+    conn = db.connect(harness.db_path, _key())
+    try:
+        ops = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT operation FROM audit_log WHERE table_name = 'categories'"
+            ).fetchall()
+        }
+    finally:
+        db.close(conn)
+    assert "correct" not in ops
+    assert "update" in ops
+
+
+# --------------------------------------------------------------------------
+# lab_results.biomarker_name resolution over the HTTP route (ADR-0054 §4)
+# --------------------------------------------------------------------------
+
+
+def test_import_resolves_biomarker_name_over_http(harness: Harness) -> None:
+    body = _panel(
+        lab_results=[
+            {
+                "id": 1,
+                "lab_draw_id": 1,
+                "biomarker_name": "Biomarker 1",
+                "value_num": 100.0,
+            },
+        ]
+    )
+    response = _post(harness.client, harness.import_token, body)
+    assert response.status_code == 200
+    assert _count(harness.db_path, "SELECT count(*) FROM lab_results_current") == 1
+    conn = db.connect(harness.db_path, _key())
+    try:
+        row = conn.execute("SELECT biomarker_id FROM lab_results_current").fetchone()
+    finally:
+        db.close(conn)
+    assert row is not None
+    assert int(row[0]) == 1
+
+
+def test_import_rejects_unresolved_biomarker_name_over_http(
+    harness: Harness,
+) -> None:
+    body = _panel(
+        lab_results=[
+            {
+                "id": 1,
+                "lab_draw_id": 1,
+                "biomarker_name": "Not A Real Marker",
+                "value_num": 100.0,
+            },
+        ]
+    )
+    response = _post(harness.client, harness.import_token, body)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any(
+        d["table"] == "lab_results" and "did not resolve" in d["message"]
+        for d in detail
+    )
+
+
+def test_import_rejects_both_biomarker_id_and_name_over_http(
+    harness: Harness,
+) -> None:
+    body = _panel(
+        lab_results=[
+            {
+                "id": 1,
+                "lab_draw_id": 1,
+                "biomarker_id": 1,
+                "biomarker_name": "Biomarker 1",
+                "value_num": 100.0,
+            },
+        ]
+    )
+    response = _post(harness.client, harness.import_token, body)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any(
+        d["table"] == "lab_results" and "exactly one of biomarker_id" in d["message"]
+        for d in detail
+    )

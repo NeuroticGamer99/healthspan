@@ -261,8 +261,12 @@ def test_clinical_document_type_domain(conn: sqlcipher3.Connection) -> None:
 def _seed_framework(conn: sqlcipher3.Connection) -> tuple[Any, Any]:
     conn.execute("INSERT INTO range_frameworks (name) VALUES ('Attia')")
     fw_id = _scalar(conn, "SELECT id FROM range_frameworks WHERE name = 'Attia'")
-    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('ApoB')")
-    bm_id = _scalar(conn, "SELECT id FROM biomarkers WHERE canonical_name = 'ApoB'")
+    # A synthetic name distinct from migration 0004's starter catalog seed
+    # (which already includes 'ApoB'), so this stays independent of that data.
+    conn.execute("INSERT INTO biomarkers (canonical_name) VALUES ('TestApoBMarker')")
+    bm_id = _scalar(
+        conn, "SELECT id FROM biomarkers WHERE canonical_name = 'TestApoBMarker'"
+    )
     return fw_id, bm_id
 
 

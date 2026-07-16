@@ -1,17 +1,21 @@
 """Read/query layer over the current-state views (ADR-0027, ADR-0053).
 
 Phase 2's read path: keyset ("cursor") pagination over the ``*_current``
-views for the import-populated tables, plus the two catalog tables a client
-needs to resolve their foreign keys. Every list query is bounded by the
-server-enforced page cap — the caller (the API layer) passes the effective
-limit, already clamped; this module never fetches more than ``limit + 1``
-rows (the extra row only signals that a next page exists).
+views for the import-populated tables, plus the catalog tables a client
+needs to resolve their foreign keys and browse reference data (``labs``,
+``biomarkers``, and — added in Phase 3 WI-2, ADR-0055/ADR-0057 —
+``categories``, ``range_frameworks``, ``framework_ranges``). Every list
+query is bounded by the server-enforced page cap — the caller (the API
+layer) passes the effective limit, already clamped; this module never
+fetches more than ``limit + 1`` rows (the extra row only signals that a
+next page exists).
 
 Ordering is fixed per resource (ADR-0053): clinical rows newest-first by
-``draw_utc`` (with ``id`` as the tiebreak), catalog rows by name. The cursor
-is an opaque base64url token encoding schema version, direction, and the
-last row's ``(sort key, id)`` keyset; it binds to the direction it was
-minted under and is rejected (`CursorError`) if replayed against the other.
+``draw_utc`` (with ``id`` as the tiebreak), catalog rows by name
+(``framework_ranges`` by ``id`` — it has no name column). The cursor is an
+opaque base64url token encoding schema version, direction, and the last
+row's ``(sort key, id)`` keyset; it binds to the direction it was minted
+under and is rejected (`CursorError`) if replayed against the other.
 
 Value fidelity (ADR-0030/0031): result rows carry the explicit
 ``(value_num, comparator, value_text)`` triple, the UCUM ``unit`` as
@@ -77,10 +81,25 @@ _LAB_RESULTS = _Resource(
     id_expr="r.id",
 )
 _LABS = _Resource(select="SELECT l.* FROM labs l", sort_expr="l.name", id_expr="l.id")
+# Naive JOIN is correct because every biomarker has a category (reserved
+# default id 0 — ADR-0055 §2); `category` carries the NAME (back-compat with
+# the Phase-2 response shape), `category_id` the FK.
 _BIOMARKERS = _Resource(
-    select="SELECT b.* FROM biomarkers b",
+    select=(
+        "SELECT b.*, c.name AS category "
+        "FROM biomarkers b JOIN categories c ON c.id = b.category_id"
+    ),
     sort_expr="b.canonical_name",
     id_expr="b.id",
+)
+_CATEGORIES = _Resource(
+    select="SELECT c.* FROM categories c", sort_expr="c.name", id_expr="c.id"
+)
+_RANGE_FRAMEWORKS = _Resource(
+    select="SELECT f.* FROM range_frameworks f", sort_expr="f.name", id_expr="f.id"
+)
+_FRAMEWORK_RANGES = _Resource(
+    select="SELECT r.* FROM framework_ranges r", sort_expr="r.id", id_expr="r.id"
 )
 
 
@@ -326,7 +345,16 @@ def list_biomarkers(
 ) -> Page:
     filters: list[tuple[str, object]] = []
     if category is not None:
-        filters.append(("b.category = ?", category))
+        # Case-insensitive category-NAME -> id lookup (ADR-0055 §1). An
+        # unknown name resolves the subselect to NULL, so `category_id = NULL`
+        # matches nothing — an empty page, never an error.
+        filters.append(
+            (
+                "b.category_id = (SELECT id FROM categories "
+                "WHERE name = ? COLLATE NOCASE)",
+                category,
+            )
+        )
     rows, next_cursor = _list(
         conn, _BIOMARKERS, filters, order=order, limit=limit, cursor=cursor
     )
@@ -335,3 +363,61 @@ def list_biomarkers(
 
 def get_biomarker(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
     return _get(conn, _BIOMARKERS, row_id)
+
+
+def list_categories(
+    conn: sqlcipher3.Connection,
+    *,
+    order: str = "asc",
+    limit: int,
+    cursor: str | None = None,
+) -> Page:
+    rows, next_cursor = _list(
+        conn, _CATEGORIES, [], order=order, limit=limit, cursor=cursor
+    )
+    return Page(rows, next_cursor)
+
+
+def get_category(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
+    return _get(conn, _CATEGORIES, row_id)
+
+
+def list_range_frameworks(
+    conn: sqlcipher3.Connection,
+    *,
+    order: str = "asc",
+    limit: int,
+    cursor: str | None = None,
+) -> Page:
+    rows, next_cursor = _list(
+        conn, _RANGE_FRAMEWORKS, [], order=order, limit=limit, cursor=cursor
+    )
+    return Page(rows, next_cursor)
+
+
+def get_range_framework(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
+    return _get(conn, _RANGE_FRAMEWORKS, row_id)
+
+
+def list_framework_ranges(
+    conn: sqlcipher3.Connection,
+    *,
+    framework_id: int | None = None,
+    biomarker_id: int | None = None,
+    order: str = "asc",
+    limit: int,
+    cursor: str | None = None,
+) -> Page:
+    filters: list[tuple[str, object]] = []
+    if framework_id is not None:
+        filters.append(("r.framework_id = ?", framework_id))
+    if biomarker_id is not None:
+        filters.append(("r.biomarker_id = ?", biomarker_id))
+    rows, next_cursor = _list(
+        conn, _FRAMEWORK_RANGES, filters, order=order, limit=limit, cursor=cursor
+    )
+    return Page(rows, next_cursor)
+
+
+def get_framework_range(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
+    return _get(conn, _FRAMEWORK_RANGES, row_id)

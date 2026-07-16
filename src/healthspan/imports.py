@@ -21,11 +21,19 @@ natural key per table, enforced as a partial-unique index over current rows
   difference *supersedes* (insert the corrected row, chain the old one, per-row
   ``correct`` audit with both images), so no clinical value is ever lost.
 
-Only these two tables are registered this phase; the primitives are
-table-agnostic and the registry extends for the Phase-7 adapters (ADR-0052).
+Catalog tables (``categories``, ``labs``, ``biomarkers``, ``biomarker_aliases``
+— Phase 3 WI-2, ADR-0054/0055) have no ``superseded_by``/``import_batch_id``
+columns: ``ImportableTable.has_supersession``/``has_provenance`` gate those
+column families off, so a catalog table always reconciles a genuine
+difference via in-place ``update`` (never supersession — there is no column
+to supersede into). ``lab_results`` additionally accepts ``biomarker_name``
+as an alternative to ``biomarker_id`` (ADR-0054 §4): resolved to an id via
+:func:`resolve_biomarker_name` before natural-key/conflict handling runs, so
+the rest of the pipeline only ever sees an id.
 """
 
 import contextlib
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -64,6 +72,13 @@ class ImportableTable:
     parent_fk: tuple[str, str] | None  # (fk column, parent table) intra-batch handle
     external_fks: tuple[tuple[str, str], ...]  # (fk column, referenced table)
     requires_value_model: bool = False
+    # Catalog tables (ADR-0055/0054) carry neither column family: a
+    # ``has_supersession=False`` table reconciles a genuine difference via
+    # in-place ``update``, never ``_supersede`` (there is no column to park a
+    # row out of currency into). ``has_provenance=False`` omits
+    # ``import_batch_id`` from the INSERT.
+    has_supersession: bool = True
+    has_provenance: bool = True
 
     @property
     def compared(self) -> tuple[str, ...]:
@@ -72,6 +87,70 @@ class ImportableTable:
 
 
 TABLES: dict[str, ImportableTable] = {
+    "categories": ImportableTable(
+        name="categories",
+        natural_key=("name",),
+        columns=("name", "description"),
+        defaults={"description": None},
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(),
+        has_supersession=False,
+        has_provenance=False,
+    ),
+    "labs": ImportableTable(
+        name="labs",
+        natural_key=("name",),
+        columns=("name", "description"),
+        defaults={"description": None},
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(),
+        has_supersession=False,
+        has_provenance=False,
+    ),
+    "biomarkers": ImportableTable(
+        name="biomarkers",
+        natural_key=("canonical_name",),
+        columns=(
+            "canonical_name",
+            "loinc_code",
+            "canonical_unit",
+            "category_id",
+            "description",
+        ),
+        defaults={
+            "loinc_code": None,
+            "canonical_unit": None,
+            "category_id": 0,
+            "description": None,
+        },
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(("category_id", "categories"),),
+        has_supersession=False,
+        has_provenance=False,
+    ),
+    "biomarker_aliases": ImportableTable(
+        name="biomarker_aliases",
+        # The client supplies ``alias`` (+ ``biomarker_id``, ``source?``); the
+        # server derives ``alias_normalized``/``created_utc`` (ADR-0054 §3),
+        # see ``_derive_alias_row``. Natural-key matching is on the derived
+        # ``alias_normalized``, never the client's raw spelling.
+        natural_key=("alias_normalized",),
+        columns=("biomarker_id", "alias", "alias_normalized", "source", "created_utc"),
+        defaults={
+            "biomarker_id": None,
+            "alias": None,
+            "source": None,
+            "created_utc": None,
+        },
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(("biomarker_id", "biomarkers"),),
+        has_supersession=False,
+        has_provenance=False,
+    ),
     "lab_draws": ImportableTable(
         name="lab_draws",
         natural_key=("lab_id", "draw_utc"),
@@ -130,10 +209,69 @@ TABLES: dict[str, ImportableTable] = {
 }
 
 # Parent-before-child order (ADR-0052): a child's handles resolve to ids the
-# parent pass has already assigned.
-IMPORT_ORDER: tuple[str, ...] = ("lab_draws", "lab_results")
+# parent pass has already assigned. Catalog tables precede the content
+# tables that reference them by (real, already-stored) id.
+IMPORT_ORDER: tuple[str, ...] = (
+    "categories",
+    "labs",
+    "biomarkers",
+    "biomarker_aliases",
+    "lab_draws",
+    "lab_results",
+)
 
 Row = Mapping[str, object]
+
+
+# --------------------------------------------------------------------------
+# Name normalization + the biomarker_name resolver (ADR-0054 §2/§3) — the one
+# place a display name ever turns into a biomarker id.
+# --------------------------------------------------------------------------
+
+
+def normalize_name(name: str) -> str:
+    """The one normalization rule for biomarker display names (ADR-0054 §2).
+
+    NFKC -> casefold -> strip -> collapse internal whitespace runs to one
+    space. Used both to derive ``biomarker_aliases.alias_normalized`` at
+    write time and to resolve a ``lab_results.biomarker_name`` at read-time
+    of the import validation pass — the same function, so the two can never
+    drift apart.
+    """
+    s = unicodedata.normalize("NFKC", name).casefold().strip()
+    return " ".join(s.split())
+
+
+def resolve_biomarker_name(conn: sqlcipher3.Connection, name: str) -> int:
+    """Exact-match resolve a display name to its biomarker id (ADR-0054 §3).
+
+    Matches ``normalize_name(name)`` against the *union* namespace of
+    normalized ``biomarkers.canonical_name`` and stored
+    ``biomarker_aliases.alias_normalized``. Zero or more-than-one match is a
+    :class:`ValueError` naming the unresolved string — fail loud, no fuzzy
+    matching anywhere on this path. ``canonical_name`` is not stored
+    normalized (it is the display spelling), so it is normalized here, in
+    Python, at resolve time; ``alias_normalized`` is already normalized
+    (derived at write time), so it is compared directly.
+    """
+    normalized = normalize_name(name)
+    matches: set[int] = set()
+    for row_id, canonical_name in conn.execute(
+        "SELECT id, canonical_name FROM biomarkers"
+    ).fetchall():
+        if normalize_name(str(canonical_name)) == normalized:
+            matches.add(int(row_id))
+    for (row_id,) in conn.execute(
+        "SELECT biomarker_id FROM biomarker_aliases WHERE alias_normalized = ?",
+        (normalized,),
+    ).fetchall():
+        matches.add(int(row_id))
+    if len(matches) != 1:
+        raise ValueError(
+            f"biomarker_name {name!r} did not resolve to exactly one "
+            f"biomarker ({len(matches)} matches)"
+        )
+    return matches.pop()
 
 
 @dataclass(frozen=True)
@@ -232,13 +370,16 @@ def run_import(
         raise ImportValidationError(
             [RowError("", -1, f"unknown conflict_policy {conflict_policy!r}")]
         )
-    errors = _validate(conn, payload, conflict_policy)
+    resolved_payload, resolve_errors = _resolve_payload(conn, payload)
+    errors = resolve_errors + _validate(conn, resolved_payload, conflict_policy)
     if errors:
         raise ImportValidationError(errors)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        batch_id, summaries = _apply(conn, batch, payload, conflict_policy, actor)
+        batch_id, summaries = _apply(
+            conn, batch, resolved_payload, conflict_policy, actor
+        )
     except BaseException:
         _rollback(conn)
         raise
@@ -252,6 +393,100 @@ def run_import(
 def _rollback(conn: sqlcipher3.Connection) -> None:
     with contextlib.suppress(sqlcipher3.Error):
         conn.execute("ROLLBACK")
+
+
+# --------------------------------------------------------------------------
+# Payload resolution (ADR-0054 §3/§4): server-side row rewrites applied once,
+# before validation and before apply, so both passes see the identical
+# materialized rows — no re-derivation, no drift between the two.
+# --------------------------------------------------------------------------
+
+
+def _resolve_payload(
+    conn: sqlcipher3.Connection, payload: Mapping[str, Sequence[Row]]
+) -> tuple[dict[str, list[Row]], list[RowError]]:
+    """Resolve ``lab_results.biomarker_name`` and derive alias columns.
+
+    ``lab_results.biomarker_name`` is resolved to ``biomarker_id`` here
+    (ADR-0054 §4), *before* ADR-0052 natural-key/conflict handling runs, so
+    the rest of the pipeline only ever sees an id. ``biomarker_aliases``
+    rows get their server-owned ``alias_normalized``/``created_utc``
+    filled in here (ADR-0054 §3), so the cross-table uniqueness check in
+    ``_validate`` — and the eventual INSERT — see the same derived values.
+    Tables this phase does not touch pass through unchanged; unknown table
+    names are left for ``_validate`` to report.
+    """
+    out: dict[str, list[Row]] = {name: list(rows) for name, rows in payload.items()}
+    errors: list[RowError] = []
+
+    results = out.get("lab_results")
+    if results:
+        resolved: list[Row] = []
+        for i, raw in enumerate(results):
+            row, row_errs = _resolve_lab_result_row(conn, raw)
+            errors.extend(RowError("lab_results", i, m) for m in row_errs)
+            resolved.append(row)
+        out["lab_results"] = resolved
+
+    aliases = out.get("biomarker_aliases")
+    if aliases:
+        out["biomarker_aliases"] = [_derive_alias_row(raw) for raw in aliases]
+
+    return out, errors
+
+
+def _resolve_lab_result_row(
+    conn: sqlcipher3.Connection, raw: Row
+) -> tuple[Row, list[str]]:
+    """Resolve one ``lab_results`` row's ``biomarker_name`` to ``biomarker_id``.
+
+    Exactly one of ``biomarker_id``/``biomarker_name`` is required (ADR-0054
+    §4); both or neither is a collected error naming the row. A name that
+    does not resolve (:func:`resolve_biomarker_name`) is likewise a
+    collected error — the row is returned unchanged (still carrying
+    ``biomarker_name``, still missing ``biomarker_id``) so downstream
+    required-column/shape checks report consistently alongside it.
+    """
+    has_id = raw.get("biomarker_id") is not None
+    has_name = raw.get("biomarker_name") is not None
+    if has_id and has_name:
+        return raw, [
+            "lab_results row must supply exactly one of biomarker_id / "
+            "biomarker_name (both given)"
+        ]
+    if not has_id and not has_name:
+        return raw, [
+            "lab_results row must supply exactly one of biomarker_id / "
+            "biomarker_name (neither given)"
+        ]
+    if has_id:
+        return raw, []
+    name = raw["biomarker_name"]
+    try:
+        resolved_id = resolve_biomarker_name(conn, str(name))
+    except ValueError as exc:
+        return raw, [str(exc)]
+    out = {k: v for k, v in raw.items() if k != "biomarker_name"}
+    out["biomarker_id"] = resolved_id
+    return out, []
+
+
+def _derive_alias_row(raw: Row) -> Row:
+    """Server-derive ``alias_normalized``/``created_utc`` (ADR-0054 §3).
+
+    The client supplies ``alias`` (display text) plus ``biomarker_id`` and
+    an optional ``source``; the server derives the normalized match key and
+    the timestamp. Any client-supplied value for either is silently
+    overwritten — the same "server-owned, never trusted" treatment as
+    ``import_batch_id``/``superseded_by`` elsewhere in this module. Missing
+    or non-string ``alias`` is left for ``_domain_errors`` to reject.
+    """
+    out = dict(raw)
+    alias = raw.get("alias")
+    if isinstance(alias, str) and alias:
+        out["alias_normalized"] = normalize_name(alias)
+    out["created_utc"] = utc_now_iso()
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -274,6 +509,12 @@ def _validate(
                     f"unknown import table {name!r}; importable: {sorted(TABLES)}",
                 )
             )
+
+    for table in ("categories", "labs", "biomarkers", "biomarker_aliases"):
+        rows = payload.get(table) or ()
+        if rows:
+            errors.extend(_validate_identity_table(conn, TABLES[table], rows, policy))
+    errors.extend(_validate_alias_canonical_uniqueness(conn, payload))
 
     draws = payload.get("lab_draws") or ()
     results = payload.get("lab_results") or ()
@@ -353,12 +594,169 @@ def _validate(
     return errors
 
 
+def _validate_identity_table(
+    conn: sqlcipher3.Connection,
+    spec: ImportableTable,
+    rows: Sequence[Row],
+    policy: str,
+) -> list[RowError]:
+    """Generic identity-table validation for a catalog table.
+
+    Shape/FK/domain errors (:func:`_row_errors`), an in-batch duplicate
+    natural key, and — under ``reject`` — a genuine conflict against an
+    already-stored row. Mirrors the ``lab_draws`` validation shape, minus
+    the parent-handle wiring lab_draws/lab_results need: a batch cannot both
+    create a catalog row and reference it by (real) id in the same call —
+    catalog tables have no batch-local child dependents this phase, they are
+    plain external foreign keys like any other already-stored row (mirrors
+    how ``lab_results.biomarker_id`` already only ever names a stored row,
+    never a batch handle).
+    """
+    errors: list[RowError] = []
+    keys_seen: set[tuple[object, ...]] = set()
+    for i, raw in enumerate(rows):
+        row_errs = _row_errors(conn, spec, raw)
+        if all(raw.get(c) is not None for c in spec.natural_key):
+            key = tuple(raw.get(c) for c in spec.natural_key)
+            if key in keys_seen:
+                row_errs.append(f"duplicate natural key {key} in {spec.name}")
+            keys_seen.add(key)
+            existing = _find_id(conn, spec, key)
+            if existing is not None and policy == REJECT:
+                normalized = _normalize(spec, raw)
+                image = audit.row_image(conn, spec.name, existing)
+                if _differs(spec, image, normalized):
+                    row_errs.append(
+                        f"conflict: a {spec.name} row {key} already exists "
+                        "(policy 'reject')"
+                    )
+        errors.extend(RowError(spec.name, i, m) for m in row_errs)
+    return errors
+
+
+def _validate_alias_canonical_uniqueness(
+    conn: sqlcipher3.Connection, payload: Mapping[str, Sequence[Row]]
+) -> list[RowError]:
+    """Cross-table normalized-name uniqueness (ADR-0054 §3).
+
+    A display name may not live as both a canonical biomarker name and an
+    alias — in any combination of already-stored and in-this-batch rows.
+    SQLite cannot express a uniqueness constraint spanning two tables, so it
+    is enforced here, in validation, fail-loud, before any write:
+
+    * an alias whose ``alias_normalized`` equals any biomarker's normalized
+      ``canonical_name`` (stored or in-batch) is rejected as redundant or
+      ambiguous — this also covers an alias equal to its own biomarker's
+      exact canonical spelling, a strict subset of this rule;
+    * a biomarker whose normalized ``canonical_name`` equals an existing
+      alias's ``alias_normalized``, or a *different* biomarker's normalized
+      ``canonical_name`` (stored or in-batch), is rejected. Re-submitting a
+      biomarker's own unchanged exact spelling is the ordinary reconcile
+      path (:func:`_validate_identity_table`), not a collision.
+
+    Alias-vs-alias duplicates need no code here: ``alias_normalized`` is the
+    ``biomarker_aliases`` natural key, so an exact duplicate is either an
+    ordinary reconcile against a stored row or an in-batch duplicate caught
+    by :func:`_validate_identity_table`.
+    """
+    errors: list[RowError] = []
+
+    # normalized -> the exact stored spelling (assumed collision-free among
+    # already-stored rows: this same check enforced that on every prior
+    # write).
+    canonical_existing: dict[str, str] = {
+        normalize_name(str(name)): str(name)
+        for _id, name in conn.execute(
+            "SELECT id, canonical_name FROM biomarkers"
+        ).fetchall()
+    }
+    alias_existing: set[str] = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT alias_normalized FROM biomarker_aliases"
+        ).fetchall()
+    }
+
+    biomarker_rows = payload.get("biomarkers") or ()
+    alias_rows = payload.get("biomarker_aliases") or ()
+
+    batch_canonical: dict[str, str] = {}
+    for i, raw in enumerate(biomarker_rows):
+        name = raw.get("canonical_name")
+        if not isinstance(name, str):
+            continue
+        normalized = normalize_name(name)
+        if normalized in alias_existing:
+            errors.append(
+                RowError(
+                    "biomarkers",
+                    i,
+                    f"canonical_name {name!r} collides with an existing "
+                    "biomarker_aliases entry (normalized)",
+                )
+            )
+        existing_spelling = canonical_existing.get(normalized)
+        if existing_spelling is not None and existing_spelling != name:
+            errors.append(
+                RowError(
+                    "biomarkers",
+                    i,
+                    f"canonical_name {name!r} normalizes the same as the "
+                    f"existing biomarker {existing_spelling!r}",
+                )
+            )
+        prior_spelling = batch_canonical.get(normalized)
+        if prior_spelling is not None and prior_spelling != name:
+            errors.append(
+                RowError(
+                    "biomarkers",
+                    i,
+                    f"canonical_name {name!r} normalizes the same as "
+                    f"another biomarker in this batch ({prior_spelling!r})",
+                )
+            )
+        batch_canonical.setdefault(normalized, name)
+
+    for i, raw in enumerate(alias_rows):
+        alias_normalized = raw.get("alias_normalized")
+        alias_text = raw.get("alias")
+        if not isinstance(alias_normalized, str):
+            continue
+        if alias_normalized in canonical_existing:
+            errors.append(
+                RowError(
+                    "biomarker_aliases",
+                    i,
+                    f"alias {alias_text!r} collides with an existing "
+                    "biomarker canonical_name (normalized) — redundant or "
+                    "ambiguous",
+                )
+            )
+        if alias_normalized in batch_canonical:
+            errors.append(
+                RowError(
+                    "biomarker_aliases",
+                    i,
+                    f"alias {alias_text!r} collides with a biomarker's "
+                    "canonical_name in this batch (normalized)",
+                )
+            )
+
+    return errors
+
+
 def _row_errors(
     conn: sqlcipher3.Connection, spec: ImportableTable, raw: Row
 ) -> list[str]:
     """Shape, required-column, foreign-key, domain, and value-model errors."""
     errs: list[str] = []
     allowed = set(spec.columns) | _RESERVED_KEYS
+    if spec.name == "lab_results":
+        # Consumed by the biomarker_name resolver (ADR-0054 §4) before this
+        # check ever sees it on the success path; recognized here too so a
+        # row whose name failed to resolve doesn't also get an unrelated
+        # "unknown column" error piled on.
+        allowed = allowed | {"biomarker_name"}
     for key in raw:
         if key not in allowed:
             errs.append(f"unknown column {key!r} for {spec.name}")
@@ -393,6 +791,14 @@ def _domain_errors(spec: ImportableTable, raw: Row) -> list[str]:
         comparator = raw.get("comparator")
         if comparator is not None and comparator not in _COMPARATORS:
             errs.append("comparator must be one of <, <=, >=, > (ADR-0030)")
+    elif spec.name == "biomarker_aliases":
+        # Not part of the natural key (that's the derived alias_normalized),
+        # so the generic "missing required column" pass over natural_key
+        # never sees these; require them explicitly.
+        if raw.get("biomarker_id") is None:
+            errs.append("missing required column 'biomarker_id' for biomarker_aliases")
+        if not isinstance(raw.get("alias"), str) or not raw.get("alias"):
+            errs.append("missing required column 'alias' for biomarker_aliases")
     return errs
 
 
@@ -492,6 +898,13 @@ def _reconcile(
     # UPSERT (REJECT was rejected during validation).
     counts.corrected += 1
     if spec.classification == CLASSIFICATION_VALUE:
+        if not spec.has_supersession:
+            # Registry invariant, not a user-reachable state: a value-row
+            # table must carry the superseded_by column to supersede into.
+            raise RuntimeError(
+                f"{spec.name}: classification=value requires "
+                "has_supersession=True (registry misconfiguration)"
+            )
         return _supersede(conn, spec, existing_id, image, normalized, actor, batch_id)
     _update_in_place(conn, spec, existing_id, image, normalized, actor, batch_id)
     return existing_id
@@ -610,8 +1023,14 @@ def _insert_row(
     batch_id: int,
     superseded_by: int | None = None,
 ) -> int:
-    columns = (*spec.columns, "import_batch_id", "superseded_by")
-    values = (*(normalized[c] for c in spec.columns), batch_id, superseded_by)
+    columns: list[str] = list(spec.columns)
+    values: list[object] = [normalized[c] for c in spec.columns]
+    if spec.has_provenance:
+        columns.append("import_batch_id")
+        values.append(batch_id)
+    if spec.has_supersession:
+        columns.append("superseded_by")
+        values.append(superseded_by)
     placeholders = ", ".join("?" for _ in columns)
     cursor = conn.execute(
         f"INSERT INTO {spec.name} ({', '.join(columns)}) "  # noqa: S608 - registry
@@ -647,11 +1066,10 @@ def _find_id(
     conn: sqlcipher3.Connection, spec: ImportableTable, key: tuple[object, ...]
 ) -> int | None:
     where = " AND ".join(f"{c} = ?" for c in spec.natural_key)
-    row = conn.execute(
-        f"SELECT id FROM {spec.name} "  # noqa: S608 - table and columns from registry
-        f"WHERE {where} AND superseded_by IS NULL",
-        key,
-    ).fetchone()
+    sql = f"SELECT id FROM {spec.name} WHERE {where}"  # noqa: S608 - registry
+    if spec.has_supersession:
+        sql += " AND superseded_by IS NULL"
+    row = conn.execute(sql, key).fetchone()
     return None if row is None else int(row[0])
 
 

@@ -166,6 +166,18 @@ def foreign_key_ok(conn: sqlcipher3.Connection) -> bool:
     return conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def reserved_category_present(conn: sqlcipher3.Connection) -> bool:
+    """Whether the reserved ``not_assigned`` category row (id 0) exists.
+
+    ``PRAGMA foreign_key_check`` proves every ``biomarkers.category_id``
+    points at an existing row, but not that id 0 specifically is present
+    (ADR-0055 §2) — the delete-guard trigger (migration 0004) forbids
+    removing it through SQL, but a startup caller still wants to assert it
+    explicitly rather than lean on the trigger alone.
+    """
+    return conn.execute("SELECT 1 FROM categories WHERE id = 0").fetchone() is not None
+
+
 def schema_version(conn: sqlcipher3.Connection) -> int | None:
     """Latest applied migration number, or None before the runner exists."""
     row = conn.execute(

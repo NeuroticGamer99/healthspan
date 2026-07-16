@@ -89,9 +89,10 @@ Direct LOINC resolution ([ADR-0030](0030-biomarker-identity.md), [ADR-0032](0032
 
 - **[open-questions.md](../open-questions.md)**: Biomarker alias table → Resolved — this PR
 - **[development-plan.md](../development-plan.md)**: decision-gates table, name-based alias fallback row → decided — this PR
-- **[data-model.md](../data-model.md)**: `biomarker_aliases` table — with the implementing WI-2 PR
-- **[api-reference.md](../api-reference.md)**: import contract (`biomarker_name`), reference-data endpoints — with the implementing WI-2 PR
+- **[data-model.md](../data-model.md)**: `biomarker_aliases` table — done (this PR)
+- **[api-reference.md](../api-reference.md)**: import contract (`biomarker_name`), reference-data endpoints — done (this PR)
 - **[ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md)** (Proposed): navigation link "Extended by ADR-0054" — this PR
+- **[ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md)** (Proposed): the implementing WI-2 ADR that resolves the DDL/resolver/validation mechanics this ADR left open
 
 ## Links
 
@@ -100,4 +101,5 @@ Direct LOINC resolution ([ADR-0030](0030-biomarker-identity.md), [ADR-0032](0032
 - Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — the code-based lane this fallback complements
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — audit obligations on catalog writes/deletes
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — the fail-loud-never-guess safety posture this ADR inherits
+- Implemented by: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — migration 0004 DDL, the resolver/normalization mechanics, and the import-engine generalization
 - Resolves: [open-questions.md](../open-questions.md), Schema — "Biomarker alias table"
