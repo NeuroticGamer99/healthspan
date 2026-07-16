@@ -108,3 +108,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0053](0053-read-endpoint-surface-and-pagination.md) | Read-Endpoint Surface, Keyset Pagination, and Value-Fidelity Serialization (Phase 2 WI-4) | Proposed |
 | [ADR-0054](0054-biomarker-name-alias-fallback.md) | Name-Based Biomarker Alias Fallback (Phase 3 D2) | Proposed |
 | [ADR-0055](0055-biomarker-category-taxonomy.md) | Biomarker Category Taxonomy — First-Class Categories with a Reserved Default (Phase 3 D1) | Proposed |
+| [ADR-0056](0056-units-module-api-and-molar-context.md) | Units-Module API and Molar Context (Phase 3 WI-1) | Proposed |
