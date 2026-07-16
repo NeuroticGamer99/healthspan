@@ -55,6 +55,8 @@ CREATE INDEX ix_biomarkers_category ON biomarkers (category_id);
 
 The FK makes drift structurally impossible — a biomarker can only name a category that exists. Like the other catalog tables, `categories` does not supersede (no `*_current` view; deletes are hard deletes with the mandatory [ADR-0027](0027-audit-trail-and-corrections.md) audit row). The existing `GET /v1/biomarkers?category=` filter ([ADR-0053](0053-read-endpoint-surface-and-pagination.md)) keeps accepting the category *name* (resolved to `category_id`), so clients never handle raw ids.
 
+**Lookup key semantics.** The `?category=` resolution is **case-insensitive** — names are stored lowercase and the lookup is normalized before matching, so `?category=Thyroid` and `?category=thyroid` resolve identically. Without this, a case-mismatched filter returns a silently empty page (SQLite's default `UNIQUE`/`=` on `TEXT` is case-sensitive) — the wrong-answer-not-an-error family this ADR closes elsewhere (§Decision Drivers, and the naive-join argument in §2). Because the name doubles as the lookup value while remaining an owner-editable display label (§2), **renaming a category is a breaking change to any saved `?category=` filter** that names the old value. Accepted under the single-owner model: the owner curates both the taxonomy and the queries, renames are rare and deliberate, and the empty result is self-evident to the one client. A separate immutable `slug` column (human-readable, rename-stable) is the additive escape hatch if a future multi-client or MCP surface needs filters that survive renames.
+
 **Migration 0004 rebuilds `biomarkers`** (SQLite cannot alter a column type). The table is empty until WI-2 seeds it and has no `*_current` view, so the rebuild moves zero rows in practice and sidesteps the additive-`ALTER TABLE`/view-recreation convention ([open-questions.md](../open-questions.md), Schema); it is still written correctly for the general (non-empty) case so a re-run from an older snapshot cannot lose rows.
 
 ### 2. Reserved default over nullable FK
@@ -67,6 +69,8 @@ Rationale (owner decision, over the orthodox NULL):
 - An import row omitting the category falls to the default explicitly; the server never guesses.
 
 Consequence accepted knowingly: "needs categorizing" is `WHERE category_id = 0`, not `IS NULL` — id 0's meaning is part of the spec, which is exactly where the owner wanted it.
+
+**Reserved-row presence is an application invariant, not a schema one.** `PRAGMA foreign_key_check` — the integrity gate the migration runner, backup, and restore all enforce ([db.py](../src/healthspan/db.py), [migrate.py](../src/healthspan/migrate.py)) — proves every `category_id` points at an existing row, but it does *not* prove id 0 itself is present. The check stays green after the reserved row is deleted while empty, until the next import defaults a biomarker to `category_id = 0` (the column default) and hits a confusing far-from-cause FK failure. WI-2 therefore owns two obligations: (a) the write-path delete-guard forbidding removal of id 0 (mirroring [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md)'s reserved-name guard), and (b) a startup/verify assertion that the reserved row exists, alongside the existing `schema_version` verification — so a missing reserved row fails loudly at open, not mid-import.
 
 ### 3. Axis: physiological system, with an orphan-rescue rule
 
@@ -109,13 +113,14 @@ Categories deliberately excluded and why: Function's `Daily Metrics` (Fitbit —
 - Migration 0004 rebuilds `biomarkers` (cheap: empty table, no view), and the reserved-row delete-guard is one more write-path rule to test
 - A single primary category forces a "best home" choice for double-booking markers (ferritin, hs-CRP) until tags land — accepted; tags are the designed resolution
 - The reserved sentinel means "uncategorized" queries are `= 0`, a project convention downstream code must know (documented here and in data-model.md)
+- The category name is both the mutable display label and the `?category=` lookup key; renaming a category breaks any saved filter that names the old value (accepted — single-owner; an immutable `slug` is the additive fix if a multi-client surface ever needs rename-stable filters)
 
 ## Consequences for Other Documents
 
 - **[open-questions.md](../open-questions.md)**: "Biomarker category taxonomy" → Resolved (this PR); new "Biomarker cross-cutting tags" deferral with the Phase-4 trigger (this PR); the "Derived data points" deferral gains the Z-Score/Biological Age externally-computed evidence (this PR)
 - **[development-plan.md](../development-plan.md)**: D1 gate and decision-gates table → decided (this PR)
 - **[data-model.md](../data-model.md)**: `categories` table, `biomarkers.category_id`, the reserved-row and `= 0` conventions — with the implementing WI-2 PR
-- **[api-reference.md](../api-reference.md)**: `?category=` name resolution; `categories` as reference-data — with the implementing WI-2 PR
+- **[api-reference.md](../api-reference.md)**: case-insensitive `?category=` name resolution (rename = breaking filter change, §1); `categories` as reference-data — with the implementing WI-2 PR
 - **[ADR-0030](0030-biomarker-identity.md)** (Accepted): its `biomarkers` DDL was an illustrative sketch with `...`-elided columns and `category TEXT` as an example; this ADR concretizes `category` into `category_id` without reversing any ADR-0030 decision (identity, LOINC, value model unchanged). Navigation link added to ADR-0030's Links — no content edit to the accepted ADR.
 
 ## Links
