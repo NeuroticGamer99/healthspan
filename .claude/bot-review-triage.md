@@ -51,6 +51,12 @@ the hard way on PR #27:
   body states `generated N comments`; a mismatch means the filter is wrong, not that the review was
   clean. `/copilot-review` filtered comments on the review's author login and silently returned
   empty on a review that had findings — the count cross-check is what caught it.
+- **Scope the fetch to the run you are triaging.** Both bots accumulate: the PR-level endpoints
+  return every previous run's findings *and* the bots' own conversational replies, which are not
+  findings. Read the body and comments through the review's id (§/ship, §/copilot-review). A correct
+  check over a wrongly-scoped input is its own failure mode — the count cross-check above, run
+  against the PR-level endpoint, compares this review's `N` with every run's comments and then
+  reports a filter bug that does not exist. Confidently wrong beats silent, but only barely.
 
 Silence is the failure mode to distrust most: a wrong answer argues with you, a silent one doesn't.
 
