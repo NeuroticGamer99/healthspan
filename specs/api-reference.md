@@ -29,7 +29,7 @@ Every authentication outcome — including success — writes one `auth_audit` r
 ## Endpoint Groups
 
 ### Data import
-Defined in [ADR-0004](adr/0004-data-ingestion-strategy.md) and concretized in [ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md). Implemented in Phase 2 WI-3.
+Defined in [ADR-0004](adr/0004-data-ingestion-strategy.md) and concretized in [ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md). Implemented in Phase 2 WI-3; extended with catalog tables and the biomarker-name resolver in Phase 3 WI-2 ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md), [ADR-0055](adr/0055-biomarker-category-taxonomy.md)).
 
 | Endpoint | Auth | Behavior |
 |---|---|---|
@@ -44,25 +44,31 @@ Defined in [ADR-0004](adr/0004-data-ingestion-strategy.md) and concretized in [A
   "adapter_version": null,
   "note": null,
   "conflict_policy": "reject | skip | upsert",
-  "lab_draws":   [ { /* row */ } ],
-  "lab_results": [ { /* row */ } ]
+  "categories":         [ { /* row */ } ],
+  "labs":               [ { /* row */ } ],
+  "biomarkers":         [ { /* row */ } ],
+  "biomarker_aliases":  [ { /* row */ } ],
+  "lab_draws":          [ { /* row */ } ],
+  "lab_results":        [ { /* row */ } ]
 }
 ```
 
 - `conflict_policy` is **required** — there is no implicit default that mutates data ([ADR-0004](adr/0004-data-ingestion-strategy.md)). Unknown top-level keys (a mistyped field or an unregistered table name) are rejected `422`.
-- Phase 2 registers exactly two importable tables — `lab_draws` and `lab_results` ([development-plan.md](development-plan.md)); others land with their Phase-7 adapters. Each is a list of row objects whose columns are the [data-model.md](data-model.md) columns of that table.
-- **Row `id` is a batch-local handle** ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md)): it wires intra-batch foreign keys (a `lab_results` row's `lab_draw_id` names a `lab_draws` row's payload `id`) and is never persistent identity — the server assigns real primary keys and rewrites the child FK. A `lab_results` row must reference a `lab_draws` row present in the same batch. `import_batch_id`/`superseded_by` in a payload row are ignored (server-owned).
-- **Conflict identity is a natural key per table**, enforced as a partial-unique index over current rows (migration 0003): `lab_draws` = `(lab_id, draw_utc)`, `lab_results` = `(lab_draw_id, biomarker_id)`. External foreign keys (`lab_id`, `biomarker_id`) must already exist in the catalog (no name resolution or catalog seeding this phase). The [ADR-0030](adr/0030-biomarker-identity.md) value model is enforced structurally: a result needs `value_num` or `value_text`, and a `comparator` (`<`, `<=`, `>=`, `>`) requires `value_num`.
+- Phase 2 registered exactly two importable tables — `lab_draws` and `lab_results` ([development-plan.md](development-plan.md)). Phase 3 WI-2 adds the four reference-data catalog tables — `categories`, `labs`, `biomarkers`, `biomarker_aliases` ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md)/[ADR-0055](adr/0055-biomarker-category-taxonomy.md)); the remaining content tables land with their Phase-7 adapters. Each is a list of row objects whose columns are the [data-model.md](data-model.md) columns of that table.
+- **Row `id` is a batch-local handle** ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md)): it wires intra-batch foreign keys (a `lab_results` row's `lab_draw_id` names a `lab_draws` row's payload `id`) and is never persistent identity — the server assigns real primary keys and rewrites the child FK. A `lab_results` row must reference a `lab_draws` row present in the same batch. `import_batch_id`/`superseded_by` in a payload row are ignored (server-owned); the four catalog tables carry neither column (they are not content rows — no batch provenance, no supersession chain).
+- **Conflict identity is a natural key per table**, enforced as a partial-unique index over current rows for the content tables (migration 0003) and a plain unique index for the catalog tables (migration 0004): `categories` = `(name,)`, `labs` = `(name,)`, `biomarkers` = `(canonical_name,)`, `biomarker_aliases` = `(alias_normalized,)`, `lab_draws` = `(lab_id, draw_utc)`, `lab_results` = `(lab_draw_id, biomarker_id)`. External foreign keys (`category_id`, `biomarker_id`, `lab_id`) must already exist in the catalog — a catalog row created earlier **in the same batch** is not visible to a later table in that batch (categories/labs/biomarkers/biomarker_aliases are plain already-stored foreign keys, never a batch-local handle; import them in a prior call first).
+- **`lab_results` accepts exactly one of `biomarker_id` / `biomarker_name`** (both present or both absent is a collected `422` naming the row). A `biomarker_name` is resolved server-side to a `biomarker_id` **before** the natural-key/conflict handling below runs, so the rest of the pipeline — and the stored row — only ever sees an id ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md) §4). Resolution is exact-match only, over the union of normalized `biomarkers.canonical_name` and stored `biomarker_aliases.alias_normalized` (normalization: NFKC → casefold → trim → collapse internal whitespace); zero or more than one match is a collected validation error naming the unresolved string — no fuzzy matching. Only already-stored catalog rows are searched, per the same-batch visibility rule above. The [ADR-0030](adr/0030-biomarker-identity.md) value model is enforced structurally: a result needs `value_num` or `value_text`, and a `comparator` (`<`, `<=`, `>=`, `>`) requires `value_num`.
+- **`biomarker_aliases.alias_normalized` and `created_utc` are server-derived**, never client-supplied ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md) §3): the client sends `biomarker_id`, `alias` (display text), and an optional `source`; the server normalizes `alias` (the same NFKC → casefold → trim → collapse rule) into `alias_normalized` and stamps `created_utc`, silently overwriting any client-supplied value for either. A display name may not appear as both a canonical biomarker name and an alias — an alias whose normalized form equals any biomarker's normalized `canonical_name` (or vice versa), stored or in the same batch, is a collected `422`; this also rejects an alias equal to its own biomarker's exact canonical spelling as redundant.
 
 **Conflict resolution** ([ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md), [ADR-0027](adr/0027-audit-trail-and-corrections.md)) — a *conflict* is an incoming row whose natural key exists and whose compared columns differ:
 
-| Policy | New key | Identical | Differs — `lab_results` (value) | Differs — `lab_draws` (metadata) |
+| Policy | New key | Identical | Differs — `lab_results` (value) | Differs — `lab_draws` / catalog tables (metadata) |
 |---|---|---|---|---|
 | `reject` | insert | no-op | batch fails `422`, all conflicts listed | batch fails `422` |
 | `skip` | insert | `rows_unchanged` | keep existing, `rows_skipped` | keep existing, `rows_skipped` |
 | `upsert` | insert | `rows_unchanged` | supersede (insert + chain, per-row `correct` audit), `rows_corrected` | in-place `update` (per-row image audit), `rows_corrected` |
 
-A `lab_draws` match is *reused* so its id stays stable and its results stay attached; only its designated-metadata columns are repaired in place. A `lab_results` value difference supersedes, so no clinical value is lost. Inserts are audited at batch level (one `import` row per (batch, table), zero per-row insert rows — [ADR-0027](adr/0027-audit-trail-and-corrections.md)); the audit `actor` is the token name.
+A `lab_draws` match is *reused* so its id stays stable and its results stay attached; only its designated-metadata columns are repaired in place. A `lab_results` value difference supersedes, so no clinical value is lost. The four catalog tables (`categories`, `labs`, `biomarkers`, `biomarker_aliases`) carry no `superseded_by` column at all — they are reference data, not clinical values — so a genuine difference is always an in-place `update`, the same repair path as `lab_draws` metadata, never a supersession. Inserts are audited at batch level (one `import` row per (batch, table), zero per-row insert rows — [ADR-0027](adr/0027-audit-trail-and-corrections.md)); the audit `actor` is the token name.
 
 **Success response** (`200`):
 
@@ -89,14 +95,16 @@ A `lab_draws` match is *reused* so its id stays stable and its results stay atta
 `data.imported`/`data.corrected` event emission is deferred to Phase 4 with the event bus; the `audit_log` rows are the durable record until then.
 
 ### Data query and retrieval
-The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)): generic list/get over the current-state views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)) for the import-populated tables, plus the two catalog tables that make their foreign keys interpretable. All routes require scope `read`. Semantic query endpoints (biomarker history, panel by date — the MCP tool shapes in [design-rationale.md](design-rationale.md)) are deferred to Phase 4; the filters below already express them.
+The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)): generic list/get over the current-state views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)) for the import-populated tables, plus the catalog tables that make their foreign keys interpretable. All routes require scope `read`. Semantic query endpoints (biomarker history, panel by date — the MCP tool shapes in [design-rationale.md](design-rationale.md)) are deferred to Phase 4; the filters below already express them.
 
 | Endpoint | List filters |
 |---|---|
 | `GET /v1/lab-draws`, `GET /v1/lab-draws/{id}` | `lab_id`, `draw_from`, `draw_to` |
 | `GET /v1/lab-results`, `GET /v1/lab-results/{id}` | `biomarker_id`, `lab_draw_id`, `lab_id`, `draw_from`, `draw_to` |
 | `GET /v1/labs`, `GET /v1/labs/{id}` | — |
-| `GET /v1/biomarkers`, `GET /v1/biomarkers/{id}` | `category` |
+| `GET /v1/biomarkers`, `GET /v1/biomarkers/{id}` | `category` — a **case-insensitive category-NAME lookup** (Phase 3 WI-2, [ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1; breaking change from the Phase 2 free-text `category` filter). An unknown name answers an empty page, never an error. Biomarker rows carry both the resolved category **name** in `category` (back-compat with the Phase-2 field) and the raw FK in `category_id`. |
+
+See [Reference data](#reference-data) below for `categories`, `range-frameworks`, and `framework-ranges` — the read counterparts to the four catalog import tables.
 
 **Pagination** — every list route takes `limit`, `cursor`, and `order`, and answers `{"items": [...], "next_cursor": <token|null>}`. The cursor is an opaque token; pass it back verbatim (with filters and `order` unchanged) to fetch the next page; `null` means exhaustion. Ordering is fixed per resource: `lab-draws`/`lab-results` by draw time, **newest-first** by default (`order=asc` for chronological walks); `labs`/`biomarkers` by name ascending. Page sizes are bounded by the server-enforced cap (`service.page_cap`, default 100 — the single enforcement point, MCP tool-convention rule 3 below): an omitted `limit` means a full capped page, an oversized `limit` **clamps** to the cap, `limit < 1`, a malformed cursor, or a cursor replayed under the other `order` is a `422`.
 
@@ -157,9 +165,15 @@ Defined in [ADR-0026](adr/0026-named-scoped-tokens.md) (lifecycle commands, rate
 | `POST /v1/mcp/rotate-client-secret` | `admin` | Regenerate the MCP client-facing secret: replace the SHA-256 hash in the MCP keyring entry, answer `200` `{secret, restart_required: true}` — plaintext shown once; the MCP Server must restart to pick it up |
 
 ### Reference data
-Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation.
+Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoints used by the GUI and MCP tools for lookups and validation. `labs` and `biomarkers` are documented under [Data query and retrieval](#data-query-and-retrieval) above (they existed since Phase 2 WI-4); `categories`, `range-frameworks`, and `framework-ranges` land here in Phase 3 WI-2 ([ADR-0055](adr/0055-biomarker-category-taxonomy.md)) as the read counterparts to the catalog import tables. All routes require scope `read` and share the same keyset pagination, page-cap clamp, and cursor `422` handling as every other list route.
 
-*Endpoints TBD during implementation.*
+| Endpoint | List filters | Sort |
+|---|---|---|
+| `GET /v1/categories`, `GET /v1/categories/{id}` | — | `name` asc |
+| `GET /v1/range-frameworks`, `GET /v1/range-frameworks/{id}` | — | `name` asc |
+| `GET /v1/framework-ranges`, `GET /v1/framework-ranges/{id}` | `framework_id`, `biomarker_id` | `id` asc (no name column) |
+
+`categories` rows mirror the migration 0004 `categories` table columns (`id`, `name`, `description`) — the reserved `not_assigned` row (`id` 0) is included like any other row. `range_frameworks`/`framework_ranges` seeding is deferred to WI-3 ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §6), so both endpoints answer empty pages (`{"items": [], "next_cursor": null}`) until then — not a `404`. `biomarker_aliases` has no read endpoint yet (deferred to WI-4); aliases are import-only for now.
 
 ---
 

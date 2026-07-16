@@ -76,7 +76,7 @@ def test_restore_latest_round_trips(initialized: Path) -> None:
     assert _backup(initialized).exit_code == 0
     result = _run(initialized, ["db", "restore", "--latest"], f"{PASSPHRASE}\n")
     assert result.exit_code == 0, result.output
-    assert "Restored database at schema version 3" in result.output
+    assert "Restored database at schema version 4" in result.output
     assert "moved aside" in result.output  # the previous live file is kept
     assert list(initialized.parent.glob("hs.db.pre-restore-*"))
 
@@ -86,7 +86,7 @@ def test_restore_explicit_file(initialized: Path) -> None:
     backup = list_backups(initialized.parent / "backups")[0]
     result = _run(initialized, ["db", "restore", str(backup)], f"{PASSPHRASE}\n")
     assert result.exit_code == 0, result.output
-    assert "Restored database at schema version 3" in result.output
+    assert "Restored database at schema version 4" in result.output
 
 
 def test_restore_requires_a_selection(initialized: Path) -> None:

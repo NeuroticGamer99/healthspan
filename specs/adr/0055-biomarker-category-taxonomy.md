@@ -119,9 +119,10 @@ Categories deliberately excluded and why: Function's `Daily Metrics` (Fitbit —
 
 - **[open-questions.md](../open-questions.md)**: "Biomarker category taxonomy" → Resolved (this PR); new "Biomarker cross-cutting tags" deferral with the Phase-4 trigger (this PR); the "Derived data points" deferral gains the Z-Score/Biological Age externally-computed evidence (this PR)
 - **[development-plan.md](../development-plan.md)**: D1 gate and decision-gates table → decided (this PR)
-- **[data-model.md](../data-model.md)**: `categories` table, `biomarkers.category_id`, the reserved-row and `= 0` conventions — with the implementing WI-2 PR
-- **[api-reference.md](../api-reference.md)**: case-insensitive `?category=` name resolution (rename = breaking filter change, §1); `categories` as reference-data — with the implementing WI-2 PR
+- **[data-model.md](../data-model.md)**: `categories` table, `biomarkers.category_id`, the reserved-row and `= 0` conventions — done (this PR)
+- **[api-reference.md](../api-reference.md)**: case-insensitive `?category=` name resolution (rename = breaking filter change, §1); `categories` as reference-data — done (this PR)
 - **[ADR-0030](0030-biomarker-identity.md)** (Accepted): its `biomarkers` DDL was an illustrative sketch with `...`-elided columns and `category TEXT` as an example; this ADR concretizes `category` into `category_id` without reversing any ADR-0030 decision (identity, LOINC, value model unchanged). Navigation link added to ADR-0030's Links — no content edit to the accepted ADR.
+- **[ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md)** (Proposed): the implementing WI-2 ADR that resolves the migration DDL mechanics, the startup reserved-row assertion, and the read-side wiring this ADR left open
 
 ## Links
 
@@ -132,3 +133,4 @@ Categories deliberately excluded and why: Function's `Daily Metrics` (Fitbit —
 - Related: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the `GET /v1/biomarkers?category=` filter this makes a catalog lookup
 - Related: [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) — the reserved-name write-path precedent the reserved category row mirrors
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — catalog edits are audited insert/update/delete, not supersession
+- Implemented by: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — migration 0004 DDL, the startup reserved-row assertion, and the import-engine generalization

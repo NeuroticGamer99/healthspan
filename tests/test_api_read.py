@@ -20,9 +20,12 @@ from healthspan import db, migrate, tokens
 from healthspan.api_import import IMPORT_PATH
 from healthspan.api_read import (
     BIOMARKERS_PATH,
+    CATEGORIES_PATH,
+    FRAMEWORK_RANGES_PATH,
     LAB_DRAWS_PATH,
     LAB_RESULTS_PATH,
     LABS_PATH,
+    RANGE_FRAMEWORKS_PATH,
 )
 from healthspan.config import Config
 from healthspan.kdf import DbKey
@@ -32,6 +35,15 @@ from healthspan.service import create_app
 from healthspan.service_runtime import ServiceRuntime
 
 PAGE_CAP = 3
+
+# Migration 0004 seeds ~64 starter biomarkers (ids 1-64, ADR-0055 §6) and the
+# common labs (ids 1-4), so this fixture's own rows use a high id range that
+# cannot collide with the seed, now or as the seed catalog grows. 'allergy'
+# and 'body_composition' are two of the 19 seeded categories the starter
+# catalog leaves empty, so filtering by them sees only these fixture rows.
+_FIXTURE_BIOMARKER_1 = 1001  # category 'allergy'
+_FIXTURE_BIOMARKER_2 = 1002  # category 'body_composition'
+_FIXTURE_BIOMARKER_3 = 1003  # reserved not_assigned category (id 0)
 
 
 def _key() -> DbKey:
@@ -58,14 +70,21 @@ def harness(make_config: Callable[[], Config]) -> Iterator[Harness]:
         read_token = tokens.mint_token(setup, "reader", {"read"})
         import_token = tokens.mint_token(setup, "watch-import", {"import"})
         setup.execute("BEGIN IMMEDIATE")
-        setup.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
-        setup.execute("INSERT INTO labs (id, name) VALUES (2, 'LabCorp')")
-        for biomarker_id, category in ((1, "lipids"), (2, "thyroid"), (3, None)):
+        # Quest (id 1) and LabCorp (id 2) are seeded by migration 0004 itself
+        # (ADR-0055 §6) — no need to (re-)insert them here.
+        for biomarker_id, category_name in (
+            (_FIXTURE_BIOMARKER_1, "allergy"),
+            (_FIXTURE_BIOMARKER_2, "body_composition"),
+        ):
             setup.execute(
-                "INSERT INTO biomarkers (id, canonical_name, category) "
-                "VALUES (?, ?, ?)",
-                (biomarker_id, f"Biomarker {biomarker_id}", category),
+                "INSERT INTO biomarkers (id, canonical_name, category_id) "
+                "VALUES (?, ?, (SELECT id FROM categories WHERE name = ?))",
+                (biomarker_id, f"Biomarker {biomarker_id}", category_name),
             )
+        setup.execute(
+            "INSERT INTO biomarkers (id, canonical_name) VALUES (?, ?)",
+            (_FIXTURE_BIOMARKER_3, f"Biomarker {_FIXTURE_BIOMARKER_3}"),
+        )
         setup.execute("COMMIT")
     finally:
         db.close(setup)
@@ -135,7 +154,15 @@ def _draw(handle: int, draw_utc: str, **overrides: object) -> dict[str, object]:
 # Scope gating
 # --------------------------------------------------------------------------
 
-_LIST_PATHS = [LAB_DRAWS_PATH, LAB_RESULTS_PATH, LABS_PATH, BIOMARKERS_PATH]
+_LIST_PATHS = [
+    LAB_DRAWS_PATH,
+    LAB_RESULTS_PATH,
+    LABS_PATH,
+    BIOMARKERS_PATH,
+    CATEGORIES_PATH,
+    RANGE_FRAMEWORKS_PATH,
+    FRAMEWORK_RANGES_PATH,
+]
 
 
 @pytest.mark.parametrize("path", _LIST_PATHS)
@@ -309,14 +336,130 @@ def test_cursor_rejected_under_flipped_order(harness: Harness) -> None:
 
 
 def test_catalog_list_and_get(harness: Harness) -> None:
+    # Migration 0004 seeds all four common labs (ADR-0055 §6); PAGE_CAP=3
+    # clips the default page to the first three, name asc.
     labs = _get(harness, LABS_PATH).json()
-    assert [row["name"] for row in labs["items"]] == ["LabCorp", "Quest"]
+    assert [row["name"] for row in labs["items"]] == [
+        "Function Health (LabCorp)",
+        "Function Health (Quest)",
+        "LabCorp",
+    ]
     lab = _get(harness, f"{LABS_PATH}/1")
     assert lab.status_code == 200
     assert lab.json()["name"] == "Quest"
 
-    lipids = _get(harness, BIOMARKERS_PATH, params={"category": "lipids"}).json()
-    assert [row["id"] for row in lipids["items"]] == [1]
-    marker = _get(harness, f"{BIOMARKERS_PATH}/3")
+    # 'allergy' is one of the 19 seeded categories with no starter-catalog
+    # biomarker (ADR-0055 §6), so the fixture's own row is the only match.
+    allergy = _get(harness, BIOMARKERS_PATH, params={"category": "allergy"}).json()
+    assert [row["id"] for row in allergy["items"]] == [_FIXTURE_BIOMARKER_1]
+    marker = _get(harness, f"{BIOMARKERS_PATH}/{_FIXTURE_BIOMARKER_3}")
     assert marker.status_code == 200
-    assert marker.json()["category"] is None
+    # Unassigned -> the reserved not_assigned row (id 0), by name (ADR-0055 §2).
+    assert marker.json()["category"] == "not_assigned"
+    assert marker.json()["category_id"] == 0
+
+
+def test_biomarker_category_filter_case_insensitive(harness: Harness) -> None:
+    title_case = _get(
+        harness, BIOMARKERS_PATH, params={"category": "Body_Composition"}
+    ).json()
+    lower_case = _get(
+        harness, BIOMARKERS_PATH, params={"category": "body_composition"}
+    ).json()
+    assert [row["id"] for row in title_case["items"]] == [_FIXTURE_BIOMARKER_2]
+    assert [row["id"] for row in lower_case["items"]] == [_FIXTURE_BIOMARKER_2]
+
+    unknown = _get(
+        harness, BIOMARKERS_PATH, params={"category": "not-a-real-category"}
+    ).json()
+    assert unknown["items"] == []
+    assert unknown["next_cursor"] is None
+
+
+# --------------------------------------------------------------------------
+# Reference-data endpoints (categories, range-frameworks, framework-ranges)
+# --------------------------------------------------------------------------
+
+
+def test_categories_list_and_get(harness: Harness) -> None:
+    page = _get(harness, CATEGORIES_PATH).json()
+    # PAGE_CAP=3: alphabetically first three of the migration 0004 seed.
+    assert [row["name"] for row in page["items"]] == [
+        "allergy",
+        "autoimmunity",
+        "body_composition",
+    ]
+    assert page["next_cursor"] is not None
+    reserved = _get(harness, f"{CATEGORIES_PATH}/0")
+    assert reserved.status_code == 200
+    assert reserved.json()["name"] == "not_assigned"
+
+
+def test_categories_pagination_walk_to_exhaustion(harness: Harness) -> None:
+    seen: list[str] = []
+    params: dict[str, str] = {}
+    for _ in range(20):
+        page = _get(harness, CATEGORIES_PATH, params=params).json()
+        seen.extend(row["name"] for row in page["items"])
+        if page["next_cursor"] is None:
+            break
+        params = {"cursor": page["next_cursor"]}
+    assert seen == sorted(seen)
+    assert len(seen) == 20  # reserved + 19 seeded categories
+
+
+def test_range_frameworks_and_framework_ranges_empty_until_wi3(
+    harness: Harness,
+) -> None:
+    # Migration 0004 seeds no frameworks/ranges (deferred to WI-3); the
+    # endpoints ship now and answer empty pages rather than 404.
+    frameworks = _get(harness, RANGE_FRAMEWORKS_PATH).json()
+    assert frameworks == {"items": [], "next_cursor": None}
+    ranges = _get(harness, FRAMEWORK_RANGES_PATH).json()
+    assert ranges == {"items": [], "next_cursor": None}
+    assert _get(harness, f"{RANGE_FRAMEWORKS_PATH}/1").status_code == 404
+    assert _get(harness, f"{FRAMEWORK_RANGES_PATH}/1").status_code == 404
+
+
+def test_framework_ranges_filters_over_http(harness: Harness) -> None:
+    # Seed a couple of frameworks/ranges directly (migration seeding of these
+    # tables is deferred to WI-3).
+    conn = db.connect(harness.db_path, _key())
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT INTO range_frameworks (id, name) VALUES (1, 'Lab Standard')"
+        )
+        conn.execute("INSERT INTO range_frameworks (id, name) VALUES (2, 'Attia')")
+        conn.execute(
+            "INSERT INTO framework_ranges "
+            "(id, framework_id, biomarker_id, range_low, range_high, unit) "
+            "VALUES (1, 1, 1, 0, 10, 'mg/dL')"
+        )
+        conn.execute(
+            "INSERT INTO framework_ranges "
+            "(id, framework_id, biomarker_id, range_low, range_high, unit) "
+            "VALUES (2, 1, 2, 0, 5, 'mIU/L')"
+        )
+        conn.execute(
+            "INSERT INTO framework_ranges "
+            "(id, framework_id, biomarker_id, range_low, range_high, unit) "
+            "VALUES (3, 2, 1, 0, 8, 'mg/dL')"
+        )
+        conn.execute("COMMIT")
+    finally:
+        db.close(conn)
+
+    by_framework = _get(
+        harness, FRAMEWORK_RANGES_PATH, params={"framework_id": "1"}
+    ).json()
+    assert [row["id"] for row in by_framework["items"]] == [1, 2]
+
+    by_biomarker = _get(
+        harness, FRAMEWORK_RANGES_PATH, params={"biomarker_id": "1"}
+    ).json()
+    assert [row["id"] for row in by_biomarker["items"]] == [1, 3]
+
+    got = _get(harness, f"{FRAMEWORK_RANGES_PATH}/1")
+    assert got.status_code == 200
+    assert got.json()["unit"] == "mg/dL"

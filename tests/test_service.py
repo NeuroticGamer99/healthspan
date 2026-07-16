@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 
 import healthspan.rotation as rotation
 import healthspan.service as service_mod
-from healthspan import keychain, token_bootstrap
+from healthspan import db, keychain, migrate, token_bootstrap
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
 from healthspan.cli import app as cli_app
@@ -32,6 +32,7 @@ from healthspan.service import (
     create_app,
     resolve_passphrase,
     start_service,
+    verify_schema,
 )
 from healthspan.service_runtime import ServiceRuntime
 
@@ -309,6 +310,42 @@ def test_build_runtime_leaves_no_passphrase_in_environment(
     finally:
         runtime.lock.release()
         runtime.key.zeroize()
+
+
+# --------------------------------------------------------------------------
+# Reserved category row assertion (ADR-0055 §2)
+# --------------------------------------------------------------------------
+
+
+def test_verify_schema_refuses_a_database_missing_the_reserved_category(
+    make_config: Callable[[], Config],
+) -> None:
+    cfg = make_config()
+    key = DbKey(bytearray(range(1, 33)))
+    db.provision(cfg.database.path, key)
+    migrate.migrate_database(cfg.database.path, key)
+    # Simulate a corrupted database where the reserved not_assigned row (id 0)
+    # is gone: the write-path delete-guard trigger (migration 0004) forbids
+    # this through any normal SQL path, so the trigger is dropped first to
+    # reach the state verify_schema must still catch defensively.
+    conn = db.connect(cfg.database.path, key)
+    try:
+        conn.execute("DROP TRIGGER categories_reserved_no_delete")
+        conn.execute("DELETE FROM categories WHERE id = 0")
+    finally:
+        db.close(conn)
+    with pytest.raises(ServiceStartupError, match="not_assigned"):
+        verify_schema(cfg, key)
+
+
+def test_verify_schema_succeeds_when_the_reserved_category_is_present(
+    make_config: Callable[[], Config],
+) -> None:
+    cfg = make_config()
+    key = DbKey(bytearray(range(1, 33)))
+    db.provision(cfg.database.path, key)
+    migrate.migrate_database(cfg.database.path, key)
+    assert verify_schema(cfg, key) == migrate.target_version()
 
 
 # --------------------------------------------------------------------------

@@ -1,13 +1,15 @@
-"""The read/query endpoints (ADR-0027, ADR-0053) — Phase 2 WI-4.
+"""The read/query endpoints (ADR-0027, ADR-0053) — Phase 2 WI-4, extended
+with reference-data resources in Phase 3 WI-2 (ADR-0055/ADR-0057).
 
-Eight ``read``-scoped GET routes: list/get over the current-state views for
-the import-populated tables (``lab-draws``, ``lab-results``) and the two
-catalog tables a client needs to resolve their foreign keys (``labs``,
-``biomarkers``). List responses are ``{"items": [...], "next_cursor":
-...}``; pagination is keyset, bounded by the server-enforced page cap
-(``service.page_cap``, default 100) — the single enforcement point every
-client inherits (api-reference.md, MCP tool-convention rule 3). A ``limit``
-above the cap clamps to
+Fourteen ``read``-scoped GET routes: list/get over the current-state views
+for the import-populated tables (``lab-draws``, ``lab-results``) and the
+catalog tables a client needs to resolve their foreign keys and browse
+reference data (``labs``, ``biomarkers``, ``categories``,
+``range-frameworks``, ``framework-ranges``). List responses are ``{"items":
+[...], "next_cursor": ...}``; pagination is keyset, bounded by the
+server-enforced page cap (``service.page_cap``, default 100) — the single
+enforcement point every client inherits (api-reference.md, MCP
+tool-convention rule 3). A ``limit`` above the cap clamps to
 it; the cap can only shrink a page, never grow one.
 
 Handlers are synchronous (ADR-0037): FastAPI runs them on the AnyIO worker
@@ -30,6 +32,9 @@ LAB_DRAWS_PATH = "/v1/lab-draws"
 LAB_RESULTS_PATH = "/v1/lab-results"
 LABS_PATH = "/v1/labs"
 BIOMARKERS_PATH = "/v1/biomarkers"
+CATEGORIES_PATH = "/v1/categories"
+RANGE_FRAMEWORKS_PATH = "/v1/range-frameworks"
+FRAMEWORK_RANGES_PATH = "/v1/framework-ranges"
 
 Order = Literal["asc", "desc"]
 
@@ -176,3 +181,82 @@ def list_biomarkers(
 def get_biomarker(request: Request, row_id: int) -> reads.Row:
     row = reads.get_biomarker(_runtime(request).pool.connection(), row_id)
     return _found(row, "biomarker", row_id)
+
+
+@router.get(CATEGORIES_PATH, dependencies=[require("read")])
+def list_categories(
+    request: Request,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_categories(
+            _runtime(request).pool.connection(),
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(CATEGORIES_PATH + "/{row_id}", dependencies=[require("read")])
+def get_category(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_category(_runtime(request).pool.connection(), row_id)
+    return _found(row, "category", row_id)
+
+
+@router.get(RANGE_FRAMEWORKS_PATH, dependencies=[require("read")])
+def list_range_frameworks(
+    request: Request,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_range_frameworks(
+            _runtime(request).pool.connection(),
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(RANGE_FRAMEWORKS_PATH + "/{row_id}", dependencies=[require("read")])
+def get_range_framework(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_range_framework(_runtime(request).pool.connection(), row_id)
+    return _found(row, "range framework", row_id)
+
+
+@router.get(FRAMEWORK_RANGES_PATH, dependencies=[require("read")])
+def list_framework_ranges(
+    request: Request,
+    framework_id: int | None = None,
+    biomarker_id: int | None = None,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_framework_ranges(
+            _runtime(request).pool.connection(),
+            framework_id=framework_id,
+            biomarker_id=biomarker_id,
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(FRAMEWORK_RANGES_PATH + "/{row_id}", dependencies=[require("read")])
+def get_framework_range(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_framework_range(_runtime(request).pool.connection(), row_id)
+    return _found(row, "framework range", row_id)
