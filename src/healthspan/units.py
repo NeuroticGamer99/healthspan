@@ -19,7 +19,7 @@ both endpoints of a conversion are UCUM strings the system was given and stored,
 we never ask "what UCUM string names this ``pint`` quantity?" (ADR-0031).
 """
 
-from functools import lru_cache
+from functools import cache, lru_cache
 from typing import Any
 
 
@@ -62,15 +62,17 @@ def _registry() -> Any:
     return PintUcumRegistry()
 
 
-def parse_unit(unit: str) -> Any:
-    """Parse a UCUM string into a ``pint`` quantity of magnitude ``1.0``.
+@cache
+def _parse(unit: str) -> Any:
+    """Cached UCUM→pint parse of a single unit string (magnitude ``1.0``).
 
-    The returned quantity is the engine's own type, deliberately kept opaque
-    (typed ``Any``) so the ``pint``/``ucumvert`` types never become part of this
-    module's contract — downstream code goes through :func:`convert` and never
-    depends on which engine runs (ADR-0031). Its registry is the shared one every
-    other parse in this module uses, so quantities from separate calls are
-    arithmetic-compatible.
+    Internal hot path: :func:`convert` reparses ``from_unit``/``to_unit`` and the
+    ``g/mol`` constant on every call, so the grammar work is memoized by string.
+    The cached quantity is **shared** and must be treated as read-only — this
+    module only ever reads it (``.dimensionality``/``.units``/``.to``) or uses it
+    as an operand to build a *new* quantity, never mutating it in place. The
+    public :func:`parse_unit` hands callers a fresh copy so external mutation
+    cannot corrupt the cache.
 
     Raises :class:`UnknownUnitError` if ``unit`` is not valid UCUM.
     """
@@ -82,10 +84,26 @@ def parse_unit(unit: str) -> Any:
         raise UnknownUnitError(f"not a valid UCUM unit: {unit!r}") from exc
 
 
+def parse_unit(unit: str) -> Any:
+    """Parse a UCUM string into a ``pint`` quantity of magnitude ``1.0``.
+
+    The returned quantity is the engine's own type, deliberately kept opaque
+    (typed ``Any``) so the ``pint``/``ucumvert`` types never become part of this
+    module's contract — downstream code goes through :func:`convert` and never
+    depends on which engine runs (ADR-0031). A fresh, caller-owned quantity is
+    returned each call (the shared parse is cached internally); its registry is
+    the one every other parse in this module uses, so quantities from separate
+    calls are arithmetic-compatible.
+
+    Raises :class:`UnknownUnitError` if ``unit`` is not valid UCUM.
+    """
+    return 1 * _parse(unit)
+
+
 def is_valid_unit(unit: str) -> bool:
-    """Whether ``unit`` parses as UCUM. A thin wrapper over :func:`parse_unit`."""
+    """Whether ``unit`` parses as UCUM. A thin wrapper over the cached parse."""
     try:
-        parse_unit(unit)
+        _parse(unit)
     except UnknownUnitError:
         return False
     return True
@@ -105,7 +123,8 @@ def convert(
     for a same-dimension conversion it is ignored.
 
     - Same unit string → the value is returned unchanged (exact identity; no
-      float round-trip is introduced).
+      float round-trip is introduced) — but the unit is still validated, so an
+      identical *garbage* pair fails loud rather than silently passing through.
     - Same dimensionality → a scalar conversion through ``pint``.
     - Mass ↔ substance concentration → bridged by ``molar_mass``; without it,
       :class:`MissingMolarContextError`.
@@ -115,10 +134,11 @@ def convert(
     a non-positive ``molar_mass``.
     """
     if from_unit == to_unit:
+        _parse(from_unit)  # validate; a garbage identical pair must still fail loud
         return float(value)
 
-    q_from = parse_unit(from_unit)
-    q_to = parse_unit(to_unit)
+    q_from = _parse(from_unit)
+    q_to = _parse(to_unit)
     source = value * q_from
 
     if q_from.dimensionality == q_to.dimensionality:
@@ -126,7 +146,7 @@ def convert(
 
     # Dimensions differ. The only difference this module reconciles is a molar
     # one: mass concentration vs substance concentration, bridged by molar mass.
-    molar_mass_dim = parse_unit(_MOLAR_MASS_UCUM).dimensionality
+    molar_mass_dim = _parse(_MOLAR_MASS_UCUM).dimensionality
     ratio = q_from.dimensionality / q_to.dimensionality
     if ratio == molar_mass_dim:
         # from_unit is heavier by [mass]/[substance]: divide out the molar mass.
@@ -148,6 +168,6 @@ def convert(
     if molar_mass <= 0:
         raise ValueError(f"molar mass must be positive, got {molar_mass!r}")
 
-    molar_quantity = molar_mass * parse_unit(_MOLAR_MASS_UCUM)
+    molar_quantity = molar_mass * _parse(_MOLAR_MASS_UCUM)
     bridged = source / molar_quantity if divide else source * molar_quantity
     return float(bridged.to(q_to.units).magnitude)
