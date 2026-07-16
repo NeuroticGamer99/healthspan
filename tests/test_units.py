@@ -94,6 +94,13 @@ def test_unknown_unit_fails_loud() -> None:
         parse_unit("")
 
 
+def test_identity_of_invalid_unit_still_fails_loud() -> None:
+    # The from == to fast path must not become a validation bypass: an identical
+    # garbage pair is still an invalid unit and must fail loud, not pass through.
+    with pytest.raises(UnknownUnitError):
+        convert(5.0, "not-a-unit", "not-a-unit")
+
+
 def test_non_positive_molar_mass_rejected() -> None:
     with pytest.raises(ValueError, match="molar mass must be positive"):
         convert(100.0, "mg/dL", "mmol/L", molar_mass=0.0)

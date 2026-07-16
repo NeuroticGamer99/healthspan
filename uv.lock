@@ -294,7 +294,7 @@ requires-dist = [
     { name = "sqlcipher3-wheels", specifier = ">=0.5.7" },
     { name = "structlog", specifier = ">=26.1.0" },
     { name = "typer", specifier = ">=0.26.8" },
-    { name = "ucumvert", specifier = ">=0.3.0" },
+    { name = "ucumvert", specifier = ">=0.3.0,<0.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
 ]
 

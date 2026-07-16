@@ -39,7 +39,7 @@ The module ([`src/healthspan/units.py`](../../src/healthspan/units.py)) exposes 
 
 `convert` is the load-bearing surface, and its contract is:
 
-- **Same unit string → the value is returned unchanged**, exactly (no float round-trip is introduced). This is what makes the property suite's *identity* hold exactly rather than within tolerance.
+- **Same unit string → the value is returned unchanged**, exactly (no float round-trip is introduced) — but the unit is still validated first, so an identical *invalid*-UCUM pair fails loud rather than becoming a silent validation bypass. This is what makes the property suite's *identity* hold exactly rather than within tolerance.
 - **Same dimensionality → scalar conversion** through the engine.
 - **Mass concentration ↔ substance concentration → bridged by `molar_mass`** (decision 3).
 - **Anything else → `IncommensurableUnitsError`.**
