@@ -86,23 +86,36 @@ review**.
 ## 4. Triage and reply
 
 Copilot puts an overview in the review body and its findings in inline comments — **authored under
-different logins** (§2), so match case-insensitively in both queries:
+different logins** (§2), so match case-insensitively.
+
+**Scope to the review this run produced.** Identify it by id, then read the body and comments
+through that id — never through the PR-level endpoints:
 
 ```bash
-gh api repos/OWNER/REPO/pulls/N/reviews \
-  --jq '.[] | select(.user.login|test("copilot";"i")) | "[\(.state)] \(.submitted_at)\n\(.body)"'
+RID=$(gh api repos/OWNER/REPO/pulls/N/reviews \
+        --jq "[.[] | select(.user.login|test(\"copilot\";\"i\"))
+               | select(.submitted_at > \"$SINCE\")] | sort_by(.submitted_at) | last | .id")
 
-gh api repos/OWNER/REPO/pulls/N/comments \
-  --jq '.[] | select(.user.login|test("copilot";"i"))
-        | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
+gh api repos/OWNER/REPO/pulls/N/reviews/$RID --jq '"[\(.state)] \(.submitted_at)\n\(.body)"'
+
+gh api repos/OWNER/REPO/pulls/N/reviews/$RID/comments \
+  --jq '.[] | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
 ```
 
-An exact-login filter on the *review* author silently returns nothing for the *comments*, because
-the comments come from `Copilot` — you would report "no findings" on a review that has them.
+The PR-level `/comments` endpoint returns **every** comment from every run: findings you already
+fixed, and the bot's own conversational replies ("agreed — this is correctly fixed"), which are not
+findings at all. Measured on PR #27, it returned 5 comments where the current review had 1. Triaging
+that set re-litigates closed findings and treats thank-you notes as defects. The bot's replies are
+themselves modelled as *reviews*, so the review list needs the same scoping — pick the review by id
+and stay inside it.
 
-**Cross-check the count.** The review body states `generated N comments`. If the number of comments
-you fetched does not match, your filter is wrong — go find them. An empty result is only a clean
-review when the body says zero.
+**Cross-check the count.** The scoped body states `generated N comments`; the scoped comment fetch
+must return exactly N. A mismatch means the scoping or the filter is wrong — go find the difference
+before triaging. An empty result is only a clean review when the body says zero.
+
+This check is only meaningful against a correctly-scoped fetch: run it over the PR-level endpoint
+and it compares this review's N against every run's comments, then confidently reports a filter bug
+that does not exist.
 
 Then follow **`.claude/bot-review-triage.md`**: verify each finding against the real code, reply
 per finding, report the verdict table, and **stop for the user's go before changing any code**.

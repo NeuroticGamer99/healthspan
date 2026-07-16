@@ -100,16 +100,30 @@ review** — never report "no findings" from a timeout.
 
 ## 5. Triage and reply
 
-Fetch the review body and its inline comments (the `id` is what you reply to):
+**Scope to the review this push produced.** Identify it by id, then read the body and its comments
+through that id — never through the PR-level endpoints (the inner `id` is what you reply to):
 
 ```bash
-gh api repos/OWNER/REPO/pulls/N/reviews \
-  --jq '.[] | select(.user.login=="coderabbitai[bot]") | .body'
+RID=$(gh api repos/OWNER/REPO/pulls/N/reviews \
+        --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")
+               | select(.submitted_at > \"$SINCE\")] | sort_by(.submitted_at) | last | .id")
 
-gh api repos/OWNER/REPO/pulls/N/comments \
-  --jq '.[] | select(.user.login=="coderabbitai[bot]")
-        | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
+gh api repos/OWNER/REPO/pulls/N/reviews/$RID --jq '.body'
+
+gh api repos/OWNER/REPO/pulls/N/reviews/$RID/comments \
+  --jq '.[] | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
 ```
+
+This matters more here than anywhere: CodeRabbit re-reviews on **every push**, so by the second push
+the PR-level `/comments` endpoint is returning findings you already fixed alongside the new ones,
+plus CodeRabbit's own conversational replies ("agreed — this is correctly fixed"), which are replies,
+not findings. Measured on PR #27 after three pushes: 5 comments returned, 1 of them the current
+review's actual finding. Its replies are modelled as *reviews* too, so the review list needs the
+same scoping — pick by id and stay inside it.
+
+**Cross-check the count.** The scoped body opens with `Actionable comments posted: N`; the scoped
+fetch must return exactly N. A mismatch means the scoping or filter is wrong — resolve it before
+triaging, and never report an unexplained empty result as a clean review.
 
 CodeRabbit's inline bodies embed a long "🧩 Analysis chain" section that often truncates the actual
 finding when piped through `head`. If a finding's text looks cut off, fetch that one comment's full
