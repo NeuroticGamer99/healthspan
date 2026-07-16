@@ -39,24 +39,27 @@ Checks a bot routinely misses — run them yourself:
 
 ## 1a. Verify your own tooling, not just the findings
 
-The same skepticism applies to the commands this procedure runs. Two failure modes, both learned
-the hard way on PR #27:
+Fetching a review is not the neutral step it looks like. Identity strings, timestamps, scoping and
+pagination all fail *silently* here — six separate bugs on PR #27, three of them introduced by the
+previous round's fix — so that logic now lives in `scripts/bot_review.py`, under
+`tests/test_bot_review.py`, instead of in prose that cannot be tested. **Use the script; do not
+re-derive its rules by hand at the terminal.** Each rule it encodes is a fact about a live API,
+recorded there with the failure it prevents.
+
+What generalizes beyond that script:
 
 - **A success code is not proof.** Verify the *state* a call was supposed to produce, not its exit
-  status. Requesting a reviewer GitHub does not accept returns `200` with an empty
-  `requested_reviewers` — a silent no-op that a `2>&1 || report` guard never catches, and that then
-  costs a 30-minute poll and a false "no review arrived".
-- **An empty result is a claim, and claims get checked.** If a query for findings returns nothing,
-  prove it is nothing before reporting it. Cross-check against something independent: the review
-  body states `generated N comments`; a mismatch means the filter is wrong, not that the review was
-  clean. `/copilot-review` filtered comments on the review's author login and silently returned
-  empty on a review that had findings — the count cross-check is what caught it.
-- **Scope the fetch to the run you are triaging.** Both bots accumulate: the PR-level endpoints
-  return every previous run's findings *and* the bots' own conversational replies, which are not
-  findings. Read the body and comments through the review's id (§/ship, §/copilot-review). A correct
-  check over a wrongly-scoped input is its own failure mode — the count cross-check above, run
-  against the PR-level endpoint, compares this review's `N` with every run's comments and then
-  reports a filter bug that does not exist. Confidently wrong beats silent, but only barely.
+  status. Requesting a reviewer GitHub does not accept returns `200` and adds no one — a no-op no
+  `|| report` guard can catch.
+- **An empty result is a claim, and claims get checked.** Prove it is nothing before reporting it,
+  against something independent — a review body that says `generated N comments` while your fetch
+  found none means one of you is wrong, and it may not be the bot.
+- **A correct check over wrongly-scoped input is its own failure mode.** The count cross-check run
+  against a pull-level fetch compares this review's `N` with every run's comments and confidently
+  reports a filter bug that does not exist.
+- **When a cross-check trips, investigate — do not assume whose fault it is.** CodeRabbit has
+  claimed 2 while posting 1, having counted before deduplicating. The check's job is to make you
+  look, not to name the culprit.
 
 Silence is the failure mode to distrust most: a wrong answer argues with you, a silent one doesn't.
 

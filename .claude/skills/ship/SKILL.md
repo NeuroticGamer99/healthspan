@@ -37,20 +37,6 @@ gate.
 
 ## 2. Commit and push
 
-**Capture the review floor before the push**, in the same command — this timestamp is what step 4
-waits on, and it is only correct if it is taken before the push that triggers the review:
-
-```bash
-SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)   # BEFORE the push below; step 4 waits on this
-```
-
-Capturing it after the push is a real bug, not a style point: a review submitted in the gap would
-fail step 4's `submitted_at > $SINCE` filter, and the poll would spin to a false timeout on a review
-that had already landed. CodeRabbit has answered in under four minutes, so the gap is not
-theoretical.
-
-Then:
-
 - Commit with the message `/land` proposed, unchanged, including its `Decisions:` section.
 - The co-author trailer must name the model running **this** session — read it from the system
   prompt; never carry a trailer forward from an earlier commit.
@@ -66,68 +52,36 @@ Then:
 
 ## 4. Wait for CodeRabbit
 
-Use `$SINCE` from step 2 — the floor captured before the push, which distinguishes this review from
-the bot's review of an earlier commit. If you reached this step without it, you pushed first: take
-the floor from the push's own timestamp (`git log -1 --format=%cI`) rather than `date` now, which
-would be after the review may already have landed.
-
-Poll in the background so the wait costs nothing:
+`scripts/bot_review.py` owns the waiting. Run it in the background so the wait costs nothing —
+one notification arrives when the review lands:
 
 ```bash
-DEADLINE=$(( $(date +%s) + 1800 ))
-while :; do
-  n=$(gh api repos/OWNER/REPO/pulls/N/reviews \
-        --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")
-               | select(.submitted_at > \"$SINCE\")] | length" 2>/dev/null || echo 0)
-  [ "${n:-0}" -gt 0 ] && { echo "CODERABBIT_REVIEW_READY"; exit 0; }
-  [ "$(date +%s)" -ge "$DEADLINE" ] && { echo "TIMEOUT waiting for CodeRabbit"; exit 1; }
-  sleep 30
-done
+uv run python scripts/bot_review.py wait --bot coderabbit --pr <N> --since-commit HEAD
 ```
 
-Run it with `run_in_background: true` — one notification arrives when the review lands, and you can
-keep working meanwhile. Do not poll in the foreground.
+Use `run_in_background: true`; do not poll in the foreground. Exit 0 means a findings review is
+ready; exit 1 means it timed out (default 30 min, `--timeout`). **A timeout is not a clean review**
+— report it and stop rather than concluding "no findings".
 
-Two details this depends on:
-
-- **Key on the submitted review, not on comments.** CodeRabbit posts progress chatter and a
-  walkthrough comment before the actual review; a comment-based wait fires early on noise.
-- **Key on `submitted_at > $SINCE`.** CodeRabbit re-reviews on every push, so an unfiltered check
-  matches a stale review instantly and you triage the wrong one.
-
-On timeout: report that no review arrived, give the PR URL, and stop. **Silence is not a clean
-review** — never report "no findings" from a timeout.
+`--since-commit HEAD` derives the floor from the commit you just pushed, in UTC. Prefer it to a
+hand-written `--since`: the script converts correctly, whereas a hand-rolled `git log --format=%cI`
+yields a *local* offset that string-compares as newer than stale reviews and admits all of them.
 
 ## 5. Triage and reply
 
-**Scope to the review this push produced.** Identify it by id, then read the body and its comments
-through that id — never through the PR-level endpoints (the inner `id` is what you reply to):
-
 ```bash
-RID=$(gh api repos/OWNER/REPO/pulls/N/reviews \
-        --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")
-               | select(.submitted_at > \"$SINCE\")] | sort_by(.submitted_at) | last | .id")
-
-gh api repos/OWNER/REPO/pulls/N/reviews/$RID --jq '.body'
-
-gh api repos/OWNER/REPO/pulls/N/reviews/$RID/comments \
-  --jq '.[] | "=== \(.path):\(.line // .original_line) [\(.id)] ===\n\(.body)"'
+uv run python scripts/bot_review.py fetch --bot coderabbit --pr <N> --since-commit HEAD
 ```
 
-This matters more here than anywhere: CodeRabbit re-reviews on **every push**, so by the second push
-the PR-level `/comments` endpoint is returning findings you already fixed alongside the new ones,
-plus CodeRabbit's own conversational replies ("agreed — this is correctly fixed"), which are replies,
-not findings. Measured on PR #27 after three pushes: 5 comments returned, 1 of them the current
-review's actual finding. Its replies are modelled as *reviews* too, so the review list needs the
-same scoping — pick by id and stay inside it.
+That prints the review body and only *that review's* comments, each with the `id` you reply to. It
+also cross-checks the body's `Actionable comments posted: N` against what it fetched and prints a
+`NOTE:` on a mismatch — which means *investigate*, not that either side is definitively wrong (the
+bot has been seen claiming 2 while posting 1).
 
-**Cross-check the count.** The scoped body opens with `Actionable comments posted: N`; the scoped
-fetch must return exactly N. A mismatch means the scoping or filter is wrong — resolve it before
-triaging, and never report an unexplained empty result as a clean review.
-
-CodeRabbit's inline bodies embed a long "🧩 Analysis chain" section that often truncates the actual
-finding when piped through `head`. If a finding's text looks cut off, fetch that one comment's full
-body by `id` rather than triaging a fragment.
+Everything the fetch protects against is documented, and tested, in `scripts/bot_review.py` and
+`tests/test_bot_review.py`: it reads one review by id (the pull-level endpoints return every past
+run's findings plus the bots' own replies), skips reply-reviews (a bot's "agreed, this is fixed" is
+itself a review, with an empty body), pages explicitly, and compares instants rather than strings.
 
 Then follow **`.claude/bot-review-triage.md`**: verify every finding against the real code, reply
 per finding, report the verdict table, and **stop for the user's go before changing any code**.
