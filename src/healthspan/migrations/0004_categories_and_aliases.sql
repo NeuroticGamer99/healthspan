@@ -27,7 +27,12 @@ WHEN OLD.id = 0 BEGIN
 END;
 
 -- 2. Seed the 19 owner-editable system-axis categories (ADR-0055 §6). Ids are
--- assigned by autoincrement (1..19); order alphabetical for readability.
+-- assigned by autoincrement (1..19); the order mirrors ADR-0055 §6's listed
+-- vocabulary (which is near-alphabetical but not strictly so — `allergy` after
+-- `autoimmunity`, `lipoproteins` after `liver`), so the seed reads against the
+-- ADR one-for-one. Nothing references a category by id — the biomarker seed
+-- below resolves category_id by name — so the order carries no meaning beyond
+-- that correspondence.
 INSERT INTO categories (name) VALUES
     ('autoimmunity'), ('allergy'), ('body_composition'), ('electrolytes'),
     ('environmental_toxins'), ('heart'), ('hematology'), ('hormones'),
