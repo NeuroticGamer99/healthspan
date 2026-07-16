@@ -197,6 +197,51 @@ The platform targets Windows, macOS, and Linux. CI must test on all three. Platf
 
 ---
 
+## Test Execution and Performance
+
+The suite runs end-to-end encryption on every database test (SQLCipher is always on) and exercises the real key-derivation, backup/restore, rotation, and CLI-subprocess paths. That fidelity has a cost: a serial full run is minutes, not seconds. The work is CPU- and I/O-bound and the tests are well-isolated, so **parallel execution is the primary lever**.
+
+### Parallel execution (`pytest -n auto`)
+
+`pytest-xdist` (dev dependency) runs the suite across worker processes. The suite is parallel-safe by construction — no configuration or per-test markers were needed — because every test already isolates its shared resources:
+
+- databases, backups, and the single-instance advisory lock live under a per-test `tmp_path`, so lock paths never collide across workers;
+- the OS keychain is replaced by an autouse in-memory backend (`conftest.py`), and xdist workers are separate processes, so each has its own;
+- `_run_uvicorn` is monkeypatched out in every service test (no real port is bound), and the one genuine socket bind uses port `0` (OS-assigned);
+- fixed-path references (`~`, platformdirs) are assertion-only or monkeypatched — no test writes outside `tmp_path`, and no test mutates the working directory.
+
+**Recommended usage is opt-in, not a global default:** `pytest -n auto` for a full run; plain `pytest tests/test_x.py` for a focused run (spinning up many workers for a handful of tests costs more in startup than it saves). It is left out of `[tool.pytest.ini_options] addopts` for exactly this reason.
+
+### Baseline (comparison point, 2026-07-15)
+
+Measured on a 32-core Windows machine, full suite (506 passed, 5 skipped):
+
+| Run | Wall-clock |
+|---|---|
+| Serial (`pytest`) | ~400 s (6 m 40 s) |
+| Parallel (`pytest -n auto`, 32 workers) | ~52 s (**~7.7×**) |
+
+Where the serial 400 s goes (from `--durations`), so future work targets the right thing:
+
+- **Backup/restore/import I/O (~⅓)** — real SQLCipher DB copies, integrity verification, and many-row property-based imports (`test_imports`, `test_backup` prune, `test_reads` pagination, `test_restore`). AES/I/O-bound, *not* key derivation. Scales with Hypothesis example count.
+- **Genuine Argon2id (~20%)** — the rotation and `keys` CLI tests (`test_rotation`, `test_cli_keys`) derive 1–2 keys each at **production params (64 MiB, t=3, p=4)**. Note: most DB tests use a fixed raw key via `db.provision` and SQLCipher raw-key mode, so they run *no* Argon2 and *no* SQLCipher PBKDF2 — the KDF cost is concentrated in this cluster.
+- **Subprocess spawn (~15–20%)** — the `test_cli_*`/`test_service*` suites launch the real `healthspan` entrypoint (full-stack import per spawn, slowest on Windows).
+- **Per-test SQLCipher-open baseline** — the ~476 remaining tests average ~0.45 s each.
+
+### CI stays serial (deliberate)
+
+The CI test job is **not** parallelized. It is coupled to the mandatory log-canary gate (below), which relies on a single serial run streaming *all* captured stdout/stderr/logs (`--capture=tee-sys --log-cli-level=DEBUG`) into one file for the scanner. xdist's per-worker capture and unsupported live-CLI logging would change what reaches that file and could silently weaken a security gate. Parallelizing CI is therefore deferred until the canary scan is re-validated (or reworked) under xdist — tracked in [open-questions.md](open-questions.md). CI already fans out across three OSes, so per-OS wall-clock is not the pain point; the local inner-loop full run is what parallelism fixes.
+
+### Deferred performance levers
+
+Recorded against the baseline above for future work, in priority order:
+
+1. **Reduce Argon2 params for logic-only key tests.** The rotation/`keys` cluster verifies rotation *logic*, not parameter strength, so it could derive at the OWASP floor (19 MiB, t=2, p=1 — the cheapest the sidecar will accept) instead of the 64 MiB production default, roughly 5× less KDF work there. The known-answer KDF vectors ([ADR-0028](adr/0028-key-derivation-and-rotation.md)) must stay at their asserted params. Touches security-test fidelity → an explicit decision, tracked in [open-questions.md](open-questions.md).
+2. **Trim property-test example counts / fixture sizes** for the heaviest import/backup property cases — trades coverage for speed; low priority.
+3. **In-process CLI invocation** where a subprocess is not essential — rejected for now: the subprocess suites deliberately exercise the real entrypoint, and the fidelity loss is not worth it.
+
+---
+
 ## CI Gates
 
 Checks that run as distinct CI steps and fail the build outright. These mechanize requirements that would otherwise depend on code-review vigilance.
