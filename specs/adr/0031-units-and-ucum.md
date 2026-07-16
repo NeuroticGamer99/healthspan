@@ -70,6 +70,7 @@ The property-based conversion suite in [testing-strategy.md](../testing-strategy
 - Con: the chosen engine is pre-1.0, so it needs a local validation layer over the units in real use rather than blind trust
 
 ## Links
+- Extended by: [ADR-0056](0056-units-module-api-and-molar-context.md) — concretizes the internal units module's API and the molar-context mechanism this ADR left open (Phase 3 WI-1)
 - Extends/depends on: [ADR-0030](0030-biomarker-identity.md) — the `canonical_unit` column and value model
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — framework range `unit` column and unit-normalized comparison
 - Related: [ADR-0018](0018-fhir-interoperability.md) — UCUM is FHIR's `Quantity.code` system

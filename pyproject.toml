@@ -13,11 +13,13 @@ dependencies = [
     "fastapi>=0.139.0",
     "httpx>=0.28.1",
     "keyring>=25.6",
+    "pint>=0.24.4",
     "platformdirs>=4.10.0",
     "qrcode>=8.0",
     "sqlcipher3-wheels>=0.5.7",
     "structlog>=26.1.0",
     "typer>=0.26.8",
+    "ucumvert>=0.3.0",
     "uvicorn[standard]>=0.51.0",
 ]
 

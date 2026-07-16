@@ -1,5 +1,6 @@
 """Test-suite bootstrap: scripts/ importability, keychain isolation, helpers."""
 
+import os
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -8,6 +9,7 @@ import keyring
 import keyring.backend
 import keyring.errors
 import pytest
+from hypothesis import settings
 
 from healthspan.config import (
     AuthConfig,
@@ -20,6 +22,18 @@ from healthspan.config import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+# Hypothesis profiles (testing-strategy.md): `dev` is a fast inner loop; `ci`
+# runs more examples and derandomizes so a failure reproduces deterministically.
+# CI selects `ci` automatically via the CI env var GitHub Actions always sets;
+# HYPOTHESIS_PROFILE overrides either way. The deadline is disabled suite-wide:
+# these property targets do real work (KDF hashing, UCUM parsing) whose per-example
+# timing is noise, and a one-time lazy engine build must not fail an example.
+settings.register_profile("dev", max_examples=25, deadline=None)
+settings.register_profile("ci", max_examples=300, derandomize=True, deadline=None)
+settings.load_profile(
+    os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "dev")
+)
 
 
 class InMemoryKeyring(keyring.backend.KeyringBackend):
