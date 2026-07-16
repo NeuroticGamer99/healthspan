@@ -54,6 +54,9 @@ from typing import Any, cast
 PAGE_SIZE = 100
 POLL_SECONDS = 30
 DEFAULT_TIMEOUT = 1800
+# Bounds one `gh`/`git` invocation. Without it a stalled call blocks forever and
+# `wait --timeout` never fires: the deadline is only checked between calls.
+COMMAND_TIMEOUT = 120
 
 
 @dataclass(frozen=True)
@@ -61,28 +64,37 @@ class BotSpec:
     """How one review bot identifies itself and reports its finding count."""
 
     key: str
-    # Matches the *review* author and the *comment* author. Copilot uses a
-    # different login for each, so this is deliberately a loose, case-insensitive
-    # match rather than an exact login: an exact login silently misses one half.
-    author: re.Pattern[str]
-    # The login to pass to the requested_reviewers endpoint, or None for a bot
-    # that reviews on its own (CodeRabbit reviews every push).
+    # The exact login that authors this bot's reviews. Compared exactly (case
+    # -folded, since GitHub logins are case-preserving but unique case-folded).
+    # A substring match would be laxer than the contract deserves: `copilot-fan`
+    # or `not-coderabbitai[bot]` would select an unrelated review, and — worse —
+    # satisfy the requested-reviewer check that exists to prove a request took.
+    review_login: str
+    # What to POST to requested_reviewers, and the login GitHub displays there
+    # afterwards. They differ for Copilot. Both None for a bot that reviews on
+    # its own (CodeRabbit reviews every push; it is not requestable this way).
     request_login: str | None
+    requested_display: str | None
     # Captures the number of findings the review body claims.
     count: re.Pattern[str]
 
 
+# There is deliberately no *comment* author here. Comments are fetched through
+# the review's own id, so they need no author filter — which is why Copilot's
+# `Copilot` display login is only ever matched against requested_reviewers.
 BOTS: dict[str, BotSpec] = {
     "coderabbit": BotSpec(
         key="coderabbit",
-        author=re.compile("coderabbit", re.IGNORECASE),
+        review_login="coderabbitai[bot]",
         request_login=None,
+        requested_display=None,
         count=re.compile(r"Actionable comments posted:\s*\**\s*(\d+)"),
     ),
     "copilot": BotSpec(
         key="copilot",
-        author=re.compile("copilot", re.IGNORECASE),
+        review_login="copilot-pull-request-reviewer[bot]",
         request_login="copilot-pull-request-reviewer[bot]",
+        requested_display="Copilot",
         count=re.compile(r"generated (\d+) comment"),
     ),
 }
@@ -127,6 +139,16 @@ def _login_of(review: Review) -> str:
     return str(user.get("login", "")) if user else ""
 
 
+def same_login(left: str, right: str) -> bool:
+    """Whether two GitHub logins denote the same account.
+
+    Case-folded rather than byte-exact — GitHub preserves the case you typed but
+    treats logins as unique case-folded — and whole-string rather than substring,
+    so a lookalike cannot pass for the real bot.
+    """
+    return left.casefold() == right.casefold()
+
+
 def is_findings_review(review: Review, spec: BotSpec) -> bool:
     """Whether this is a review with findings, not the bot replying to a comment.
 
@@ -148,7 +170,7 @@ def is_findings_review(review: Review, spec: BotSpec) -> bool:
     fails toward triaging an ack, which :func:`count_note` immediately flags
     ("states no finding count"). Loudly wrong beats quietly wrong.
     """
-    if not spec.author.search(_login_of(review)):
+    if not same_login(_login_of(review), spec.review_login):
         return False
     return bool(str(review.get("body") or "").strip())
 
@@ -200,20 +222,43 @@ def count_note(stated: int | None, actual: int) -> str | None:
 # --------------------------------------------------------------------------
 
 
+def as_page(raw: Any, path: str) -> list[Any]:
+    """A list endpoint's page, or a loud failure.
+
+    An unexpected shape — GitHub's error object is a *dict* — must not degrade
+    into "no results". Swallowing it makes ``wait`` poll a phantom until timeout
+    and ``fetch`` print zero comments as though that were an answer: exactly the
+    silent-failure mode this module exists to remove. An empty *list* is a real
+    answer and passes through.
+    """
+    if not isinstance(raw, list):
+        raise BotReviewError(
+            f"gh api {path} returned {type(raw).__name__}, expected a list — "
+            "refusing to report an unexpected payload as an empty result"
+        )
+    return cast("list[Any]", raw)
+
+
 def run_cmd(argv: list[str], env: dict[str, str] | None = None) -> str:
     # encoding="utf-8" is load-bearing, not decoration: `text=True` alone decodes
     # with the *locale* codec, which is cp1252 on Windows, and both bots' bodies
     # are full of emoji (🐇 ✅ 📐). Without it this dies with a UnicodeDecodeError
     # from a reader thread — the Windows-1252 trap CLAUDE.md warns about, here
     # loud rather than silent.
-    proc = subprocess.run(  # noqa: S603 - fixed executable, no shell
-        argv,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        env=env,
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed executable, no shell
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            env=env,
+            timeout=COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BotReviewError(
+            f"{' '.join(argv[:2])} did not return within {COMMAND_TIMEOUT}s"
+        ) from exc
     if proc.returncode != 0:
         # stderr can be None when a reader thread dies mid-decode; `or ""` keeps
         # the real failure visible instead of masking it behind an AttributeError.
@@ -245,10 +290,7 @@ def gh_all(path: str) -> list[Any]:
     page = 1
     while True:
         joiner = "&" if "?" in path else "?"
-        raw = gh(f"{path}{joiner}per_page={PAGE_SIZE}&page={page}")
-        if not isinstance(raw, list):
-            return items
-        chunk = cast("list[Any]", raw)
+        chunk = as_page(gh(f"{path}{joiner}per_page={PAGE_SIZE}&page={page}"), path)
         if not chunk:
             return items
         items.extend(chunk)
@@ -301,10 +343,15 @@ def review_comments(repo: str, pr: int, review_id: int) -> list[Comment]:
 
 
 def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
-    if spec.request_login is None:
+    if spec.request_login is None or spec.requested_display is None:
         raise BotReviewError(
             f"{spec.key} cannot be requested — it reviews automatically on push"
         )
+    # Stamp the floor *before* the request, and print it, so the caller has no
+    # reason to improvise one afterwards. A floor taken after the request can
+    # exclude the very review it triggered; leaving the caller to mint their own
+    # is how that bug arrives, and it is not theirs to get right.
+    floor = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     gh(
         f"repos/{repo}/pulls/{pr}/requested_reviewers",
         "-f",
@@ -320,12 +367,14 @@ def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
         for r in raw
         if isinstance(r, dict)
     ]
-    if not any(spec.author.search(login) for login in logins):
+    if not any(same_login(login, spec.requested_display) for login in logins):
         raise BotReviewError(
             f"requested {spec.request_login!r} but requested_reviewers is "
             f"{logins!r} — the request was accepted and dropped. Do not wait."
         )
     print(f"requested {spec.key}; requested_reviewers now: {', '.join(logins)}")
+    print(f"since: {floor}")
+    print(f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} --since {floor}")
     return 0
 
 

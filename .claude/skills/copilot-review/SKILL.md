@@ -31,23 +31,34 @@ empty `requested_reviewers`** — a silent no-op with no error to catch, which o
 If it errors (unavailable on the plan, insufficient permission), report the error verbatim and stop.
 Do not retry blindly. There is no auto-review ruleset on this repo — Copilot reviews only when asked.
 
-The bot's identity is a minefield (it is requested under one login and comments under another); the
+**It prints the floor to use next**, stamped before the request:
+
+```
+requested copilot; requested_reviewers now: Copilot
+since: 2026-07-16T22:20:00Z
+  pass that to: wait/fetch --bot copilot --pr 27 --since 2026-07-16T22:20:00Z
+```
+
+Use that exact value in steps 3 and 4 — do not mint your own. A floor stamped after the request can
+exclude the very review it triggered, and improvising one is how that bug arrives.
+
+The bot's identity is a minefield (it is requested under one login and displayed under another); the
 map and its rationale live in `scripts/bot_review.py`, with `tests/test_bot_review.py` holding the
 rules in place. Do not re-derive them by hand.
 
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot copilot --pr <N> --since <ISO-8601>
+uv run python scripts/bot_review.py wait --bot copilot --pr <N> --since <the floor from step 2>
 ```
 
-Run with `run_in_background: true`. Use a floor from *before* the request. Exit 0 means a findings
-review is ready; exit 1 is a timeout — **silence is not a clean review**, so report and stop.
+Run with `run_in_background: true`. Exit 0 means a findings review is ready; exit 1 is a timeout —
+**silence is not a clean review**, so report and stop.
 
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot copilot --pr <N> --since <ISO-8601>
+uv run python scripts/bot_review.py fetch --bot copilot --pr <N> --since <the floor from step 2>
 ```
 
 Prints the review and only that review's comments, with the `id` to reply to, plus a `NOTE:` when
