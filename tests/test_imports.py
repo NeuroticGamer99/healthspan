@@ -957,8 +957,7 @@ def test_biomarker_alias_missing_alias_is_a_validation_error(
     with pytest.raises(imports.ImportValidationError) as excinfo:
         _run(conn, {"biomarker_aliases": [{"biomarker_id": 1}]}, imports.REJECT)
     assert any(
-        e.table == "biomarker_aliases"
-        and "missing required column 'alias'" in e.message
+        e.table == "biomarker_aliases" and "required column 'alias'" in e.message
         for e in excinfo.value.errors
     )
 
@@ -973,6 +972,75 @@ def test_biomarker_alias_missing_biomarker_id_is_a_validation_error(
         and "missing required column 'biomarker_id'" in e.message
         for e in excinfo.value.errors
     )
+
+
+def test_biomarker_alias_reimport_is_unchanged_and_preserves_created_utc(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # created_utc is server-derived but must be stamped once and preserved on
+    # reconcile (a server_owned column, not compared) — otherwise an identical
+    # re-import (the WI-4 confirm-and-record flow re-recording a known alias)
+    # would be a spurious conflict/correction instead of `unchanged`.
+    _run(
+        conn,
+        {"biomarker_aliases": [{"biomarker_id": 2, "alias": "B2 Alias"}]},
+        imports.REJECT,
+    )
+    stamped = _one(
+        conn,
+        "SELECT created_utc FROM biomarker_aliases WHERE alias_normalized = ?",
+        "b2 alias",
+    )
+
+    # A byte-identical re-import under every policy is `unchanged`, writes no
+    # correction, and leaves created_utc exactly as first stamped.
+    for policy in (imports.REJECT, imports.SKIP, imports.UPSERT):
+        outcome = _run(
+            conn,
+            {"biomarker_aliases": [{"biomarker_id": 2, "alias": "B2 Alias"}]},
+            policy,
+        )
+        summary = outcome.summaries["biomarker_aliases"]
+        assert summary.rows_unchanged == 1
+        assert summary.rows_corrected == 0
+        assert summary.rows_inserted == 0
+    assert (
+        _one(
+            conn,
+            "SELECT created_utc FROM biomarker_aliases WHERE alias_normalized = ?",
+            "b2 alias",
+        )
+        == stamped
+    )
+    assert "correct" not in _audit_ops(conn)
+    assert "update" not in _audit_ops(conn)
+
+
+def test_biomarker_alias_whitespace_only_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # A whitespace-only alias is a truthy string but normalizes to "" — reject
+    # it rather than persist an empty alias_normalized (ADR-0054 §2). A
+    # client-supplied alias_normalized must not smuggle the row past this either.
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "biomarker_aliases": [
+                    {
+                        "biomarker_id": 1,
+                        "alias": "   ",
+                        "alias_normalized": "smuggled",
+                    }
+                ]
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "biomarker_aliases" and "required column 'alias'" in e.message
+        for e in excinfo.value.errors
+    )
+    assert _one(conn, "SELECT count(*) FROM biomarker_aliases") == 0
 
 
 # --------------------------------------------------------------------------
@@ -1242,3 +1310,52 @@ def test_resolve_biomarker_name_fails_loud_on_an_ambiguous_match(
     )
     with pytest.raises(ValueError, match="did not resolve to exactly one"):
         imports.resolve_biomarker_name(conn, "Ambig Marker")
+
+
+def test_validation_failure_rolls_back_and_releases_the_write_lock(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # run_import now takes BEGIN IMMEDIATE before resolution/validation (so the
+    # cross-table uniqueness check reads under the write lock, ADR-0057 §6). A
+    # validation failure must still roll the transaction back and release the
+    # lock — proven here by a subsequent valid import succeeding on the same
+    # connection (a lingering open transaction would raise "cannot start a
+    # transaction within a transaction").
+    with pytest.raises(imports.ImportValidationError):
+        _run(
+            conn,
+            {
+                "lab_draws": [_draw()],
+                "lab_results": [_result(1, 99)],  # unknown biomarker FK
+            },
+            imports.REJECT,
+        )
+    outcome = _run(
+        conn, {"lab_draws": [_draw()], "lab_results": [_result(1, 1)]}, imports.REJECT
+    )
+    assert outcome.batch_id is not None
+    assert outcome.summaries["lab_results"].rows_inserted == 1
+
+
+def test_run_import_takes_the_write_lock_before_validating(tmp_path: Path) -> None:
+    # ADR-0057 §6: BEGIN IMMEDIATE is taken *before* resolution/validation so
+    # the cross-table uniqueness check reads under the write lock. Prove the
+    # ordering deterministically: a second connection holds the write lock, and
+    # a payload that WOULD fail validation (unknown biomarker 99) instead raises
+    # 'database is locked' from the up-front BEGIN IMMEDIATE — never reaching
+    # validation. Under the old ordering it would raise ImportValidationError.
+    conn_a = _build_db(tmp_path)
+    conn_b = db.connect(tmp_path / "healthspan.db", _key())
+    try:
+        conn_b.execute("PRAGMA busy_timeout = 100")  # fail fast, don't wait 5s
+        conn_a.execute("BEGIN IMMEDIATE")  # conn_a holds the write lock
+        with pytest.raises(sqlcipher3.OperationalError, match="locked"):
+            _run(
+                conn_b,
+                {"lab_draws": [_draw()], "lab_results": [_result(1, 99)]},
+                imports.REJECT,
+            )
+    finally:
+        conn_a.execute("ROLLBACK")
+        db.close(conn_a)
+        db.close(conn_b)

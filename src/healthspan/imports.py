@@ -1,10 +1,11 @@
 """Bulk import engine: validation, conflict resolution, and audit (ADR-0004/0027/0052).
 
-The single validated write path (ADR-0004). One import is: full-batch
-validation collecting *every* error before any write; then, if clean, one
-atomic transaction that resolves each row against its table's natural key and
-applies the caller's explicit conflict policy. A dry-run runs the identical
-apply and rolls it back, so its counts are truthful and it writes nothing.
+The single validated write path (ADR-0004). One import runs inside a single
+``BEGIN IMMEDIATE`` transaction: it resolves and validates the whole batch
+(collecting *every* error) while holding the write lock, then — only if clean —
+applies the caller's explicit conflict policy against each row's natural key. A
+validation failure rolls back, writing nothing; a dry-run rolls back the
+identical apply, so its counts are truthful and it writes nothing.
 
 Identity (ADR-0052): the payload is a per-table row map; a row's ``id`` is a
 *batch-local handle* that wires intra-batch foreign keys (a ``lab_results``
@@ -79,11 +80,20 @@ class ImportableTable:
     # ``import_batch_id`` from the INSERT.
     has_supersession: bool = True
     has_provenance: bool = True
+    # Columns the server derives/sets at insert time (e.g. a ``created_utc``
+    # timestamp): written on INSERT but excluded from ``compared``, so a
+    # re-import of an otherwise-identical row is ``unchanged`` rather than a
+    # spurious conflict, and an in-place reconcile leaves the stored value be.
+    server_owned: tuple[str, ...] = ()
 
     @property
     def compared(self) -> tuple[str, ...]:
         """Non-key columns whose difference counts as a change (ADR-0052)."""
-        return tuple(c for c in self.columns if c not in self.natural_key)
+        return tuple(
+            c
+            for c in self.columns
+            if c not in self.natural_key and c not in self.server_owned
+        )
 
 
 TABLES: dict[str, ImportableTable] = {
@@ -150,6 +160,9 @@ TABLES: dict[str, ImportableTable] = {
         external_fks=(("biomarker_id", "biomarkers"),),
         has_supersession=False,
         has_provenance=False,
+        # created_utc is stamped once at insert and preserved on reconcile —
+        # never a compared column, or an identical re-import would churn.
+        server_owned=("created_utc",),
     ),
     "lab_draws": ImportableTable(
         name="lab_draws",
@@ -361,22 +374,28 @@ def run_import(
 ) -> ImportOutcome:
     """Validate, then atomically apply (or dry-run) an import (ADR-0004/0052).
 
-    Raises :class:`ImportValidationError` with the full error list if the
-    batch does not validate — before any transaction opens. On a clean batch
-    the apply runs in one ``BEGIN IMMEDIATE`` transaction; a dry-run rolls it
-    back (writing nothing) while returning the same truthful counts.
+    The whole operation runs inside one ``BEGIN IMMEDIATE`` transaction:
+    resolution and full-batch validation read *under the write lock*, then — if
+    the batch validates — the apply writes. Taking the lock before validation
+    (not just before apply) is what makes the cross-table alias/canonical
+    uniqueness check (ADR-0054 §3) race-free: it has no schema constraint
+    backing it, so two concurrent imports validating against stale state could
+    otherwise each pass and then serialize a collision. A validation failure
+    rolls the transaction back and raises :class:`ImportValidationError` with
+    the full error list, writing nothing; a dry-run rolls back a clean apply
+    while returning the same truthful counts.
     """
     if conflict_policy not in POLICIES:
         raise ImportValidationError(
             [RowError("", -1, f"unknown conflict_policy {conflict_policy!r}")]
         )
-    resolved_payload, resolve_errors = _resolve_payload(conn, payload)
-    errors = resolve_errors + _validate(conn, resolved_payload, conflict_policy)
-    if errors:
-        raise ImportValidationError(errors)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
+        resolved_payload, resolve_errors = _resolve_payload(conn, payload)
+        errors = resolve_errors + _validate(conn, resolved_payload, conflict_policy)
+        if errors:
+            raise ImportValidationError(errors)
         batch_id, summaries = _apply(
             conn, batch, resolved_payload, conflict_policy, actor
         )
@@ -478,13 +497,19 @@ def _derive_alias_row(raw: Row) -> Row:
     an optional ``source``; the server derives the normalized match key and
     the timestamp. Any client-supplied value for either is silently
     overwritten — the same "server-owned, never trusted" treatment as
-    ``import_batch_id``/``superseded_by`` elsewhere in this module. Missing
-    or non-string ``alias`` is left for ``_domain_errors`` to reject.
+    ``import_batch_id``/``superseded_by`` elsewhere in this module. A missing,
+    non-string, or blank (whitespace-only) ``alias`` — one whose normalized
+    form is empty — is left for ``_domain_errors`` to reject.
     """
     out = dict(raw)
+    # alias_normalized is server-owned: never let a client-supplied value
+    # survive, even on a blank alias (which validation then rejects).
+    out.pop("alias_normalized", None)
     alias = raw.get("alias")
-    if isinstance(alias, str) and alias:
-        out["alias_normalized"] = normalize_name(alias)
+    if isinstance(alias, str):
+        normalized = normalize_name(alias)
+        if normalized:  # a blank/whitespace-only alias is rejected in validation
+            out["alias_normalized"] = normalized
     out["created_utc"] = utc_now_iso()
     return out
 
@@ -797,8 +822,13 @@ def _domain_errors(spec: ImportableTable, raw: Row) -> list[str]:
         # never sees these; require them explicitly.
         if raw.get("biomarker_id") is None:
             errs.append("missing required column 'biomarker_id' for biomarker_aliases")
-        if not isinstance(raw.get("alias"), str) or not raw.get("alias"):
-            errs.append("missing required column 'alias' for biomarker_aliases")
+        alias = raw.get("alias")
+        # A whitespace-only alias is truthy but normalizes to "" — reject it
+        # rather than persist an empty alias_normalized (ADR-0054 §2).
+        if not isinstance(alias, str) or not normalize_name(alias):
+            errs.append(
+                "missing or blank required column 'alias' for biomarker_aliases"
+            )
     return errs
 
 

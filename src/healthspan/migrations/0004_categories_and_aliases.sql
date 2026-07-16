@@ -18,8 +18,9 @@ INSERT INTO categories (id, name, description)
 VALUES (0, 'not_assigned', 'Reserved: biomarker has not been assigned a category.');
 
 -- Delete-guard for the reserved row (ADR-0055 §2; mirrors the audit_log
--- append-only triggers in 0001). App code also guards, but this makes removal
--- of id 0 structurally impossible on any write path.
+-- append-only triggers in 0001). This trigger is the single enforcement point
+-- (ADR-0057 §1) — no application-level guard is layered on top — and it makes
+-- removal of id 0 structurally impossible on any write path.
 CREATE TRIGGER categories_reserved_no_delete BEFORE DELETE ON categories
 WHEN OLD.id = 0 BEGIN
     SELECT RAISE(ABORT, 'category id 0 (not_assigned) is reserved (ADR-0055)');
