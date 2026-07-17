@@ -393,6 +393,22 @@ def test_categories_pagination_partition(conn: sqlcipher3.Connection) -> None:
     assert names == sorted(names)
 
 
+def _clear_seeded_reference_ranges(conn: sqlcipher3.Connection) -> None:
+    """Wipe migration 0005's seeded range_frameworks/framework_ranges rows.
+
+    The three tests below assert exact ids and orderings over rows they
+    fully control (including a pagination-partition walk, which must not
+    silently start depending on how many rows the seed happens to carry —
+    ADR-0058 §5 seeded 3 frameworks / ~7 ranges). Clearing first, rather
+    than picking ids past the seed's range, keeps each test's own row set
+    exactly what it inserts, independent of future seed growth.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM framework_ranges")
+    conn.execute("DELETE FROM range_frameworks")
+    conn.execute("COMMIT")
+
+
 def _insert_framework(
     conn: sqlcipher3.Connection, framework_id: int, name: str
 ) -> None:
@@ -412,18 +428,20 @@ def _insert_range(
     range_low: float | None = 0.0,
     range_high: float | None = 10.0,
     unit: str = "mg/dL",
+    range_text: str | None = None,
 ) -> None:
     conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         "INSERT INTO framework_ranges "
-        "(id, framework_id, biomarker_id, range_low, range_high, unit) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (range_id, framework_id, biomarker_id, range_low, range_high, unit),
+        "(id, framework_id, biomarker_id, range_low, range_high, unit, range_text) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (range_id, framework_id, biomarker_id, range_low, range_high, unit, range_text),
     )
     conn.execute("COMMIT")
 
 
 def test_range_frameworks_list_and_get(conn: sqlcipher3.Connection) -> None:
+    _clear_seeded_reference_ranges(conn)
     _insert_framework(conn, 1, "Lab Standard")
     _insert_framework(conn, 2, "Attia")
     page = reads.list_range_frameworks(conn, limit=10)
@@ -434,6 +452,7 @@ def test_range_frameworks_list_and_get(conn: sqlcipher3.Connection) -> None:
 
 
 def test_framework_ranges_list_get_and_filters(conn: sqlcipher3.Connection) -> None:
+    _clear_seeded_reference_ranges(conn)
     _insert_framework(conn, 1, "Lab Standard")
     _insert_framework(conn, 2, "Attia")
     _insert_range(conn, 1, 1, 1)
@@ -455,6 +474,7 @@ def test_framework_ranges_list_get_and_filters(conn: sqlcipher3.Connection) -> N
 
 
 def test_framework_ranges_pagination_partition(conn: sqlcipher3.Connection) -> None:
+    _clear_seeded_reference_ranges(conn)
     _insert_framework(conn, 1, "Lab Standard")
     # Distinct biomarker_id per range: the dateless-default unique index
     # (migration 0001) allows only one (framework_id, biomarker_id) row with
@@ -471,6 +491,346 @@ def test_framework_ranges_pagination_partition(conn: sqlcipher3.Connection) -> N
         if cursor is None:
             break
     assert ids == list(range(1, 8))
+
+
+# --------------------------------------------------------------------------
+# Range-comparison enrichment (?framework=, ADR-0005/ADR-0058)
+#
+# Migration 0005 seeds real, generic-public reference data (no personal
+# health data): the `nih_medlineplus_lipid_targets` framework covers Total
+# Cholesterol (id 1, range_high=200, range_low NULL) and the
+# `ada_standards_of_care` framework covers Glucose (id 7, [70, 99] mg/dL) —
+# both used below rather than reinventing synthetic frameworks, since the
+# seed itself is exactly the fixture testing-strategy.md asks for: generic,
+# defensibly-sourced, no owner health values.
+# --------------------------------------------------------------------------
+
+
+def _biomarker_id(conn: sqlcipher3.Connection, canonical_name: str) -> int:
+    row = conn.execute(
+        "SELECT id FROM biomarkers WHERE canonical_name = ?", (canonical_name,)
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_framework_enrichment_present_only_with_param(
+    conn: sqlcipher3.Connection,
+) -> None:
+    draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
+    total_chol = _biomarker_id(conn, "Total Cholesterol")
+    _insert_result(conn, draw, total_chol, value_num=180.0, unit="mg/dL")
+
+    bare = reads.list_lab_results(conn, limit=10)
+    (row,) = bare.items
+    assert "range_comparison" not in row  # opt-in only (ADR-0053 unshifted)
+
+    enriched = reads.list_lab_results(
+        conn, limit=10, framework="nih_medlineplus_lipid_targets"
+    )
+    (enriched_row,) = enriched.items
+    assert enriched_row["range_comparison"]["flag"] == "in_range"
+    # Every other field is unaffected by the projection.
+    without_comparison = {
+        k: v for k, v in enriched_row.items() if k != "range_comparison"
+    }
+    assert without_comparison == row
+
+    result_id = int(row["id"])
+    bare_by_id = reads.get_lab_result(conn, result_id)
+    assert bare_by_id is not None
+    assert "range_comparison" not in bare_by_id
+    by_id = reads.get_lab_result(
+        conn, result_id, framework="nih_medlineplus_lipid_targets"
+    )
+    assert by_id is not None
+    assert by_id["range_comparison"]["flag"] == "in_range"
+
+
+def test_framework_case_insensitive_and_unknown_raises(
+    conn: sqlcipher3.Connection,
+) -> None:
+    draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
+    total_chol = _biomarker_id(conn, "Total Cholesterol")
+    _insert_result(conn, draw, total_chol, value_num=180.0, unit="mg/dL")
+
+    lower = reads.list_lab_results(
+        conn, limit=10, framework="nih_medlineplus_lipid_targets"
+    )
+    shouted = reads.list_lab_results(
+        conn, limit=10, framework="NIH_MEDLINEPLUS_LIPID_TARGETS"
+    )
+    mixed = reads.list_lab_results(
+        conn, limit=10, framework="Nih_MedlinePlus_Lipid_Targets"
+    )
+    for page in (lower, shouted, mixed):
+        assert page.items[0]["range_comparison"]["flag"] == "in_range"
+        # The stored canonical name travels through regardless of the
+        # caller's own casing (brief §6 / reads._resolve_framework).
+        assert page.items[0]["range_comparison"]["framework"] == (
+            "nih_medlineplus_lipid_targets"
+        )
+
+    with pytest.raises(reads.FrameworkNotFoundError):
+        reads.list_lab_results(conn, limit=10, framework="not-a-real-framework")
+    # Unknown framework raises even for a row_id that does not exist either —
+    # the framework name is resolved before the row lookup (reads.py), so it
+    # is never masked into a plain "not found" for either reason.
+    with pytest.raises(reads.FrameworkNotFoundError):
+        reads.get_lab_result(conn, 999, framework="not-a-real-framework")
+
+
+def test_framework_cursor_is_a_projection_not_a_filter(
+    conn: sqlcipher3.Connection,
+) -> None:
+    total_chol = _biomarker_id(conn, "Total Cholesterol")
+    for month in range(1, 4):
+        draw = _insert_draw(conn, f"2024-0{month}-01T08:00:00Z")
+        _insert_result(conn, draw, total_chol, value_num=180.0, unit="mg/dL")
+
+    framework = "nih_medlineplus_lipid_targets"
+
+    # A cursor minted WITHOUT the param still walks correctly WITH it.
+    page1 = reads.list_lab_results(conn, limit=1)
+    assert "range_comparison" not in page1.items[0]
+    assert page1.next_cursor is not None
+    page2 = reads.list_lab_results(
+        conn, limit=1, cursor=page1.next_cursor, framework=framework
+    )
+    assert page2.items[0]["range_comparison"]["flag"] == "in_range"
+
+    # And the reverse: a cursor minted WITH the param still walks correctly
+    # WITHOUT it, landing on the exact same next row (order/rows unaffected).
+    page1b = reads.list_lab_results(conn, limit=1, framework=framework)
+    assert page1b.items[0]["id"] == page1.items[0]["id"]
+    assert page1b.next_cursor is not None
+    page2b = reads.list_lab_results(conn, limit=1, cursor=page1b.next_cursor)
+    assert "range_comparison" not in page2b.items[0]
+    assert page2b.items[0]["id"] == page2.items[0]["id"]
+
+    # A full walk under the param visits every row exactly once, in exactly
+    # the same order as an unenriched walk — the independently-established
+    # baseline this cross-checks against.
+    baseline_ids: list[int] = []
+    cursor: str | None = None
+    for _ in range(10):
+        page = reads.list_lab_results(conn, limit=1, cursor=cursor)
+        baseline_ids.extend(int(item["id"]) for item in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    walked_ids: list[int] = []
+    flags: list[str] = []
+    cursor = None
+    for _ in range(10):
+        page = reads.list_lab_results(conn, limit=1, cursor=cursor, framework=framework)
+        walked_ids.extend(int(item["id"]) for item in page.items)
+        flags.extend(str(item["range_comparison"]["flag"]) for item in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert walked_ids == baseline_ids
+    assert len(walked_ids) == 3
+    assert flags == ["in_range"] * 3
+
+
+def test_framework_flags_in_range_above_below_no_range(
+    conn: sqlcipher3.Connection,
+) -> None:
+    glucose = _biomarker_id(conn, "Glucose")  # ada_standards_of_care: [70, 99] mg/dL
+    # One draw per result: the (lab_draw_id, biomarker_id) natural key
+    # (migration 0003) forbids two results for the same biomarker on one draw.
+    normal = _insert_result(
+        conn, _insert_draw(conn, "2024-01-01T08:00:00Z"), glucose, value_num=90.0
+    )
+    high = _insert_result(
+        conn, _insert_draw(conn, "2024-02-01T08:00:00Z"), glucose, value_num=150.0
+    )
+    low = _insert_result(
+        conn, _insert_draw(conn, "2024-03-01T08:00:00Z"), glucose, value_num=50.0
+    )
+    # The fixture biomarker carries no seeded range in any framework.
+    uncovered = _insert_result(
+        conn,
+        _insert_draw(conn, "2024-04-01T08:00:00Z"),
+        _FIXTURE_BIOMARKER_1,
+        value_num=1.0,
+    )
+
+    page = reads.list_lab_results(conn, limit=10, framework="ada_standards_of_care")
+    flags = {int(row["id"]): row["range_comparison"]["flag"] for row in page.items}
+    assert flags[normal] == "in_range"
+    assert flags[high] == "above"
+    assert flags[low] == "below"
+    assert flags[uncovered] == "no_range"
+
+
+def test_framework_preserves_censored_value_fidelity(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # aha_cdc_hscrp_risk_strata: hs-CRP < 1.0 mg/L is the "optimal" band.
+    hscrp = _biomarker_id(conn, "hs-CRP")
+    draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
+    _insert_result(conn, draw, hscrp, value_num=0.1, comparator="<", unit="mg/L")
+
+    page = reads.list_lab_results(conn, limit=10, framework="aha_cdc_hscrp_risk_strata")
+    (row,) = page.items
+    # Value fidelity (ADR-0030/0053) is untouched by the enrichment.
+    assert (row["value_num"], row["comparator"], row["value_text"]) == (0.1, "<", None)
+    assert row["display"] == "<0.1"
+    comparison = row["range_comparison"]
+    assert comparison["flag"] == "in_range"
+    assert comparison["range_high"] == 1.0
+    assert comparison["unit"] == "mg/L"
+
+
+def _framework_id(conn: sqlcipher3.Connection, name: str) -> int:
+    row = conn.execute(
+        "SELECT id FROM range_frameworks WHERE name = ?", (name,)
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_framework_not_comparable_qualitative_result(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # Total Cholesterol has a real numeric target under
+    # nih_medlineplus_lipid_targets (range_high=200, floor NULL) -- unlike
+    # the fixture biomarker used for `no_range` above, this framework *does*
+    # cover this biomarker numerically, so a qualitative result here can only
+    # land on `not_comparable` via compare() step 3 (ADR-0030's
+    # value_num IS NULL path), never step 1. That is exactly what proves
+    # _enrich_range_comparison passes the row's real (value_num, value_text)
+    # pair through rather than always treating a present row as numeric.
+    total_chol = _biomarker_id(conn, "Total Cholesterol")
+    draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
+    _insert_result(
+        conn,
+        draw,
+        total_chol,
+        value_num=None,
+        value_text="Not Detected",
+        unit="mg/dL",
+    )
+
+    page = reads.list_lab_results(
+        conn, limit=10, framework="nih_medlineplus_lipid_targets"
+    )
+    (row,) = page.items
+    # Value fidelity (ADR-0030/0053) is untouched by the enrichment: the
+    # qualitative triple and the display string still come through exactly
+    # as an unenriched read would produce them.
+    assert (row["value_num"], row["comparator"], row["value_text"]) == (
+        None,
+        None,
+        "Not Detected",
+    )
+    assert row["display"] == "Not Detected"
+    comparison = row["range_comparison"]
+    assert comparison["flag"] == "not_comparable"
+    assert comparison["reason"] is not None
+    assert "qualitative" in comparison["reason"]
+
+    # get_lab_result serializes through the same enrichment path.
+    by_id = reads.get_lab_result(
+        conn, int(row["id"]), framework="nih_medlineplus_lipid_targets"
+    )
+    assert by_id is not None
+    assert by_id["range_comparison"]["flag"] == "not_comparable"
+
+
+def test_framework_not_comparable_range_text_only_target(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # The seed (migration 0005) has no range_text-only row to drive this
+    # through; ADR-0005's CHECK permits one (range_low AND range_high both
+    # NULL, range_text set), so this inserts one directly rather than
+    # reinventing a framework. Vitamin D 25-OH is a real, seeded biomarker
+    # the starter catalog leaves uncovered by any framework range (migration
+    # 0005 only seeds lipids/A1c/glucose/hs-CRP), so this is the only range
+    # row that can resolve for the pair.
+    nih = _framework_id(conn, "nih_medlineplus_lipid_targets")
+    vit_d = _biomarker_id(conn, "Vitamin D 25-OH")
+    _insert_range(
+        conn,
+        101,
+        nih,
+        vit_d,
+        range_low=None,
+        range_high=None,
+        unit="ng/mL",
+        range_text="See clinician interpretation",
+    )
+    draw = _insert_draw(conn, "2024-03-14T13:30:00Z")
+    _insert_result(conn, draw, vit_d, value_num=35.0, unit="ng/mL")
+
+    page = reads.list_lab_results(
+        conn, limit=10, framework="nih_medlineplus_lipid_targets"
+    )
+    (row,) = page.items
+    comparison = row["range_comparison"]
+    assert comparison["flag"] == "not_comparable"
+    assert comparison["reason"] is not None
+    assert comparison["range_low"] is None
+    assert comparison["range_high"] is None
+    # The target's own range_text still travels through to the client even
+    # though it could not be numerically compared (compare()'s `_incomplete`
+    # contract).
+    assert comparison["range_text"] == "See clinician interpretation"
+
+
+def test_framework_error_unreconcilable_units_page_survives(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # hs-CRP (aha_cdc_hscrp_risk_strata: <1.0 mg/L) is seeded with NO
+    # molar_mass (migration 0005 deliberately omits it) and canonical_unit
+    # mg/L. A result reported in mmol/L -- a genuine mass<->substance molar
+    # differing unit, not garbage -- cannot be normalized without one, so
+    # compare() step 4 catches MissingMolarContextError into a loud `error`
+    # flag (never an exception escaping to the caller). A second hs-CRP
+    # result with no unit at all hits the sibling step-4 `error` branch
+    # (result.unit is None). A third, ordinary hs-CRP result on the same
+    # page proves neither bad row drops or blanks its neighbor -- one bad
+    # row must never cost the rest of the page (ADR-0058 §3).
+    hscrp = _biomarker_id(conn, "hs-CRP")
+    ok = _insert_result(
+        conn,
+        _insert_draw(conn, "2024-01-01T08:00:00Z"),
+        hscrp,
+        value_num=0.5,
+        unit="mg/L",
+    )
+    molar_mismatch = _insert_result(
+        conn,
+        _insert_draw(conn, "2024-02-01T08:00:00Z"),
+        hscrp,
+        value_num=0.01,
+        unit="mmol/L",
+    )
+    no_unit = _insert_result(
+        conn,
+        _insert_draw(conn, "2024-03-01T08:00:00Z"),
+        hscrp,
+        value_num=0.5,
+        unit=None,
+    )
+
+    page = reads.list_lab_results(conn, limit=10, framework="aha_cdc_hscrp_risk_strata")
+    assert len(page.items) == 3  # a bad row is flagged, never dropped
+    by_id = {int(row["id"]): row["range_comparison"] for row in page.items}
+
+    assert by_id[ok]["flag"] == "in_range"
+
+    assert by_id[molar_mismatch]["flag"] == "error"
+    assert by_id[molar_mismatch]["reason"] is not None
+    assert "hs-CRP" in by_id[molar_mismatch]["reason"]
+    assert "molar_mass" in by_id[molar_mismatch]["reason"]
+
+    assert by_id[no_unit]["flag"] == "error"
+    assert by_id[no_unit]["reason"] is not None
+    assert "unit" in by_id[no_unit]["reason"]
 
 
 # --------------------------------------------------------------------------

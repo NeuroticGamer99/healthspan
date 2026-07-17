@@ -119,6 +119,7 @@ Notable seeding judgment calls, each following an explicit ADR-0055 §6 steer or
 
 ## Links
 
+- Extended by: [ADR-0058](0058-range-comparison-implementation-decisions.md) §6 — adds `range_frameworks`/`framework_ranges` to this ADR's catalog-import registry, and generalizes it with a nullable natural-key column (`ImportableTable.nullable_key`) for the ADR-0005 dateless default; §9's same-batch constraint applies to both unchanged
 - Implements: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the alias table, resolver, and normalization rule
 - Implements: [ADR-0055](0055-biomarker-category-taxonomy.md) — the categories catalog, reserved default, and delete-guard
 - Related: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the import engine this generalizes (`has_supersession`/`has_provenance`), and the natural-key/conflict machinery the resolver feeds into

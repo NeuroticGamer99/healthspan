@@ -82,6 +82,7 @@ Per [CLAUDE.md](../../CLAUDE.md) personal-data containment, the verification set
 
 ## Links
 - Extends: [ADR-0031](0031-units-and-ucum.md) — concretizes the internal units module, its API, and the molar-context mechanism it left open
+- Extended by: [ADR-0058](0058-range-comparison-implementation-decisions.md) — resolves the molar-mass persistence this ADR deferred (`biomarkers.molar_mass`); the explicit-argument API decided here is unchanged
 - Related: [ADR-0030](0030-biomarker-identity.md) — the `canonical_unit` column conversions normalize toward; molar-mass persistence (deferred) would live alongside it
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — the unit-normalized comparison (WI-3) that consumes this module; the mg/dL-vs-g/L bug this closes
 - Related: [testing-strategy.md](../testing-strategy.md) — the property-based acceptance suite and the Hypothesis profiles

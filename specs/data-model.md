@@ -317,7 +317,8 @@ CREATE TABLE biomarkers (
     loinc_code     TEXT UNIQUE,
     canonical_unit TEXT,
     category_id    INTEGER NOT NULL DEFAULT 0 REFERENCES categories(id),
-    description    TEXT
+    description    TEXT,
+    molar_mass     REAL CHECK (molar_mass IS NULL OR molar_mass > 0)
 ) STRICT;
 
 CREATE INDEX ix_biomarkers_category ON biomarkers (category_id);
@@ -327,6 +328,8 @@ CREATE INDEX ix_biomarkers_category ON biomarkers (category_id);
 - **The `= 0` convention.** "Needs categorizing" is `WHERE category_id = 0`, never `IS NULL` — id 0's meaning (reserved, not "no category selected") is part of the spec. Downstream code (reads, imports, the future CLI/MCP surface) must use this convention, not a null check.
 - **Reserved-row presence is an application invariant, not a schema one.** `PRAGMA foreign_key_check` (the integrity gate `db.py`/`migrate.py` enforce) proves every `category_id` points at *some* existing row, but not that id 0 specifically survives. `db.reserved_category_present()` plus the assertion in `service.verify_schema` (Core Service startup, ADR-0039) close that gap: a database missing the reserved row refuses to start, alongside the existing `schema_version` check, rather than surfacing as a confusing far-from-cause FK failure the first time an import defaults a biomarker to `category_id = 0`.
 - The `?category=` read filter ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)) resolves the category *name* case-insensitively to `category_id` server-side; clients never handle raw ids ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1).
+- **`molar_mass` is grams per mole, nullable** (added by migration 0005, [ADR-0058](adr/0058-range-comparison-implementation-decisions.md) §4). It exists because mass-concentration ↔ substance-concentration conversions (mg/dL ↔ mmol/L) are not scalar factors — they need the biomarker's molar mass as context, which the UCUM strings alone cannot supply ([ADR-0056](adr/0056-units-module-api-and-molar-context.md) §3). `NULL` means "not applicable, or not curated", and is safe rather than silent: a molar conversion attempted against it raises `MissingMolarContextError` and surfaces as a named `error` flag in the comparison output, never a guessed scalar factor. The `CHECK` is the database-level analog of `units.convert`'s own positivity guard — the same enforcement pattern as the [ADR-0030](adr/0030-biomarker-identity.md) value-model CHECKs on `lab_results`.
+  - Two seeded values are counter-intuitive enough to restate here, because "correcting" either silently produces wrong numbers: **BUN = 28.014** is the *urea-nitrogen equivalent* (2 × 14.007), **not** urea's molecular weight (60.06) — BUN measures the mass of nitrogen, and each urea molecule carries exactly two nitrogen atoms, so urea's own mass cancels out of the conventional `mg/dL × 0.357 = mmol/L` factor entirely. **Triglycerides = 885.4** (triolein) and **Folate = 441.4** (folic acid) are assay-calibration proxies for, respectively, a heterogeneous mixture and a form (5-MTHF, 459.5) that actually predominates in circulation.
 
 ### `biomarker_aliases` — the name-based resolution fallback
 

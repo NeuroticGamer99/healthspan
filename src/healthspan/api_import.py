@@ -39,6 +39,13 @@ class ImportRequest(BaseModel):
     so a mistyped field or an unregistered table name is a clean ``422`` rather
     than a silently-ignored payload. Row objects are free-form maps; the engine
     validates their columns per table (ADR-0052).
+
+    The per-table fields must cover :data:`imports.TABLES` exactly. Because
+    ``extra='forbid'`` makes this model an allowlist, a table registered in the
+    engine but missing here is not importable over HTTP at all — the engine
+    would accept it, the endpoint would reject it as an unknown field, and the
+    two layers would disagree silently. ``test_import_request_covers_the_whole
+    _registry`` pins the correspondence so adding a table cannot land half-wired.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -52,6 +59,8 @@ class ImportRequest(BaseModel):
     labs: list[dict[str, Any]] = []
     biomarkers: list[dict[str, Any]] = []
     biomarker_aliases: list[dict[str, Any]] = []
+    range_frameworks: list[dict[str, Any]] = []
+    framework_ranges: list[dict[str, Any]] = []
     lab_draws: list[dict[str, Any]] = []
     lab_results: list[dict[str, Any]] = []
 
@@ -69,13 +78,14 @@ def import_data(
         adapter_version=body.adapter_version,
         note=body.note,
     )
+    # Derived from the engine's own registry rather than a hand-kept list: a
+    # third copy of the table names is a third place to forget one, and a table
+    # silently dropped here would be accepted by the endpoint and then never
+    # applied. ImportRequest's fields are the allowlist (extra='forbid'), and a
+    # test pins them to TABLES, so every registered name resolves.
     payload: dict[str, list[dict[str, Any]]] = {
-        "categories": body.categories,
-        "labs": body.labs,
-        "biomarkers": body.biomarkers,
-        "biomarker_aliases": body.biomarker_aliases,
-        "lab_draws": body.lab_draws,
-        "lab_results": body.lab_results,
+        table: cast(list[dict[str, Any]], getattr(body, table))
+        for table in imports.IMPORT_ORDER
     }
     try:
         outcome = imports.run_import(

@@ -22,15 +22,25 @@ Value fidelity (ADR-0030/0031): result rows carry the explicit
 reported, the lab's own reference range — and a ``display`` string that
 preserves the comparator, so a censored ``<0.1`` never degrades to a bare
 ``0.1``.
+
+Range-comparison enrichment (ADR-0005/ADR-0058, Phase 3 WI-3): the optional
+``framework`` parameter on ``list_lab_results``/``get_lab_result`` attaches a
+``range_comparison`` object (:func:`healthspan.ranges.compare`, serialized)
+to each result row. It is a projection, not a filter — it changes what each
+row carries, never which rows are returned or their order — so it is
+resolved and applied *after* the page query and plays no part in the cursor.
 """
 
 import base64
 import binascii
+import dataclasses
 import json
 from dataclasses import dataclass
 from typing import Any, cast
 
 import sqlcipher3
+
+from healthspan import ranges
 
 CURSOR_VERSION = 1
 
@@ -39,6 +49,19 @@ Row = dict[str, Any]
 
 class CursorError(Exception):
     """A pagination cursor could not be decoded or does not fit the query."""
+
+
+class FrameworkNotFoundError(Exception):
+    """``?framework=`` named no known ``range_frameworks`` row.
+
+    Deliberately unlike ``?category=``'s empty-page rule (ADR-0055 §1): a
+    typo'd category yields an obviously-empty page, but a typo'd framework
+    would silently yield a full page of plausible-looking rows all flagged
+    ``no_range`` — a wrong answer that looks right, the exact failure mode
+    ADR-0005/ADR-0058 exist to prevent. So this is a loud, distinct error the
+    API layer turns into a 422, mirroring how :class:`CursorError` already
+    becomes one.
+    """
 
 
 @dataclass(frozen=True)
@@ -254,6 +277,89 @@ def _serialize_result(row: Row) -> Row:
 
 
 # --------------------------------------------------------------------------
+# Range-comparison enrichment (ADR-0005/ADR-0058, ?framework=)
+# --------------------------------------------------------------------------
+
+
+def _resolve_framework(conn: sqlcipher3.Connection, name: str) -> tuple[int, str]:
+    """Resolve ``?framework=`` to ``(id, canonical name)``.
+
+    The case-insensitive lookup itself is :func:`ranges.resolve_framework_id`
+    (ADR-0055 §1 rule, reused per ADR-0058 §1); an unresolved name raises
+    :class:`FrameworkNotFoundError` here rather than falling back to an
+    empty page. The *stored* name — not the caller's own casing — is what
+    travels into each row's ``range_comparison.framework``, so two requests
+    differing only in case produce byte-identical enrichment (the same
+    honesty-of-what-was-actually-used principle ``ranges.Comparison``
+    already applies to its normalized ``range_low``/``range_high``/``unit``).
+    """
+    framework_id = ranges.resolve_framework_id(conn, name)
+    if framework_id is None:
+        raise FrameworkNotFoundError(name)
+    row = conn.execute(
+        "SELECT name FROM range_frameworks WHERE id = ?", (framework_id,)
+    ).fetchone()
+    if row is None:
+        # framework_id was just resolved by the lookup above, in the same
+        # connection/transaction; its row cannot have vanished in between.
+        raise RuntimeError(
+            f"range_frameworks id {framework_id} resolved but its row is gone"
+        )
+    return framework_id, str(row[0])
+
+
+def _enrich_range_comparison(
+    conn: sqlcipher3.Connection,
+    framework_id: int,
+    framework_name: str,
+    rows: list[Row],
+) -> list[Row]:
+    """Attach a ``range_comparison`` object to each already-serialized row.
+
+    Bounded query count regardless of page size (brief §6): one catalog
+    lookup keyed by the page's distinct ``biomarker_id``s, one
+    :func:`ranges.resolve_ranges` call for the whole page — never N+1.
+    """
+    if not rows:
+        return rows
+
+    # Static SQL text; the variable-length id list travels as a single bound
+    # JSON-array parameter consumed by json_each — the same technique
+    # ranges._RESOLVE_RANGES_SQL uses — rather than an interpolated,
+    # dynamically-sized IN (...) placeholder list.
+    biomarker_ids = sorted({int(row["biomarker_id"]) for row in rows})
+    catalog = {
+        int(biomarker_id): (canonical_unit, molar_mass, canonical_name)
+        for biomarker_id, canonical_unit, molar_mass, canonical_name in conn.execute(
+            "SELECT id, canonical_unit, molar_mass, canonical_name FROM biomarkers "
+            "WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(biomarker_ids),),
+        ).fetchall()
+    }
+
+    pairs = [(int(row["biomarker_id"]), str(row["draw_utc"])[:10]) for row in rows]
+    resolved = ranges.resolve_ranges(conn, framework_id, pairs)
+
+    for row, range_row in zip(rows, resolved, strict=True):
+        canonical_unit, molar_mass, canonical_name = catalog[int(row["biomarker_id"])]
+        comparison = ranges.compare(
+            framework=framework_name,
+            biomarker=canonical_name,
+            canonical_unit=canonical_unit,
+            molar_mass=molar_mass,
+            range_row=range_row,
+            result=ranges.ResultValue(
+                value_num=row["value_num"],
+                comparator=row["comparator"],
+                value_text=row["value_text"],
+                unit=row["unit"],
+            ),
+        )
+        row["range_comparison"] = dataclasses.asdict(comparison)
+    return rows
+
+
+# --------------------------------------------------------------------------
 # Public per-resource surface
 # --------------------------------------------------------------------------
 
@@ -297,7 +403,16 @@ def list_lab_results(
     order: str = "desc",
     limit: int,
     cursor: str | None = None,
+    framework: str | None = None,
 ) -> Page:
+    # Resolved before the page query (brief §6): an unknown framework name
+    # must fail loud without ever running the (potentially large) page
+    # query, and `framework` plays no part in `filters`/the cursor — it is a
+    # projection applied to the page's rows afterward, not a row filter.
+    resolved_framework: tuple[int, str] | None = None
+    if framework is not None:
+        resolved_framework = _resolve_framework(conn, framework)
+
     filters: list[tuple[str, object]] = []
     if biomarker_id is not None:
         filters.append(("r.biomarker_id = ?", biomarker_id))
@@ -312,12 +427,35 @@ def list_lab_results(
     rows, next_cursor = _list(
         conn, _LAB_RESULTS, filters, order=order, limit=limit, cursor=cursor
     )
-    return Page([_serialize_result(row) for row in rows], next_cursor)
+    serialized = [_serialize_result(row) for row in rows]
+    if resolved_framework is not None:
+        framework_id, framework_name = resolved_framework
+        serialized = _enrich_range_comparison(
+            conn, framework_id, framework_name, serialized
+        )
+    return Page(serialized, next_cursor)
 
 
-def get_lab_result(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
+def get_lab_result(
+    conn: sqlcipher3.Connection, row_id: int, *, framework: str | None = None
+) -> Row | None:
+    # Resolved before the row fetch, mirroring list_lab_results: an unknown
+    # framework name is always a 422 at the API layer, regardless of
+    # whether row_id happens to exist (never masked into a 404).
+    resolved_framework: tuple[int, str] | None = None
+    if framework is not None:
+        resolved_framework = _resolve_framework(conn, framework)
+
     row = _get(conn, _LAB_RESULTS, row_id)
-    return _serialize_result(row) if row is not None else None
+    if row is None:
+        return None
+    serialized = _serialize_result(row)
+    if resolved_framework is not None:
+        framework_id, framework_name = resolved_framework
+        (serialized,) = _enrich_range_comparison(
+            conn, framework_id, framework_name, [serialized]
+        )
+    return serialized
 
 
 def list_labs(

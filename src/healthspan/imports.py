@@ -34,6 +34,7 @@ the rest of the pipeline only ever sees an id.
 """
 
 import contextlib
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -60,6 +61,11 @@ _RESERVED_KEYS = frozenset({"id", "import_batch_id", "superseded_by"})
 
 _COMPARATORS = frozenset({"<", "<=", ">=", ">"})
 
+# A date-only ISO-8601 calendar date. `framework_ranges.effective_date` must
+# match this for ADR-0005's lexical point-in-time comparison to be sound
+# (see _framework_range_errors).
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 
 @dataclass(frozen=True)
 class ImportableTable:
@@ -73,6 +79,15 @@ class ImportableTable:
     parent_fk: tuple[str, str] | None  # (fk column, parent table) intra-batch handle
     external_fks: tuple[tuple[str, str], ...]  # (fk column, referenced table)
     requires_value_model: bool = False
+    # Natural-key columns that may legitimately be NULL. Normally every key
+    # column is required and matched with ``=``; a nullable key column is
+    # matched with ``IS`` instead, because ``x = NULL`` is NULL in SQL and so
+    # would never match a stored NULL — the row would be re-INSERTed on every
+    # import and collide with its own unique index rather than reconcile.
+    # ``framework_ranges.effective_date`` is the case this exists for: NULL
+    # there means "always current" (ADR-0005), which is the *common* row, not
+    # an edge case.
+    nullable_key: tuple[str, ...] = ()
     # Catalog tables (ADR-0055/0054) carry neither column family: a
     # ``has_supersession=False`` table reconciles a genuine difference via
     # in-place ``update``, never ``_supersede`` (there is no column to park a
@@ -164,6 +179,58 @@ TABLES: dict[str, ImportableTable] = {
         # never a compared column, or an identical re-import would churn.
         server_owned=("created_utc",),
     ),
+    "range_frameworks": ImportableTable(
+        name="range_frameworks",
+        natural_key=("name",),
+        columns=("name", "description", "source_url"),
+        defaults={"description": None, "source_url": None},
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        external_fks=(),
+        has_supersession=False,
+        has_provenance=False,
+    ),
+    "framework_ranges": ImportableTable(
+        name="framework_ranges",
+        # The ADR-0005 UNIQUE(framework_id, biomarker_id, effective_date), which
+        # is also what makes point-in-time resolution provably single-valued.
+        # ``effective_date`` is nullable: NULL is the "always current" dateless
+        # default — the common row, not an edge case — so it is declared in
+        # ``nullable_key`` rather than required. Without that, the default row
+        # would be unimportable and only *dated* rows could be written, which is
+        # backwards.
+        natural_key=("framework_id", "biomarker_id", "effective_date"),
+        nullable_key=("effective_date",),
+        columns=(
+            "framework_id",
+            "biomarker_id",
+            "range_low",
+            "range_high",
+            "unit",
+            "range_text",
+            "effective_date",
+            "notes",
+        ),
+        defaults={
+            "range_low": None,
+            "range_high": None,
+            "unit": None,
+            "range_text": None,
+            "effective_date": None,
+            "notes": None,
+        },
+        classification=CLASSIFICATION_IDENTITY,
+        parent_fk=None,
+        # Both FKs resolve against already-stored rows, never same-batch
+        # (ADR-0057 §9): a framework must land in a prior import before its
+        # ranges can reference it.
+        external_fks=(
+            ("framework_id", "range_frameworks"),
+            ("biomarker_id", "biomarkers"),
+        ),
+        has_supersession=False,
+        has_provenance=False,
+    ),
     "lab_draws": ImportableTable(
         name="lab_draws",
         natural_key=("lab_id", "draw_utc"),
@@ -221,17 +288,28 @@ TABLES: dict[str, ImportableTable] = {
     ),
 }
 
-# Parent-before-child order (ADR-0052): a child's handles resolve to ids the
-# parent pass has already assigned. Catalog tables precede the content
-# tables that reference them by (real, already-stored) id.
-IMPORT_ORDER: tuple[str, ...] = (
+# The catalog tables, in dependency order: each is validated and applied by the
+# generic identity path, and each precedes any table whose FK names it
+# (`biomarkers` before `biomarker_aliases`/`framework_ranges`, `range_frameworks`
+# before `framework_ranges`). `lab_draws`/`lab_results` are excluded here — they
+# have bespoke orchestration for batch-local handles.
+#
+# This is the single source of truth for that set: the validation pass and
+# IMPORT_ORDER both derive from it, so adding a catalog table is one edit rather
+# than two lists to keep in agreement.
+CATALOG_TABLES: tuple[str, ...] = (
     "categories",
     "labs",
     "biomarkers",
     "biomarker_aliases",
-    "lab_draws",
-    "lab_results",
+    "range_frameworks",
+    "framework_ranges",
 )
+
+# Parent-before-child order (ADR-0052): a child's handles resolve to ids the
+# parent pass has already assigned. Catalog tables precede the content
+# tables that reference them by (real, already-stored) id.
+IMPORT_ORDER: tuple[str, ...] = (*CATALOG_TABLES, "lab_draws", "lab_results")
 
 Row = Mapping[str, object]
 
@@ -535,7 +613,7 @@ def _validate(
                 )
             )
 
-    for table in ("categories", "labs", "biomarkers", "biomarker_aliases"):
+    for table in CATALOG_TABLES:
         rows = payload.get(table) or ()
         if rows:
             errors.extend(_validate_identity_table(conn, TABLES[table], rows, policy))
@@ -641,7 +719,16 @@ def _validate_identity_table(
     keys_seen: set[tuple[object, ...]] = set()
     for i, raw in enumerate(rows):
         row_errs = _row_errors(conn, spec, raw)
-        if all(raw.get(c) is not None for c in spec.natural_key):
+        # The guard asks "is the key complete enough to match on", so a
+        # nullable key column is exempt: NULL there *is* the key value (the
+        # ADR-0005 dateless default), not a missing one. Its absence from the
+        # payload and an explicit null are the same key, which is correct —
+        # both mean "always current".
+        if all(
+            raw.get(c) is not None
+            for c in spec.natural_key
+            if c not in spec.nullable_key
+        ):
             key = tuple(raw.get(c) for c in spec.natural_key)
             if key in keys_seen:
                 row_errs.append(f"duplicate natural key {key} in {spec.name}")
@@ -789,6 +876,8 @@ def _row_errors(
     for col in spec.natural_key:
         if spec.parent_fk is not None and col == spec.parent_fk[0]:
             continue  # the handle's presence is checked in the child orchestration
+        if col in spec.nullable_key:
+            continue  # NULL is a legitimate key value here (see nullable_key)
         if raw.get(col) is None:
             errs.append(f"missing required column {col!r} for {spec.name}")
 
@@ -800,6 +889,60 @@ def _row_errors(
     errs.extend(_domain_errors(spec, raw))
     if spec.requires_value_model:
         errs.extend(_value_model_errors(raw))
+    return errs
+
+
+def _framework_range_errors(raw: Row) -> list[str]:
+    """Domain rules for a ``framework_ranges`` row (ADR-0005, ADR-0058 §5).
+
+    The two integrity CHECKs are mirrored here rather than left to the database
+    so a bad row is one named validation error among the batch's others, not an
+    opaque IntegrityError that aborts the whole import at apply time — the same
+    reason the ADR-0030 value model is validated at this boundary despite also
+    being CHECK-enforced.
+    """
+    errs: list[str] = []
+
+    # `unit` is NOT NULL (ADR-0005's mandatory-unit safety correction) but is
+    # not part of the natural key, so the generic required-column pass over
+    # natural_key never sees it — require it explicitly, as biomarker_aliases
+    # does for biomarker_id.
+    if raw.get("unit") is None:
+        errs.append(
+            "missing required column 'unit' for framework_ranges: a numeric "
+            "range with no unit is the safety bug ADR-0005 exists to close"
+        )
+
+    low, high = raw.get("range_low"), raw.get("range_high")
+    if low is None and high is None and raw.get("range_text") is None:
+        errs.append(
+            "framework_ranges needs at least one of range_low, range_high, "
+            "or range_text (ADR-0005)"
+        )
+    if (
+        isinstance(low, int | float)
+        and isinstance(high, int | float)
+        and not isinstance(low, bool)
+        and not isinstance(high, bool)
+        and low > high
+    ):
+        errs.append(f"range_low ({low}) must be <= range_high ({high}) (ADR-0005)")
+
+    # Point-in-time resolution compares `effective_date` lexically against the
+    # date portion of a result's `draw_utc` (ADR-0005's rule, ranges.py). That
+    # is only sound for a date-only value: '2024-06-01T00:00:00Z' would sort
+    # *after* '2024-06-01' and so silently lose its own effective day, resolving
+    # to the previous row or to none. Enforce the shape the rule assumes.
+    effective_date = raw.get("effective_date")
+    if effective_date is not None and (
+        not isinstance(effective_date, str)
+        or _ISO_DATE.fullmatch(effective_date) is None
+    ):
+        errs.append(
+            f"effective_date must be an ISO-8601 date (YYYY-MM-DD), got "
+            f"{effective_date!r}: point-in-time resolution compares it "
+            "lexically against a date-only draw date (ADR-0005)"
+        )
     return errs
 
 
@@ -816,6 +959,8 @@ def _domain_errors(spec: ImportableTable, raw: Row) -> list[str]:
         comparator = raw.get("comparator")
         if comparator is not None and comparator not in _COMPARATORS:
             errs.append("comparator must be one of <, <=, >=, > (ADR-0030)")
+    elif spec.name == "framework_ranges":
+        errs.extend(_framework_range_errors(raw))
     elif spec.name == "biomarker_aliases":
         # Not part of the natural key (that's the derived alias_normalized),
         # so the generic "missing required column" pass over natural_key
@@ -1095,7 +1240,14 @@ def _last_id(cursor: sqlcipher3.Cursor) -> int:
 def _find_id(
     conn: sqlcipher3.Connection, spec: ImportableTable, key: tuple[object, ...]
 ) -> int | None:
-    where = " AND ".join(f"{c} = ?" for c in spec.natural_key)
+    # A nullable key column is matched with `IS`, not `=`: SQL's `x = NULL` is
+    # NULL (never true), so an `=` match would miss a stored NULL every time and
+    # the row would be re-INSERTed into its own unique index. `IS` is NULL-safe
+    # equality in SQLite and behaves identically to `=` for non-NULL operands
+    # (and is likewise indexable), so this is exact for both cases.
+    where = " AND ".join(
+        f"{c} IS ?" if c in spec.nullable_key else f"{c} = ?" for c in spec.natural_key
+    )
     sql = f"SELECT id FROM {spec.name} WHERE {where}"  # noqa: S608 - registry
     if spec.has_supersession:
         sql += " AND superseded_by IS NULL"

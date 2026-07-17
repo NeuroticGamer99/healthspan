@@ -281,14 +281,24 @@ def test_foreign_key_check_is_clean(conn: sqlcipher3.Connection) -> None:
     assert db.foreign_key_ok(conn)
 
 
-def test_fresh_database_reaches_schema_version_4(
-    conn: sqlcipher3.Connection,
-) -> None:
-    assert db.schema_version(conn) == 4
-    ledger = conn.execute(
-        "SELECT version, filename FROM schema_version ORDER BY version"
-    ).fetchall()
-    assert ledger[-1] == (4, "0004_categories_and_aliases.sql")
+def test_migrating_through_0004_reaches_schema_version_4(tmp_path: Path) -> None:
+    # Scoped to the migrations shipped through 0004 (not the shared `conn`
+    # fixture, which now applies every shipped migration including 0005+):
+    # this asserts migration 0004's own ledger entry, independent of what
+    # ships after it.
+    path = tmp_path / "healthspan.db"
+    db.provision(path, KEY)
+    through_0004 = [m for m in migrate.discover_migrations() if m.version <= 4]
+    migrate.migrate_database(path, KEY, through_0004)
+    connection = db.connect(path, KEY)
+    try:
+        assert db.schema_version(connection) == 4
+        ledger = connection.execute(
+            "SELECT version, filename FROM schema_version ORDER BY version"
+        ).fetchall()
+        assert ledger[-1] == (4, "0004_categories_and_aliases.sql")
+    finally:
+        db.close(connection)
 
 
 def test_backup_restore_round_trip_stays_consistent(tmp_path: Path) -> None:
@@ -332,7 +342,8 @@ def test_runner_applies_0004_incrementally_over_a_0003_database(
     through_0003 = [m for m in all_migrations if m.version <= 3]
     first = migrate.migrate_database(path, KEY, through_0003)
     assert first.applied == (1, 2, 3)
-    second = migrate.migrate_database(path, KEY, all_migrations)
+    through_0004 = [m for m in all_migrations if m.version <= 4]
+    second = migrate.migrate_database(path, KEY, through_0004)
     assert second.applied == (4,)
     assert second.final_version == 4
 
@@ -343,4 +354,4 @@ def test_rerunning_the_migrator_is_a_no_op(tmp_path: Path) -> None:
     migrate.migrate_database(path, KEY)
     again = migrate.migrate_database(path, KEY)
     assert again.applied == ()
-    assert again.final_version == 4
+    assert again.final_version == 5
