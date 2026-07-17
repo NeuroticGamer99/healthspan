@@ -442,8 +442,12 @@ def test_range_frameworks_and_framework_ranges_seeded(harness: Harness) -> None:
     assert body["name"] == "nih_medlineplus_lipid_targets"
     assert body["source_url"].startswith("https://")  # every seeded row is cited
 
-    # 7 seeded framework_ranges rows, PAGE_CAP=3: the default page clips, and
-    # a full cursor walk recovers all 7 exactly once, id asc.
+    # The seed carries more framework_ranges rows than PAGE_CAP (3), so the
+    # default page clips and a full cursor walk recovers every row exactly
+    # once, id ascending. Deliberately not pinned to the seed's current size:
+    # this test is about pagination, and re-pinning a count every time the
+    # curated seed gains or loses a row would couple it to something it is not
+    # testing (HDL's removal is exactly that churn).
     first_page = _get(harness, FRAMEWORK_RANGES_PATH).json()
     assert len(first_page["items"]) == PAGE_CAP
     assert first_page["next_cursor"] is not None
@@ -456,7 +460,9 @@ def test_range_frameworks_and_framework_ranges_seeded(harness: Harness) -> None:
         if page["next_cursor"] is None:
             break
         params = {"cursor": page["next_cursor"]}
-    assert ids == list(range(1, 8))
+    assert len(ids) > PAGE_CAP  # the walk actually spanned pages
+    assert ids == sorted(ids)  # id ascending, the fixed order for this resource
+    assert len(ids) == len(set(ids))  # every row exactly once, none repeated
 
     assert _get(harness, f"{RANGE_FRAMEWORKS_PATH}/999").status_code == 404
     assert _get(harness, f"{FRAMEWORK_RANGES_PATH}/999").status_code == 404

@@ -45,10 +45,13 @@ SEEDED_MOLAR_MASSES = {
 # name, inclusive-bound-corrected A1c/Glucose ceilings, and the sourced
 # Level 1 hypoglycemia floor on Glucose.
 SEEDED_FRAMEWORKS = {
+    # HDL is deliberately absent: its source states a sex-specific low cutoff
+    # the schema cannot hold and an optimal target that would flag a healthy
+    # 45 mg/dL `below` (see the migration's comment and the open question on
+    # cohort-dimensioned ranges). test_hdl_has_no_seeded_range pins that.
     "nih_medlineplus_lipid_targets": {
         "Total Cholesterol": (None, 200, "mg/dL"),
         "LDL Cholesterol": (None, 100, "mg/dL"),
-        "HDL Cholesterol": (60, None, "mg/dL"),
         "Triglycerides": (None, 150, "mg/dL"),
     },
     "ada_standards_of_care": {
@@ -357,6 +360,29 @@ def test_no_ada_framework_row_bakes_the_edition_year_into_the_name(
         "SELECT count(*) FROM range_frameworks WHERE name = 'ada_standards_of_care'",
     )
     assert ada_count == 1
+
+
+def test_hdl_has_no_seeded_range(conn: sqlcipher3.Connection) -> None:
+    """HDL is deliberately uncovered, and must stay that way until the schema
+    can express a cohort dimension.
+
+    Its source gives a sex-specific low cutoff (<40 men / <50 women) that
+    `framework_ranges` cannot hold, and a sex-neutral optimal target (>=60)
+    that would flag a healthy 45 mg/dL `below` — a word that reads as
+    "abnormally low" when the source calls 45 neither low nor optimal. Seeding
+    either one alone is a misleading answer; `no_range` is an honest one. If a
+    future seed adds an HDL row without the cohort dimension arriving first,
+    this fails and asks why.
+    """
+    assert (
+        _scalar(
+            conn,
+            "SELECT count(*) FROM framework_ranges fr "
+            "JOIN biomarkers b ON b.id = fr.biomarker_id "
+            "WHERE b.canonical_name = 'HDL Cholesterol'",
+        )
+        == 0
+    )
 
 
 def test_seeded_framework_ranges_land_with_expected_bounds(
