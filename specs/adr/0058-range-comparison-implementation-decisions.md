@@ -93,7 +93,7 @@ Migration 0005 seeds three frameworks, each carrying a `description` and a `sour
 
 | framework | rows | source |
 |---|---|---|
-| `nih_medlineplus_lipid_targets` | Total Cholesterol, LDL, HDL, Triglycerides | NIH MedlinePlus adult lipid targets |
+| `nih_medlineplus_lipid_targets` | Total Cholesterol, LDL, Triglycerides | NIH MedlinePlus adult lipid targets |
 | `ada_standards_of_care` | Glucose, Hemoglobin A1c | ADA *Standards of Care in Diabetes* |
 | `aha_cdc_hscrp_risk_strata` | hs-CRP (low-risk band only) | AHA/CDC hs-CRP risk strata |
 
@@ -103,7 +103,9 @@ Nineteen molar masses are seeded alongside, sourced from PubChem and each cross-
 
 - **No `Lab Standard` framework**, despite ADR-0005 listing the name as an example. That same ADR is explicit that the lab's own range "remains — it is a historical fact about what the lab reported, not a framework comparison", and it already sits on every `lab_results` row as `reference_low`/`reference_high`/`reference_text`. Seeding it as a framework would duplicate per-row data under a second, divergent source of truth.
 - **No Attia framework**, despite ADR-0005 also naming it. The only numeric ApoB/Lp(a) targets locatable were podcast show notes, which is not a citable source. The gap is deliberate, not an oversight.
-- **No HDL sex-specific low cutoff** (40 mg/dL men / 50 mg/dL women). `framework_ranges` has no sex dimension, and silently picking one sex's cutoff is not acceptable. Only the sex-neutral "≥60 mg/dL is best" target — stated identically for both sexes in the source — is encoded. Adding a sex dimension is a future decision this ADR does not pre-empt.
+- **No HDL range at all**, though the source states two numbers for it. The low cutoff is sex-specific (40 mg/dL men / 50 women) and `framework_ranges` has no sex dimension; silently picking one sex's number is not acceptable. The sex-neutral optimal target (≥60) *does* fit the schema, but encoding it alone makes HDL's only guidance a goal roughly half of healthy adults miss, reported as `below` — a flag that reads as "abnormally low" beside a genuinely elevated LDL, when the source calls 45 mg/dL neither low nor optimal. One biomarker wanting three distinct ranges (male-normal, female-normal, optimal, where *optimal* is a different axis from *sex* rather than a third sibling) is a schema gap, not an HDL quirk — hormone panels will force it. Deferred to [open-questions.md](../open-questions.md) ("Reference ranges that depend on more than the biomarker"); until then HDL flags `no_range`, which says nothing rather than something misleading, and the target is one catalog import away (§6).
+- **The age dimension is silently assumed.** The same source states different lipid targets for age ≤19 (TC <170, LDL <110) than for 20+ (TC <200, LDL <100); the adult values are seeded. Correct for this platform's single adult owner, but an assumption the schema cannot express — recorded in the same open question rather than left implicit.
+- **The glucose thresholds are fasting-specific and applied unconditionally.** `FPG` is what ADA states; the catalog has one `Glucose` biomarker and the comparison never reads `lab_draws.fasting`, so a normal post-meal 130 mg/dL flags `above`. It errs conservative (a false out-of-range, not a false normal), and is deferred to [open-questions.md](../open-questions.md) with the owner's leaning recorded: a distinct `Glucose (fasting)` biomarker.
 - **No hs-CRP intermediate/high bands.** One row per `(framework, biomarker)` holds one target zone; the low-risk band is the optimal target, which is what a comparison flag is asking about.
 
 Two seeding rules fall out of §3 and are load-bearing enough to state as decisions, because both were caught as live bugs during this WI:

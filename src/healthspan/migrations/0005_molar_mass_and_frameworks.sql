@@ -119,24 +119,51 @@ INSERT INTO range_frameworks (name, description, source_url) VALUES
     -- comparison against earlier results. The 2026 edition is recorded in
     -- `description`/`source_url` instead; a future revision adds dated
     -- rows to this same framework.
+    -- Two editions, deliberately: the upper thresholds come from the
+    -- Standards of Care in Diabetes-2026 diagnostic-criteria tables, and the
+    -- Level 1 hypoglycemia alert value (the Glucose floor) from the *2024*
+    -- edition's "Glycemic Goals and Hypoglycemia" chapter, which is the copy
+    -- that was reachable and quotable. The 70 mg/dL alert value is stable
+    -- across editions. Both are named here rather than implied, so nobody has
+    -- to reconstruct which number came from where.
     ('ada_standards_of_care',
      'American Diabetes Association normal (non-diabetic, non-prediabetic) '
-     || 'thresholds for fasting plasma glucose and A1C from the Standards '
-     || 'of Care in Diabetes-2026 diagnostic-criteria table, plus the '
-     || 'Level 1 hypoglycemia alert value from the same Standards'' '
-     || '"Glycemic Goals and Hypoglycemia" chapter.',
+     || 'thresholds for fasting plasma glucose and A1C, from the Standards '
+     || 'of Care in Diabetes-2026 diagnostic-criteria tables; the Glucose '
+     || 'floor is the Level 1 hypoglycemia alert value from the Standards '
+     || 'of Care in Diabetes-2024, "Glycemic Goals and Hypoglycemia" '
+     || '(https://pmc.ncbi.nlm.nih.gov/articles/PMC10725808/). Ranges are '
+     || 'FASTING plasma glucose; see the Glucose row below.',
      'https://pmc.ncbi.nlm.nih.gov/articles/PMC12690183/'),
     ('aha_cdc_hscrp_risk_strata',
      'AHA/CDC hs-CRP cardiovascular risk stratification (low/intermediate/'
      || 'high); this seed encodes only the lowest-risk (''optimal'') band.',
      'https://pmc.ncbi.nlm.nih.gov/articles/PMC4669860/');
 
--- NIH MedlinePlus lipid targets. HDL's sex-specific LOW cutoff (40 mg/dL
--- men / 50 mg/dL women, per the same source page) is deliberately left
--- unencoded: `framework_ranges` has no sex dimension, and silently picking
--- one sex's cutoff over the other is not acceptable. Only the sex-neutral
--- ">= 60 mg/dL is best" target, stated identically for both sexes in the
--- source, is encoded below.
+-- NIH MedlinePlus lipid targets.
+--
+-- HDL is deliberately NOT seeded at all, though the source states two numbers
+-- for it. The source gives a sex-specific LOW cutoff (< 40 mg/dL men, < 50
+-- women) and a sex-neutral OPTIMAL target (">= 60 mg/dL is best").
+-- `framework_ranges` can hold neither honestly:
+--   - the low cutoff needs a sex dimension the table does not have, and
+--     silently picking one sex's number is not acceptable;
+--   - the optimal target fits the schema, but encoding it alone makes the
+--     only HDL guidance a goal roughly half of healthy adults miss, reported
+--     as `below` — a flag that reads as "abnormally low" beside a genuinely
+--     elevated LDL, when the source calls 45 mg/dL neither optimal nor low.
+-- One biomarker wanting three distinct ranges (male-normal, female-normal,
+-- optimal) is the schema gap, not an HDL quirk — hormone panels will make it
+-- unavoidable. Tracked in open-questions.md ("Reference ranges that depend on
+-- more than the biomarker"). Until then HDL flags `no_range`, which says
+-- nothing rather than something misleading; the target is one catalog import
+-- away whenever the owner wants it (ADR-0058 §6).
+--
+-- The age dimension is a live instance of the same gap: the source states
+-- different lipid targets for age <= 19 (TC < 170, LDL < 110) than for 20+
+-- (TC < 200, LDL < 100). The adult values are seeded, which is correct for
+-- this platform's single adult owner but is an assumption the schema cannot
+-- express -- recorded in the same open question rather than left implicit.
 INSERT INTO framework_ranges (framework_id, biomarker_id, range_low, range_high, unit) VALUES
     ((SELECT id FROM range_frameworks WHERE name = 'nih_medlineplus_lipid_targets'),
      (SELECT id FROM biomarkers WHERE canonical_name = 'Total Cholesterol'),
@@ -144,9 +171,6 @@ INSERT INTO framework_ranges (framework_id, biomarker_id, range_low, range_high,
     ((SELECT id FROM range_frameworks WHERE name = 'nih_medlineplus_lipid_targets'),
      (SELECT id FROM biomarkers WHERE canonical_name = 'LDL Cholesterol'),
      NULL, 100, 'mg/dL'),
-    ((SELECT id FROM range_frameworks WHERE name = 'nih_medlineplus_lipid_targets'),
-     (SELECT id FROM biomarkers WHERE canonical_name = 'HDL Cholesterol'),
-     60, NULL, 'mg/dL'),
     ((SELECT id FROM range_frameworks WHERE name = 'nih_medlineplus_lipid_targets'),
      (SELECT id FROM biomarkers WHERE canonical_name = 'Triglycerides'),
      NULL, 150, 'mg/dL');
