@@ -63,9 +63,18 @@ SEEDED_FRAMEWORKS = {
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlcipher3.Connection]:
+    """A database migrated through 0005 — deliberately not "through latest".
+
+    This file tests the schema *as of 0005*: the column it adds, its CHECK, and
+    its seed. Applying the whole corpus would make every one of those assertions
+    fail or silently drift the day 0006 ships, for reasons having nothing to do
+    with 0005. Scoping the fixture keeps each test about the migration it names
+    (the same shape test_migration_0004.py uses for its own incremental tests).
+    """
     path = tmp_path / "healthspan.db"
     db.provision(path, KEY)
-    migrate.migrate_database(path, KEY)
+    through_0005 = [m for m in migrate.discover_migrations() if m.version <= 5]
+    migrate.migrate_database(path, KEY, through_0005)
     connection = db.connect(path, KEY)
     try:
         yield connection
@@ -84,7 +93,9 @@ def _scalar(conn: sqlcipher3.Connection, sql: str, params: Sequence[Any] = ()) -
 # --------------------------------------------------------------------------
 
 
-def test_fresh_database_reaches_schema_version_5(conn: sqlcipher3.Connection) -> None:
+def test_migrating_through_0005_reaches_schema_version_5(
+    conn: sqlcipher3.Connection,
+) -> None:
     assert db.schema_version(conn) == 5
     ledger = conn.execute(
         "SELECT version, filename FROM schema_version ORDER BY version"
@@ -248,8 +259,9 @@ def test_runner_applies_0005_incrementally_over_a_0004_database(
 def test_rerunning_the_migrator_through_0005_is_a_no_op(tmp_path: Path) -> None:
     path = tmp_path / "healthspan.db"
     db.provision(path, KEY)
-    migrate.migrate_database(path, KEY)
-    again = migrate.migrate_database(path, KEY)
+    through_0005 = [m for m in migrate.discover_migrations() if m.version <= 5]
+    migrate.migrate_database(path, KEY, through_0005)
+    again = migrate.migrate_database(path, KEY, through_0005)
     assert again.applied == ()
     assert again.final_version == 5
 

@@ -1536,6 +1536,120 @@ def test_framework_range_dated_row_is_distinct_from_dateless_default(
     )
 
 
+@pytest.mark.parametrize(
+    "effective_date",
+    ["2025-02-30", "2025-13-01", "9999-99-99"],
+    ids=["feb_30", "month_13", "all_nines"],
+)
+def test_framework_range_rejects_a_shaped_but_impossible_date(
+    conn: sqlcipher3.Connection, effective_date: str
+) -> None:
+    """A date that matches YYYY-MM-DD but is not a day that exists.
+
+    The shape regex alone accepts these; they would then sort into the lexical
+    gap before the next real date and silently act as a day they do not name
+    (ADR-0005's point-in-time rule is a string comparison). The calendar check
+    is what rejects them.
+    """
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"framework_ranges": [_range_row(fw_id, 1, effective_date=effective_date)]},
+            imports.UPSERT,
+        )
+    assert any(
+        e.table == "framework_ranges" and "calendar date" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("range_low", float("nan")),
+        ("range_high", float("nan")),
+        ("range_low", float("inf")),
+        ("range_high", float("-inf")),
+        ("range_low", True),
+        ("range_high", "not-a-number"),
+    ],
+    ids=["nan_low", "nan_high", "inf_low", "neg_inf_high", "bool_low", "str_high"],
+)
+def test_framework_range_rejects_a_non_finite_or_non_numeric_bound(
+    conn: sqlcipher3.Connection, column: str, value: object
+) -> None:
+    """STRICT's REAL affinity takes bools and non-finite floats, and the
+    range_low <= range_high CHECK cannot catch NaN (`NaN <= x` is NULL, and a
+    CHECK fails only on FALSE). A stored NaN bound compares false against
+    everything and flags `indeterminate` forever — a target that silently never
+    decides. Reject at the boundary instead.
+    """
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"framework_ranges": [_range_row(fw_id, 1, **{column: value})]},
+            imports.UPSERT,
+        )
+    assert any(
+        e.table == "framework_ranges" and column in e.message
+        for e in excinfo.value.errors
+    )
+    assert _one(conn, "SELECT count(*) FROM framework_ranges") == 0
+
+
+def test_framework_range_accepts_a_real_leap_day(conn: sqlcipher3.Connection) -> None:
+    # The calendar check must not over-reject: 2024 is a leap year.
+    fw_id = _new_framework(conn)
+    outcome = _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, effective_date="2024-02-29")]},
+        imports.UPSERT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+
+
+def test_unhashable_natural_key_is_a_structured_error_not_a_crash(
+    conn: sqlcipher3.Connection,
+) -> None:
+    """A JSON list where a scalar key belongs must stay a collected 422.
+
+    The duplicate-key check hashes the natural key into a set, so an unhashable
+    value raised TypeError straight past the structured error this row had
+    already earned — surfacing as a 500. Pre-existing for every table (any
+    column can be sent as a list); reachable through framework_ranges because
+    effective_date is exempt from the required-column check.
+    """
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "framework_ranges": [
+                    _range_row(fw_id, 1, effective_date=["not", "a", "date"])
+                ]
+            },
+            imports.UPSERT,
+        )
+    assert any(e.table == "framework_ranges" for e in excinfo.value.errors)
+
+
+def test_unhashable_natural_key_on_a_non_nullable_key_table_is_also_structured(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # The same guard on the paths CodeRabbit did not flag: a catalog table with
+    # no nullable key, and lab_draws' separate orchestration.
+    with pytest.raises(imports.ImportValidationError):
+        _run(conn, {"categories": [{"name": ["a", "list"]}]}, imports.UPSERT)
+    with pytest.raises(imports.ImportValidationError):
+        _run(
+            conn,
+            {"lab_draws": [{"id": 1, "lab_id": 1, "draw_utc": ["a", "list"]}]},
+            imports.UPSERT,
+        )
+
+
 def test_framework_range_dateless_conflict_rejected_under_reject_policy(
     conn: sqlcipher3.Connection,
 ) -> None:

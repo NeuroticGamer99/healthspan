@@ -164,6 +164,24 @@ def test_import_request_covers_the_whole_registry() -> None:
     assert fields - metadata == set(imports.TABLES)
 
 
+def test_import_order_covers_the_whole_registry_exactly_once() -> None:
+    """IMPORT_ORDER is the third place a table name must appear, and the one
+    that silently drops rows when it disagrees.
+
+    `import_data` builds its payload by iterating `IMPORT_ORDER`, so a table
+    present in both `TABLES` and `ImportRequest` but absent from `IMPORT_ORDER`
+    is accepted by the endpoint and then never applied — a 200 reporting no
+    rows, which is worse than the 422 a missing model field would give. A
+    duplicate entry would apply a table twice. Neither is caught by pinning
+    `ImportRequest` alone.
+    """
+    assert set(imports.IMPORT_ORDER) == set(imports.TABLES)
+    assert len(imports.IMPORT_ORDER) == len(set(imports.IMPORT_ORDER))
+    # CATALOG_TABLES is the source IMPORT_ORDER derives from; it must be a
+    # prefix, so every catalog FK target is applied before its dependents.
+    assert imports.IMPORT_ORDER[: len(imports.CATALOG_TABLES)] == imports.CATALOG_TABLES
+
+
 def test_import_requires_authentication(harness: Harness) -> None:
     response = _post(harness.client, None, _panel())
     assert response.status_code == 401

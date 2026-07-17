@@ -317,11 +317,17 @@ CREATE TABLE biomarkers (
     loinc_code     TEXT UNIQUE,
     canonical_unit TEXT,
     category_id    INTEGER NOT NULL DEFAULT 0 REFERENCES categories(id),
-    description    TEXT,
-    molar_mass     REAL CHECK (molar_mass IS NULL OR molar_mass > 0)
+    description    TEXT
 ) STRICT;
 
 CREATE INDEX ix_biomarkers_category ON biomarkers (category_id);
+```
+
+Migration 0005 (Phase 3 WI-3) later adds one column to this table — an `ALTER TABLE`, not a second rebuild:
+
+```sql
+ALTER TABLE biomarkers
+    ADD COLUMN molar_mass REAL CHECK (molar_mass IS NULL OR molar_mass > 0);
 ```
 
 - **`category_id` is `NOT NULL DEFAULT 0`** — a reserved-sentinel FK, not a nullable "uncategorized" column. This is deliberate ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §2): a nullable FK makes a naive `JOIN categories` silently drop uncategorized biomarkers (a wrong-answer-not-an-error bug), while `NOT NULL` + sentinel makes the naive join and "count by category" aggregations correct by construction. An import row that omits a category falls to the default explicitly; the server never guesses.

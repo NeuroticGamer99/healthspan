@@ -18,6 +18,7 @@ Fixtures use generic public biomarker/framework names and synthetic numeric
 values — no personal health data (CLAUDE.md).
 """
 
+import math
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -506,14 +507,29 @@ def test_verdict_is_always_in_flags_across_every_short_circuit(
     assert (result.reason is not None) == (result.flag in ("error", "not_comparable"))
 
 
+# The naive oracle below has to know exactly one thing about the
+# implementation: a bound is *coincident* within a relative 1e-9 rather than
+# exact (ADR-0058 §3). Without it the two genuinely disagree — low=1.0 with
+# value=0.9999999995 is out-of-range to an exact `<=` and `in_range` to
+# compare(), both by design. That is a real case with a real answer, not a
+# rounding artifact, so the oracle adopts the rule rather than the property
+# skipping the inputs that expose it.
+def _coincident(a: float, b: float) -> bool:
+    return math.isclose(a, b, rel_tol=1e-9)
+
+
 @given(value=_finite, bounds=_bounds())
 def test_exact_value_in_range_iff_naive_comparison_agrees(
     value: float, bounds: tuple[float | None, float | None]
 ) -> None:
     """An exact value v flags in_range iff L <= v <= H (NULL as infinity) —
-    the interval machinery must agree with the naive comparison (brief §7)."""
+    the interval machinery must agree with the naive comparison (brief §7),
+    with bounds coincident within the ADR-0058 §3 tolerance rather than exact.
+    """
     low, high = bounds
-    naive_in_range = (low is None or low <= value) and (high is None or value <= high)
+    above_low = low is None or value >= low or _coincident(value, low)
+    below_high = high is None or value <= high or _coincident(value, high)
+    naive_in_range = above_low and below_high
     result = _cmp(value, None, low, high)
     assert (result.flag == "in_range") == naive_in_range
 
