@@ -23,10 +23,19 @@ this can:
   concatenates, so ``length`` and ``sort_by | last`` silently answer once per
   page rather than once.
 
-Commands (exit 0 on success, 1 on failure or timeout):
+* **Clean runs.** A fully clean CodeRabbit run posts *no review object at
+  all* — the only artifact is the walkthrough issue comment stating "No
+  actionable comments were generated". Watching the reviews endpoint alone
+  therefore polls a clean PR to its timeout (PR #29, 2026-07-17), and the
+  timeout message then sends a human to discover manually what the API had
+  already said.
+
+Commands (exit 0 = findings review ready, 1 = failure or timeout,
+2 = clean review — the bot reported no findings; nothing to triage):
 
 * ``request --bot copilot --pr N`` — request a review, then verify it took.
-* ``wait --bot B --pr N --since T`` — block until a findings review lands.
+* ``wait --bot B --pr N --since T`` — block until a findings review or a
+  clean-run summary lands.
 * ``fetch --bot B --pr N --since T`` — print that review and its own comments.
 
 ``--since`` takes an ISO-8601 timestamp; ``--since-commit SHA`` derives the
@@ -57,6 +66,10 @@ DEFAULT_TIMEOUT = 1800
 # Bounds one `gh`/`git` invocation. Without it a stalled call blocks forever and
 # `wait --timeout` never fires: the deadline is only checked between calls.
 COMMAND_TIMEOUT = 120
+# `wait`/`fetch` exit status for "the bot ran and found nothing". Distinct from
+# 0 so a caller never runs a findings triage against a review that does not
+# exist, and from 1 so a clean run is never reported as a failure.
+EXIT_CLEAN = 2
 
 
 @dataclass(frozen=True)
@@ -77,6 +90,11 @@ class BotSpec:
     requested_display: str | None
     # Captures the number of findings the review body claims.
     count: re.Pattern[str]
+    # Recognizes the bot's clean-run summary in an *issue comment* body, for a
+    # bot whose clean run posts no review object at all (CodeRabbit). None for
+    # a bot whose clean run is still a review (Copilot states "generated 0
+    # comments" in a review body, which select_review already finds).
+    clean_marker: re.Pattern[str] | None
 
 
 # There is deliberately no *comment* author here. Comments are fetched through
@@ -89,6 +107,17 @@ BOTS: dict[str, BotSpec] = {
         request_login=None,
         requested_display=None,
         count=re.compile(r"Actionable comments posted:\s*\**\s*(\d+)"),
+        # Both halves are required: the HTML marker proves the comment is the
+        # bot's own auto-generated summary (not the phrase quoted in prose —
+        # e.g. by a human, or by CodeRabbit itself echoing a reply), and the
+        # phrase is what distinguishes a clean run's summary from a findings
+        # run's. Transcribed from PR #29 (2026-07-17), the first fully clean
+        # run observed.
+        clean_marker=re.compile(
+            r"<!-- This is an auto-generated comment: summarize by coderabbit\.ai -->"
+            r".*No actionable comments were generated",
+            re.DOTALL,
+        ),
     ),
     "copilot": BotSpec(
         key="copilot",
@@ -96,6 +125,7 @@ BOTS: dict[str, BotSpec] = {
         request_login="copilot-pull-request-reviewer[bot]",
         requested_display="Copilot",
         count=re.compile(r"generated (\d+) comment"),
+        clean_marker=None,
     ),
 }
 
@@ -188,6 +218,54 @@ def select_review(
     if not candidates:
         return None
     return max(candidates, key=lambda r: parse_ts(str(r.get("submitted_at", ""))))
+
+
+def comment_ts(comment: Comment) -> datetime:
+    """When an issue comment last changed, as an instant.
+
+    ``updated_at`` rather than ``created_at``: CodeRabbit *edits* its one
+    walkthrough comment in place on every push, so on any PR past its first
+    review the creation time predates every floor and a fresh clean run would
+    be invisible. Falls back to ``created_at`` only if ``updated_at`` is
+    absent.
+    """
+    raw = comment.get("updated_at") or comment.get("created_at") or ""
+    return parse_ts(str(raw))
+
+
+def is_clean_comment(comment: Comment, spec: BotSpec) -> bool:
+    """Whether this issue comment is the bot's own clean-run summary.
+
+    Exists because a fully clean CodeRabbit run posts *no review object* — its
+    only artifact is the walkthrough comment saying no actionable comments were
+    generated (PR #29). Author is matched whole-login like everything else;
+    the body must carry the spec's ``clean_marker``, which requires both the
+    bot's auto-generated-summary HTML marker and the no-findings phrase.
+    """
+    if spec.clean_marker is None:
+        return False
+    if not same_login(_login_of(comment), spec.review_login):
+        return False
+    return bool(spec.clean_marker.search(str(comment.get("body") or "")))
+
+
+def select_clean_comment(
+    comments: list[Comment], spec: BotSpec, since: datetime
+) -> Comment | None:
+    """The newest clean-run summary this bot updated after ``since``.
+
+    Callers must check :func:`select_review` *first*: on a findings run the
+    walkthrough comment carries no clean marker, but an edit racing the review
+    submission is cheap insurance to keep — findings, when present, win.
+    """
+    candidates = [
+        comment
+        for comment in comments
+        if is_clean_comment(comment, spec) and comment_ts(comment) > since
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=comment_ts)
 
 
 def stated_count(body: str, spec: BotSpec) -> int | None:
@@ -337,6 +415,12 @@ def review_comments(repo: str, pr: int, review_id: int) -> list[Comment]:
     return [cast("Comment", c) for c in raw if isinstance(c, dict)]
 
 
+def issue_comments(repo: str, pr: int) -> list[Comment]:
+    """The PR's issue comments — where CodeRabbit's clean-run summary lives."""
+    raw = gh_all(f"repos/{repo}/issues/{pr}/comments")
+    return [cast("Comment", c) for c in raw if isinstance(c, dict)]
+
+
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
@@ -378,9 +462,20 @@ def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
     return 0
 
 
+def _clean_verdict(spec: BotSpec, comment: Comment) -> str:
+    return (
+        f"CLEAN: {spec.key} reported no findings (summary comment "
+        f"{comment.get('id')}, updated {comment.get('updated_at')}). "
+        "Nothing to fetch or triage."
+    )
+
+
 def cmd_wait(repo: str, pr: int, spec: BotSpec, since: datetime, timeout: int) -> int:
     deadline = time.monotonic() + timeout
     while True:
+        # Findings first, every iteration: a review after the floor always
+        # outranks a clean summary, so a walkthrough edit racing its own
+        # review's submission cannot misreport a findings run as clean.
         review = select_review(list_reviews(repo, pr), spec, since)
         if review is not None:
             print(
@@ -388,6 +483,11 @@ def cmd_wait(repo: str, pr: int, spec: BotSpec, since: datetime, timeout: int) -
                 f"({review.get('submitted_at')}) is ready"
             )
             return 0
+        if spec.clean_marker is not None:
+            comment = select_clean_comment(issue_comments(repo, pr), spec, since)
+            if comment is not None:
+                print(_clean_verdict(spec, comment))
+                return EXIT_CLEAN
         if time.monotonic() >= deadline:
             print(
                 f"TIMEOUT: no {spec.key} findings review after {timeout}s. "
@@ -401,6 +501,13 @@ def cmd_wait(repo: str, pr: int, spec: BotSpec, since: datetime, timeout: int) -
 def cmd_fetch(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
     review = select_review(list_reviews(repo, pr), spec, since)
     if review is None:
+        # Same precedence as cmd_wait: only after establishing that no
+        # findings review exists may a clean summary answer for the run.
+        if spec.clean_marker is not None:
+            comment = select_clean_comment(issue_comments(repo, pr), spec, since)
+            if comment is not None:
+                print(_clean_verdict(spec, comment))
+                return EXIT_CLEAN
         print(
             f"no {spec.key} findings review after {since.isoformat()} — "
             "that is not the same as a clean review",

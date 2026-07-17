@@ -60,7 +60,10 @@ uv run python scripts/bot_review.py wait --bot coderabbit --pr <N> --since-commi
 ```
 
 Use `run_in_background: true`; do not poll in the foreground. Exit 0 means a findings review is
-ready; exit 1 means it timed out (default 30 min, `--timeout`). **A timeout is not a clean review**
+ready; exit 1 means it timed out (default 30 min, `--timeout`); exit 2 means the run was **clean**
+— CodeRabbit posted its "No actionable comments were generated" summary and no review object
+exists (a clean run posts none, PR #29), so skip steps 5–6: there is nothing to fetch or triage.
+Report the clean verdict and go straight to `/copilot-review`. **A timeout is not a clean review**
 — report it and stop rather than concluding "no findings".
 
 `--since-commit HEAD` derives the floor from the commit you just pushed, in UTC. Prefer it to a
