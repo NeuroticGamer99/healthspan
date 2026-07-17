@@ -164,6 +164,16 @@ INSERT INTO range_frameworks (name, description, source_url) VALUES
 -- (TC < 200, LDL < 100). The adult values are seeded, which is correct for
 -- this platform's single adult owner but is an assumption the schema cannot
 -- express -- recorded in the same open question rather than left implicit.
+--
+-- Bound closure: the source cutoffs are EXCLUSIVE ("less than 200"), but
+-- range_high is INCLUSIVE (ADR-0058 s3), so 200 stored here classifies an
+-- exact 200 as in_range though the source calls it borderline-high. For a
+-- continuous measure the threshold itself is the least-wrong inclusive
+-- approximation of "< threshold" (wrong only AT the point; 199 would be wrong
+-- across all of (199,200)). NOT subtracting a display unit -- that buries an
+-- unstated precision assumption. Proper exclusive-bound support is deferred to
+-- the range-model PR (open-questions.md, "Exclusive vs inclusive range
+-- bounds"); until then these are documented inclusive approximations.
 INSERT INTO framework_ranges (framework_id, biomarker_id, range_low, range_high, unit) VALUES
     ((SELECT id FROM range_frameworks WHERE name = 'nih_medlineplus_lipid_targets'),
      (SELECT id FROM biomarkers WHERE canonical_name = 'Total Cholesterol'),
