@@ -69,6 +69,21 @@ _COMPARATORS = frozenset({"<", "<=", ">=", ">"})
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def _is_scalar(value: object) -> bool:
+    """Whether a payload value can be a dict/set key or a bound SQL parameter.
+
+    JSON decodes to scalars (str/int/float/bool/None), lists, and objects. Only
+    the scalars can be hashed into the dedup sets or bound as SQL parameters the
+    import path uses; a list or dict raises (a TypeError or a driver bind error)
+    at the point of use. Validation checks this so a malformed value is a
+    collected ``422`` rather than an uncaught ``500``. ``None`` counts — it is
+    both hashable and bindable (SQL NULL).
+    """
+    # bool before int is deliberate for clarity, though isinstance treats a
+    # bool as an int anyway; all four scalar types (and None) pass.
+    return value is None or isinstance(value, str | int | float | bool)
+
+
 @dataclass(frozen=True)
 class ImportableTable:
     """A table the import endpoint may write, and how it is matched (ADR-0052)."""
@@ -636,14 +651,18 @@ def _validate(
     for i, raw in enumerate(draws):
         row_errs = _row_errors(conn, draw_spec, raw)
         handle = raw.get("id")
-        if handle is not None:
+        # `_is_scalar` guards the hash, not `not row_errs`: a valid scalar
+        # handle must still be recorded even when the row has an *unrelated*
+        # error, or a result correctly referencing this draw would falsely
+        # report "matches no lab_draws". Only a non-scalar handle (already a
+        # collected type error) is skipped — it could not be hashed anyway.
+        if handle is not None and _is_scalar(handle):
             if handle in handle_seen:
                 row_errs.append(f"duplicate batch-local id {handle!r} in lab_draws")
             handle_seen.add(handle)
-        # `not row_errs` guards the same unhashable-key TypeError the catalog
-        # path guards (see _validate_identity_table): a draw_utc sent as a JSON
-        # list is already a collected error, and hashing it here would raise
-        # past that into a 500.
+        # `not row_errs` here (a non-scalar natural-key column is already a
+        # collected type error, so _row_errors returned before the key could be
+        # built): skip the hash/lookup for any already-invalid row.
         if not row_errs and all(raw.get(c) is not None for c in draw_spec.natural_key):
             key = tuple(raw.get(c) for c in draw_spec.natural_key)
             if key in draw_keys_seen:
@@ -671,12 +690,22 @@ def _validate(
                 f"missing {parent_col} (the batch-local id of a lab_draws row "
                 "in this import)"
             )
-        elif handle not in handle_seen:
+        elif _is_scalar(handle) and handle not in handle_seen:
+            # A non-scalar handle is skipped here (already a collected type
+            # error): its `in handle_seen` test would raise past the 422.
             row_errs.append(
                 f"{parent_col}={handle!r} matches no lab_draws row in this import"
             )
         biomarker = raw.get("biomarker_id")
-        if handle is not None and biomarker is not None:
+        # Both feed the (handle, biomarker) dedup tuple and the handle_existing
+        # lookup below — a non-scalar in either is unhashable, and is already a
+        # collected type error, so guard the whole block on both being scalar.
+        if (
+            handle is not None
+            and biomarker is not None
+            and _is_scalar(handle)
+            and _is_scalar(biomarker)
+        ):
             within = (handle, biomarker)
             if within in result_keys_seen:
                 row_errs.append(
@@ -894,12 +923,23 @@ def _row_errors(
     # the type here rather than guarding the hash fixes the whole class at the
     # boundary: it covers every table and every column, including the ones no
     # per-table domain rule happens to inspect.
+    nonscalar = False
     for key, value in raw.items():
-        if value is not None and not isinstance(value, str | int | float | bool):
+        if not _is_scalar(value):
             errs.append(
                 f"{key} must be a string, number, boolean, or null for "
                 f"{spec.name}, got {type(value).__name__}"
             )
+            nonscalar = True
+    if nonscalar:
+        # Stop here rather than collect further. Every remaining check in this
+        # function (the external-FK lookups, which bind the value as a SQL
+        # parameter) and in the caller's orchestration (the batch-local-handle
+        # dedup sets, which hash it) assumes a scalar; a JSON list or object
+        # would raise past this collected 422 into a 500 (a driver bind error
+        # or an unhashable-type TypeError). The row is unprocessable until its
+        # shape is fixed, so this is the one row-level check that short-circuits.
+        return errs
 
     for col in spec.natural_key:
         if spec.parent_fk is not None and col == spec.parent_fk[0]:

@@ -1650,6 +1650,84 @@ def test_unhashable_natural_key_on_a_non_nullable_key_table_is_also_structured(
         )
 
 
+# Explicitly typed so the intentionally-malformed values (lists and `{}` where a
+# scalar belongs) don't infer as `dict[Unknown, Unknown]` under pyright --strict.
+_NON_SCALAR_CASES: list[tuple[Mapping[str, Sequence[Row]], str]] = [
+    # The batch-local handle, hashed into handle_seen before the natural-key
+    # guard runs (not a natural-key column, so the earlier guards miss it).
+    ({"lab_draws": [{"id": [1], "lab_id": 1, "draw_utc": "2024-01-01"}]}, "id"),
+    # A non-natural-key scalar column, bound into the external-FK SQL lookup.
+    ({"lab_draws": [{"id": 1, "lab_id": {}, "draw_utc": "2024-01-01"}]}, "lab_id"),
+    # The lab_results (handle, biomarker_id) dedup tuple.
+    (
+        {"lab_results": [{"id": 1, "lab_draw_id": 1, "biomarker_id": [1]}]},
+        "biomarker_id",
+    ),
+    # A cross-table FK on framework_ranges, bound into _fk_exists.
+    ({"framework_ranges": [{"framework_id": [1], "biomarker_id": 1}]}, "framework_id"),
+    # A dict, not only a list — the other non-scalar JSON shape.
+    ({"framework_ranges": [{"framework_id": 1, "biomarker_id": {}}]}, "biomarker_id"),
+]
+
+
+@pytest.mark.parametrize(
+    ("payload", "bad_column"),
+    _NON_SCALAR_CASES,
+    ids=["draw_handle", "draw_fk", "result_tuple", "range_fk", "dict_value"],
+)
+def test_non_scalar_value_is_a_structured_422_never_a_500(
+    conn: sqlcipher3.Connection,
+    payload: Mapping[str, Sequence[Row]],
+    bad_column: str,
+) -> None:
+    """A JSON list or object where a scalar belongs must be a collected 422.
+
+    Every consumer of a payload value either hashes it (dedup sets, dict keys)
+    or binds it as a SQL parameter (FK lookups) — a list/dict raises a
+    TypeError or a driver bind error at the point of use, escaping past the
+    structured error as a 500 (api_import only catches ImportValidationError).
+    An ultra review found these still live after the earlier scalar-check fix,
+    which recorded the error but did not stop execution. Covers the handle, a
+    non-key FK, the lab_results dedup tuple, a cross-table FK, and a dict value
+    — the paths beyond the natural-key columns the first fix guarded.
+    """
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, payload, imports.UPSERT)
+    assert any(
+        e.message.startswith(f"{bad_column} must be a string, number, boolean, or null")
+        for e in excinfo.value.errors
+    )
+
+
+def test_non_scalar_column_does_not_cascade_a_spurious_handle_error(
+    conn: sqlcipher3.Connection,
+) -> None:
+    """A valid scalar handle is still recorded when the row has an *unrelated*
+    error, so a result referencing it does not falsely report 'matches no
+    lab_draws'.
+
+    This is why the guard checks the value's type (`_is_scalar`), not the
+    coarse `not row_errs`: the latter would skip recording the handle of any
+    errored draw, manufacturing a misleading second error on a failing batch.
+    """
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "lab_draws": [
+                    {"id": 5, "lab_id": 1, "draw_utc": "2024-01-01", "fasting": 2}
+                ],
+                "lab_results": [
+                    {"id": 1, "lab_draw_id": 5, "biomarker_id": 1, "value_num": 5.0}
+                ],
+            },
+            imports.UPSERT,
+        )
+    messages = [e.message for e in excinfo.value.errors]
+    assert any("fasting must be 0 or 1" in m for m in messages)
+    assert not any("matches no lab_draws" in m for m in messages)
+
+
 def test_framework_range_dateless_conflict_rejected_under_reject_policy(
     conn: sqlcipher3.Connection,
 ) -> None:
