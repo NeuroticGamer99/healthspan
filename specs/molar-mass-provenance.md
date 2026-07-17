@@ -1,6 +1,6 @@
 # Biomarker molar-mass provenance
 
-Where every value in `biomarkers.molar_mass` came from, why three of them are not the number you
+Where every value in `biomarkers.molar_mass` came from, why four of them are not the number you
 would guess, and — explicitly — **which ones have been verified and by whom**.
 
 Seeded by migration 0005 (Phase 3 WI-3); the column and its rationale are decided in
@@ -44,6 +44,12 @@ Nothing here is *suspected* wrong. This section exists so the distinction betwee
 Molar mass in grams per mole. "Factor" is the conventional clinical conversion the value must
 reproduce; it is the independent cross-check, not a derived quantity.
 
+The **PubChem CID** links go to the human-readable compound page (`/compound/<CID>`) — the right
+target for a person verifying a value, since it renders the molecular weight, structure, and
+synonyms in context. That is distinct from *where the number was quoted from*: the values were read
+from the REST `MolecularWeight/TXT` endpoint (see Sources), because the compound page renders via
+JavaScript and would give an agent unrendered HTML. Link for the reviewer, quote from the API.
+
 | Biomarker | canonical_unit | molar_mass | PubChem CID | Conventional factor | Tier |
 |---|---|---|---|---|---|
 | Total Cholesterol | mg/dL | 386.7 | [5997](https://pubchem.ncbi.nlm.nih.gov/compound/5997) | ×0.0259 → mmol/L | **A** |
@@ -81,7 +87,7 @@ The concept is urea-nitrogen, **not** dissolved nitrogen gas.
 
 Urea's own molar mass cancels out of the conversion entirely:
 
-```
+```text
 mmol/L urea = (mg N/dL × 10 dL/L) ÷ (28.014 mg N per mmol urea)
             = mg N/dL × 0.357          ← the conventional BUN factor
 ```
