@@ -317,7 +317,12 @@ def test_framework_dated_range_is_unique_per_date(
         "VALUES (?, ?, 65, 'mg/dL', '2025-01-01')",
         (fw_id, bm_id),
     )
-    assert conn.execute("SELECT count(*) FROM framework_ranges").fetchone() == (2,)
+    # Scoped to this test's own framework: migration 0005 seeds its own
+    # framework_ranges rows into the same table, and this assertion is about
+    # the two dated rows this test inserted, not the table's global count.
+    assert conn.execute(
+        "SELECT count(*) FROM framework_ranges WHERE framework_id = ?", (fw_id,)
+    ).fetchone() == (2,)
 
 
 def test_framework_rejects_inverted_range(conn: sqlcipher3.Connection) -> None:

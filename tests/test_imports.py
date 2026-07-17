@@ -46,7 +46,11 @@ def _build_db(directory: Path) -> sqlcipher3.Connection:
     migrate.migrate_database(path, _key())
     conn = db.connect(path, _key())
     conn.execute("BEGIN IMMEDIATE")
+    # Clear every table referencing `biomarkers` before the catalog itself:
+    # migration 0004 seeds biomarker_aliases, and 0005 (Phase 3 WI-3) seeds
+    # framework_ranges, both of which carry a biomarker_id FK.
     conn.execute("DELETE FROM biomarker_aliases")
+    conn.execute("DELETE FROM framework_ranges")
     conn.execute("DELETE FROM biomarkers")
     conn.execute("DELETE FROM labs")
     conn.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
@@ -104,6 +108,32 @@ def _result(handle: int, biomarker_id: int, **overrides: object) -> dict[str, ob
         "lab_draw_id": handle,
         "biomarker_id": biomarker_id,
         "value_num": 100.0,
+        "unit": "mg/dL",
+    }
+    row.update(overrides)
+    return row
+
+
+def _new_framework(conn: sqlcipher3.Connection, name: str = "test_framework") -> int:
+    """Import a fresh ``range_frameworks`` row and return its real id.
+
+    A prerequisite for every ``framework_ranges`` test below: ``framework_id``
+    is a plain external FK resolved against already-stored rows only, never a
+    same-batch handle (ADR-0057 SS9, extended by ADR-0058 SS6) — a framework
+    must land in its own prior import before any ``framework_ranges`` row can
+    reference it.
+    """
+    _run(conn, {"range_frameworks": [{"name": name}]}, imports.REJECT)
+    return int(_one(conn, "SELECT id FROM range_frameworks WHERE name = ?", name))
+
+
+def _range_row(
+    framework_id: int, biomarker_id: int, **overrides: object
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "framework_id": framework_id,
+        "biomarker_id": biomarker_id,
+        "range_high": 100.0,
         "unit": "mg/dL",
     }
     row.update(overrides)
@@ -1359,3 +1389,435 @@ def test_run_import_takes_the_write_lock_before_validating(tmp_path: Path) -> No
         conn_a.execute("ROLLBACK")
         db.close(conn_a)
         db.close(conn_b)
+
+
+# --------------------------------------------------------------------------
+# framework_ranges: the nullable-key lifecycle (ADR-0005, ADR-0058 SS6)
+#
+# `effective_date` is the registry's first `nullable_key` column: NULL means
+# "always current" (the common, dateless-default row), matched with `IS`
+# rather than `=` so a re-import reconciles against its own stored self
+# instead of colliding with the partial unique index (migration 0005 /
+# ADR-0005).
+# --------------------------------------------------------------------------
+
+
+def test_framework_range_dateless_row_inserts(conn: sqlcipher3.Connection) -> None:
+    fw_id = _new_framework(conn)
+    outcome = _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+    row = conn.execute(
+        "SELECT effective_date FROM framework_ranges "
+        "WHERE framework_id = ? AND biomarker_id = 1",
+        (fw_id,),
+    ).fetchone()
+    assert row is not None
+    assert row[0] is None
+
+
+def test_framework_range_reimport_identical_dateless_row_is_unchanged(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # The exact bug IS-matching fixes: under the old `=` match, a dateless
+    # row would never match its own stored self (`x = NULL` is NULL, never
+    # true), so a re-import would try to INSERT a second row and collide
+    # with the ADR-0005 partial unique index instead of reconciling.
+    fw_id = _new_framework(conn)
+    _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)
+    outcome = _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)
+    assert outcome.summaries["framework_ranges"].rows_unchanged == 1
+    assert outcome.summaries["framework_ranges"].rows_inserted == 0
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == 1
+    )
+
+
+def test_framework_range_omitted_and_explicit_null_effective_date_are_same_key(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)  # omitted
+    outcome = _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, effective_date=None)]},  # explicit
+        imports.UPSERT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_unchanged == 1
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == 1
+    )
+
+
+def test_framework_range_dateless_upsert_corrects_range_high_in_place(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, range_high=100.0)]},
+        imports.REJECT,
+    )
+    row_id = int(
+        _one(
+            conn,
+            "SELECT id FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+    )
+
+    outcome = _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, range_high=120.0)]},
+        imports.UPSERT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_corrected == 1
+
+    # In place: same row id, no supersession (catalog tables have no
+    # `superseded_by` column, ADR-0057), still exactly one row for the key.
+    assert (
+        _one(
+            conn,
+            "SELECT id FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == row_id
+    )
+    assert (
+        _one(conn, "SELECT range_high FROM framework_ranges WHERE id = ?", row_id)
+        == 120.0
+    )
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == 1
+    )
+    assert "correct" not in _audit_ops(conn)
+
+
+def test_framework_range_dated_row_is_distinct_from_dateless_default(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # ADR-0005's versioning model for free: a dated row is a distinct natural
+    # key from the dateless default, so both coexist rather than reconcile.
+    fw_id = _new_framework(conn)
+    _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)
+    outcome = _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, effective_date="2025-01-01")]},
+        imports.REJECT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == 2
+    )
+
+
+def test_framework_range_dateless_conflict_rejected_under_reject_policy(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, range_high=100.0)]},
+        imports.REJECT,
+    )
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"framework_ranges": [_range_row(fw_id, 1, range_high=120.0)]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges" and "already exists" in e.message
+        for e in excinfo.value.errors
+    )
+    assert (
+        _one(
+            conn,
+            "SELECT range_high FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == 100.0
+    )
+
+
+# --------------------------------------------------------------------------
+# framework_ranges: domain validation (_framework_range_errors, ADR-0005)
+# --------------------------------------------------------------------------
+
+
+def test_framework_range_missing_unit_is_rejected(conn: sqlcipher3.Connection) -> None:
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {"framework_ranges": [_range_row(fw_id, 1, unit=None)]},
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges" and "unit" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_effective_date",
+    [
+        "2025-01-01T00:00:00Z",  # a timestamp, not a date-only value
+        "2025-1-1",  # not zero-padded
+        "not-a-date",
+        20250101,  # not a string at all
+    ],
+)
+def test_framework_range_invalid_effective_date_formats_are_rejected(
+    conn: sqlcipher3.Connection, bad_effective_date: object
+) -> None:
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "framework_ranges": [
+                    _range_row(fw_id, 1, effective_date=bad_effective_date)
+                ]
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges"
+        and "effective_date must be an ISO-8601 date" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_framework_range_valid_effective_date_is_accepted(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    outcome = _run(
+        conn,
+        {"framework_ranges": [_range_row(fw_id, 1, effective_date="2025-01-01")]},
+        imports.REJECT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+
+
+def test_framework_range_missing_all_of_low_high_text_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "framework_ranges": [
+                    {"framework_id": fw_id, "biomarker_id": 1, "unit": "mg/dL"}
+                ]
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges"
+        and "at least one of range_low, range_high, or range_text" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_framework_range_low_greater_than_high_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "framework_ranges": [
+                    _range_row(fw_id, 1, range_low=150.0, range_high=100.0)
+                ]
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges" and "must be <= range_high" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_framework_range_text_only_is_valid(conn: sqlcipher3.Connection) -> None:
+    # Both bounds NULL, range_text set: a legitimate non-numeric target.
+    fw_id = _new_framework(conn)
+    outcome = _run(
+        conn,
+        {
+            "framework_ranges": [
+                {
+                    "framework_id": fw_id,
+                    "biomarker_id": 1,
+                    "unit": "mg/dL",
+                    "range_text": "see practitioner notes",
+                }
+            ]
+        },
+        imports.REJECT,
+    )
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+    assert (
+        _one(
+            conn,
+            "SELECT range_text FROM framework_ranges "
+            "WHERE framework_id = ? AND biomarker_id = 1",
+            fw_id,
+        )
+        == "see practitioner notes"
+    )
+
+
+# --------------------------------------------------------------------------
+# framework_ranges: FKs and the ADR-0057 SS9 same-batch constraint
+# --------------------------------------------------------------------------
+
+
+def test_framework_range_unknown_framework_id_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"framework_ranges": [_range_row(999999, 1)]}, imports.REJECT)
+    assert any(
+        e.table == "framework_ranges"
+        and "does not exist in range_frameworks" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_framework_range_unknown_biomarker_id_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    fw_id = _new_framework(conn)
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"framework_ranges": [_range_row(fw_id, 999999)]}, imports.REJECT)
+    assert any(
+        e.table == "framework_ranges" and "does not exist in biomarkers" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_framework_range_same_batch_framework_reference_is_rejected(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # ADR-0057 SS9 (extended by ADR-0058 SS6): both framework_ranges FKs
+    # resolve only against already-stored rows, never a row introduced
+    # earlier in the same batch. There is no batch-local handle for a catalog
+    # row (only lab_draws/lab_results get that), so a client attempting this
+    # in one call can only guess at the not-yet-assigned id — which fails,
+    # even when the guess is the exact id the row would receive.
+    next_id = int(_one(conn, "SELECT COALESCE(MAX(id), 0) + 1 FROM range_frameworks"))
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "range_frameworks": [{"name": "same_batch_framework"}],
+                "framework_ranges": [_range_row(next_id, 1)],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "framework_ranges"
+        and "does not exist in range_frameworks" in e.message
+        for e in excinfo.value.errors
+    )
+    # Rejected atomically: not even the new framework survives.
+    assert (
+        _one(
+            conn,
+            "SELECT count(*) FROM range_frameworks WHERE name = 'same_batch_framework'",
+        )
+        == 0
+    )
+
+    # The identical reference succeeds once the framework lands in its own
+    # PRIOR import — proving the failure above was the same-batch rule, not a
+    # generically broken FK.
+    _run(conn, {"range_frameworks": [{"name": "same_batch_framework"}]}, imports.REJECT)
+    fw_id = int(
+        _one(
+            conn, "SELECT id FROM range_frameworks WHERE name = 'same_batch_framework'"
+        )
+    )
+    assert fw_id == next_id
+    outcome = _run(conn, {"framework_ranges": [_range_row(fw_id, 1)]}, imports.REJECT)
+    assert outcome.summaries["framework_ranges"].rows_inserted == 1
+
+
+# --------------------------------------------------------------------------
+# nullable_key must not loosen any other table's required natural-key columns
+# --------------------------------------------------------------------------
+
+
+def test_nullable_key_does_not_loosen_categories_required_name(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"categories": [{"description": "no name"}]}, imports.REJECT)
+    assert any(
+        e.table == "categories" and "missing required column 'name'" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_nullable_key_does_not_loosen_labs_required_name(
+    conn: sqlcipher3.Connection,
+) -> None:
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(conn, {"labs": [{"description": "no name"}]}, imports.REJECT)
+    assert any(
+        e.table == "labs" and "missing required column 'name'" in e.message
+        for e in excinfo.value.errors
+    )
+
+
+def test_nullable_key_does_not_loosen_lab_results_required_biomarker_id(
+    conn: sqlcipher3.Connection,
+) -> None:
+    # lab_results has no nullable_key columns of its own; its natural key
+    # (lab_draw_id, biomarker_id) minus the parent-fk-skipped lab_draw_id must
+    # still require biomarker_id, exactly as before the framework_ranges
+    # nullable_key addition.
+    with pytest.raises(imports.ImportValidationError) as excinfo:
+        _run(
+            conn,
+            {
+                "lab_draws": [_draw()],
+                "lab_results": [{"lab_draw_id": 1, "value_num": 1.0}],
+            },
+            imports.REJECT,
+        )
+    assert any(
+        e.table == "lab_results"
+        and "missing required column 'biomarker_id'" in e.message
+        for e in excinfo.value.errors
+    )

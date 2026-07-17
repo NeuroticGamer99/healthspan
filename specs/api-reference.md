@@ -100,7 +100,7 @@ The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 (
 | Endpoint | List filters |
 |---|---|
 | `GET /v1/lab-draws`, `GET /v1/lab-draws/{id}` | `lab_id`, `draw_from`, `draw_to` |
-| `GET /v1/lab-results`, `GET /v1/lab-results/{id}` | `biomarker_id`, `lab_draw_id`, `lab_id`, `draw_from`, `draw_to` |
+| `GET /v1/lab-results`, `GET /v1/lab-results/{id}` | `biomarker_id`, `lab_draw_id`, `lab_id`, `draw_from`, `draw_to`, `framework` — see [Range comparison](#range-comparison) below (Phase 3 WI-3, [ADR-0058](adr/0058-range-comparison-implementation-decisions.md)); a **projection, not a filter** |
 | `GET /v1/labs`, `GET /v1/labs/{id}` | — |
 | `GET /v1/biomarkers`, `GET /v1/biomarkers/{id}` | `category` — a **case-insensitive category-NAME lookup** (Phase 3 WI-2, [ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1; breaking change from the Phase 2 free-text `category` filter). An unknown name answers an empty page, never an error. Biomarker rows carry both the resolved category **name** in `category` (back-compat with the Phase-2 field) and the raw FK in `category_id`. |
 
@@ -115,6 +115,45 @@ See [Reference data](#reference-data) below for `categories`, `range-frameworks`
 - the explicit value triple `value_num` / `comparator` / `value_text` ([ADR-0030](adr/0030-biomarker-identity.md)), the UCUM `unit` as stored ([ADR-0031](adr/0031-units-and-ucum.md)), and the lab's own `reference_low`/`reference_high`/`reference_text` (framework ranges are Phase 3 reference data)
 - `display` — a derived presentation string that preserves the comparator (`"<0.1"`, never a bare `0.1`); clients doing arithmetic use the triple
 - `draw_utc` and `lab_id` — read-only draw context embedded from the joined draw, so a biomarker-history page is plottable without per-row draw fetches
+- `range_comparison` — **only** when `?framework=` is supplied; see below
+
+#### Range comparison
+
+`GET /v1/lab-results?framework=<name>` (and the same parameter on the get-by-id route) adds a `range_comparison` object to each result row, comparing that result against the named framework's point-in-time target ([ADR-0005](adr/0005-reference-range-frameworks.md), [ADR-0058](adr/0058-range-comparison-implementation-decisions.md)). Landed in Phase 3 WI-3. **Absent the parameter, rows serialize exactly as above** — the enrichment is opt-in and the Phase 2 contract is unchanged.
+
+```json
+"range_comparison": {
+  "framework": "nih_medlineplus_lipid_targets",
+  "flag": "above",
+  "range_low": null,
+  "range_high": 100.0,
+  "unit": "mg/dL",
+  "effective_date": null,
+  "range_text": null,
+  "reason": null
+}
+```
+
+`range_low`/`range_high`/`unit` are the **normalized** values the comparison actually used — converted to the biomarker's `canonical_unit`, not the raw stored row — so a client sees what was really compared (the same honesty principle as `display`). They are `null` whenever no normalized comparison happened. `framework` echoes the **stored** name, not the caller's casing. `reason` is set only for `error` and `not_comparable`.
+
+`flag` is a closed set:
+
+| flag | meaning |
+|---|---|
+| `in_range` | the result is provably within the target |
+| `below` / `above` | provably outside the target, on that side |
+| `indeterminate` | a censored result (`<0.1`) whose interval straddles a target boundary — undecidable, and said so rather than guessed |
+| `not_comparable` | the target is `range_text`-only, or the result is qualitative (`value_num` is `null`) |
+| `no_range` | the framework has no range row for this biomarker at this result's draw date |
+| `error` | the units could not be reconciled; `reason` says why |
+
+Notes clients must know:
+
+- **`framework` is a projection, not a filter.** It changes what each row carries, never which rows are returned or their order, so it plays no part in the cursor: a cursor stays valid whether or not the parameter is present, and may be added or dropped mid-walk.
+- **An unknown framework name is a `422`** — deliberately unlike `?category=`'s unknown-name-answers-an-empty-page rule ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1). A typo'd category yields an obviously empty page; a typo'd framework would yield a *full page of plausible-looking rows* all flagged `no_range` — a wrong answer that looks right. Matching is case-insensitive. On the get-by-id route the framework resolves first, so a bad name is a `422` even when `{id}` does not exist (never masked into a `404`).
+- **`error` is loud, not fatal.** An unreconcilable unit names itself in its own row's `reason`; it never fails the page. It can never be mistaken for a flag, which is what [ADR-0005](adr/0005-reference-range-frameworks.md)'s "fail loudly, never silently flag" requires.
+- **Censored and qualitative results are respected, not coerced** ([ADR-0030](adr/0030-biomarker-identity.md)). A `<0.1` is compared as an interval: decidable against some targets (`below` a `≥0.5` target), undecidable against others (`indeterminate`). It is never treated as the number `0.1`.
+- **Bounds are inclusive, and coincide within a relative 1e-9.** A result sitting exactly on a bound is `in_range`, and stays `in_range` whichever unit it is reported in — normalization is float arithmetic, so exact equality would make the verdict depend on the reporting unit ([ADR-0058](adr/0058-range-comparison-implementation-decisions.md) §3). The tolerance is far below clinical significance and never affects the censored open/closed distinction above.
 
 **Get-by-id** answers `200` with the row, or `404` for an id that is absent *or superseded* — the current view has no such row. Reads are not audited (`audit_log` records mutations, `auth_audit` records authentication outcomes).
 
@@ -173,7 +212,17 @@ Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoint
 | `GET /v1/range-frameworks`, `GET /v1/range-frameworks/{id}` | — | `name` asc |
 | `GET /v1/framework-ranges`, `GET /v1/framework-ranges/{id}` | `framework_id`, `biomarker_id` | `id` asc (no name column) |
 
-`categories` rows mirror the migration 0004 `categories` table columns (`id`, `name`, `description`) — the reserved `not_assigned` row (`id` 0) is included like any other row. `range_frameworks`/`framework_ranges` seeding is deferred to WI-3 ([ADR-0055](adr/0055-biomarker-category-taxonomy.md) §6), so both endpoints answer empty pages (`{"items": [], "next_cursor": null}`) until then — not a `404`. `biomarker_aliases` has no read endpoint yet (deferred to WI-4); aliases are import-only for now.
+`categories` rows mirror the migration 0004 `categories` table columns (`id`, `name`, `description`) — the reserved `not_assigned` row (`id` 0) is included like any other row. `biomarker_aliases` has no read endpoint yet (deferred to WI-4); aliases are import-only for now.
+
+`range_frameworks`/`framework_ranges` **are seeded as of Phase 3 WI-3** (migration 0005, [ADR-0058](adr/0058-range-comparison-implementation-decisions.md) §5) — they answered empty pages under WI-2. Three frameworks ship, each carrying a `description` and a `source_url`: `nih_medlineplus_lipid_targets`, `ada_standards_of_care`, and `aha_cdc_hscrp_risk_strata`. Every seeded range is the dateless default (`effective_date` `null` = "always current", [ADR-0005](adr/0005-reference-range-frameworks.md)). Coverage is **deliberately partial** — only defensibly-sourced ranges are seeded, so a biomarker with no row flags `no_range` rather than carrying a guessed target.
+
+Both tables are ordinary owner-editable catalog data: `range_frameworks` and `framework_ranges` are importable through `POST /v1/import` ([ADR-0058](adr/0058-range-comparison-implementation-decisions.md) §6), so filling a `no_range` gap — or adding a whole framework — is a data addition, never a migration. Rules specific to `framework_ranges`:
+
+- Its natural key is `(framework_id, biomarker_id, effective_date)`. **Omitting `effective_date` (or sending `null`) is the dateless "always current" default** and is the same key either way — re-importing it reconciles the existing row rather than creating a second one. A row *with* a date is a distinct key, so dated and dateless rows coexist: that is [ADR-0005](adr/0005-reference-range-frameworks.md)'s versioning model.
+- `effective_date` must be a **date-only `YYYY-MM-DD`**. A timestamp is a `422`: point-in-time resolution compares it lexically against a result's draw date, so `2024-06-01T00:00:00Z` would silently lose its own effective day.
+- `unit` is **required** (UCUM string). A numeric range with no unit is the safety bug ADR-0005 exists to close. Its UCUM validity is not currently checked at import — an unparseable unit surfaces later as a per-row `error` flag rather than a wrong number.
+- At least one of `range_low` / `range_high` / `range_text` must be present, and `range_low <= range_high`.
+- `framework_id` and `biomarker_id` name **already-stored** rows, never same-batch handles ([ADR-0057](adr/0057-reference-data-and-catalog-import-implementation-decisions.md) §9): import a framework, then its ranges.
 
 ---
 

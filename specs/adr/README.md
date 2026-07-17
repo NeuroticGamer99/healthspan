@@ -110,3 +110,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0055](0055-biomarker-category-taxonomy.md) | Biomarker Category Taxonomy — First-Class Categories with a Reserved Default (Phase 3 D1) | Proposed |
 | [ADR-0056](0056-units-module-api-and-molar-context.md) | Units-Module API and Molar Context (Phase 3 WI-1) | Proposed |
 | [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) | Reference-Data Catalog, Alias Resolver, and Catalog-Import Implementation Decisions (Phase 3 WI-2) | Proposed |
+| [ADR-0058](0058-range-comparison-implementation-decisions.md) | Range Comparison, Flag Vocabulary, and Molar-Mass Persistence (Phase 3 WI-3) | Proposed |

@@ -1,5 +1,11 @@
 """The read/query endpoints (ADR-0027, ADR-0053) — Phase 2 WI-4, extended
-with reference-data resources in Phase 3 WI-2 (ADR-0055/ADR-0057).
+with reference-data resources in Phase 3 WI-2 (ADR-0055/ADR-0057) and
+opt-in range-comparison enrichment in Phase 3 WI-3 (ADR-0058). ``?framework=``
+on the lab-results list/get routes adds a ``range_comparison`` object to each
+result row; absent the parameter, rows serialize exactly as before (the
+ADR-0053 contract is unchanged). An unknown framework name is a `422`,
+deliberately unlike `?category=`'s empty-page rule — see
+:class:`healthspan.reads.FrameworkNotFoundError`.
 
 Fourteen ``read``-scoped GET routes: list/get over the current-state views
 for the import-populated tables (``lab-draws``, ``lab-results``) and the
@@ -107,6 +113,7 @@ def list_lab_results(
     order: Order = "desc",
     limit: int | None = None,
     cursor: str | None = None,
+    framework: str | None = None,
 ) -> dict[str, object]:
     try:
         page = reads.list_lab_results(
@@ -119,15 +126,29 @@ def list_lab_results(
             order=order,
             limit=_effective_limit(request, limit),
             cursor=cursor,
+            framework=framework,
         )
     except reads.CursorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except reads.FrameworkNotFoundError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unknown framework: {exc}"
+        ) from exc
     return _page(page)
 
 
 @router.get(LAB_RESULTS_PATH + "/{row_id}", dependencies=[require("read")])
-def get_lab_result(request: Request, row_id: int) -> reads.Row:
-    row = reads.get_lab_result(_runtime(request).pool.connection(), row_id)
+def get_lab_result(
+    request: Request, row_id: int, framework: str | None = None
+) -> reads.Row:
+    try:
+        row = reads.get_lab_result(
+            _runtime(request).pool.connection(), row_id, framework=framework
+        )
+    except reads.FrameworkNotFoundError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unknown framework: {exc}"
+        ) from exc
     return _found(row, "lab result", row_id)
 
 

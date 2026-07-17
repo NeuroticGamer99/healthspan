@@ -38,11 +38,16 @@ def conn(tmp_path: Path) -> Iterator[sqlcipher3.Connection]:
 def test_fresh_database_reaches_latest_schema(
     conn: sqlcipher3.Connection,
 ) -> None:
-    assert db.schema_version(conn) == 4
+    latest = migrate.target_version()
+    # target_version() is `int | None` — None only when no migrations ship at
+    # all, which would itself be a broken build; narrow it so the arithmetic
+    # below is typed, and fail loudly rather than confusingly if it ever is.
+    assert latest is not None
+    assert db.schema_version(conn) == latest
     ledger = conn.execute(
         "SELECT version, filename FROM schema_version ORDER BY version"
     ).fetchall()
-    assert [row[0] for row in ledger] == [1, 2, 3, 4]
+    assert [row[0] for row in ledger] == list(range(1, latest + 1))
     assert ledger[1][1] == "0002_tokens_and_auth_audit.sql"
 
 

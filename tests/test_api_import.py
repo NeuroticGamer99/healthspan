@@ -15,8 +15,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from healthspan import db, migrate, tokens
-from healthspan.api_import import IMPORT_PATH
+from healthspan import db, imports, migrate, tokens
+from healthspan.api_import import IMPORT_PATH, ImportRequest
 from healthspan.config import Config
 from healthspan.kdf import DbKey
 from healthspan.locking import InstanceLock
@@ -51,8 +51,11 @@ def harness(make_config: Callable[[], Config]) -> Iterator[Harness]:
         # Migration 0004 (Phase 3 WI-2) now seeds its own catalog (labs,
         # biomarkers) on every fresh database; replace it with this fixed
         # test catalog rather than add to it, to avoid colliding on id 1
-        # and on the natural-key unique indexes.
+        # and on the natural-key unique indexes. Every table referencing
+        # `biomarkers` must be cleared first: 0004 seeds biomarker_aliases,
+        # and 0005 (Phase 3 WI-3) seeds framework_ranges.
         setup.execute("DELETE FROM biomarker_aliases")
+        setup.execute("DELETE FROM framework_ranges")
         setup.execute("DELETE FROM biomarkers")
         setup.execute("DELETE FROM labs")
         setup.execute("INSERT INTO labs (id, name) VALUES (1, 'Quest')")
@@ -100,6 +103,21 @@ def _post(
     return response
 
 
+def _scalar(harness: Harness, sql: str, params: tuple[object, ...]) -> Any:
+    """One scalar read straight from the harness's database.
+
+    The import endpoint returns summaries, not rows, so asserting what actually
+    landed (or did not) means looking at the database itself.
+    """
+    conn = db.connect(harness.db_path, _key())
+    try:
+        row = conn.execute(sql, params).fetchone()
+        assert row is not None
+        return row[0]
+    finally:
+        db.close(conn)
+
+
 def _panel(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {
         "source": "manual",
@@ -130,6 +148,22 @@ def _count(db_path: Path, sql: str) -> int:
 # --------------------------------------------------------------------------
 
 
+def test_import_request_covers_the_whole_registry() -> None:
+    """Every engine-registered table has an ImportRequest field, and vice versa.
+
+    `ImportRequest` is an allowlist (`extra='forbid'`), so a table registered in
+    `imports.TABLES` but missing here is not importable over HTTP at all: the
+    endpoint rejects it as an unknown field while the engine would have accepted
+    it, and the two layers disagree with nothing to say so. That is exactly how
+    `range_frameworks`/`framework_ranges` were briefly half-wired — added to the
+    engine registry, invisible to the route. Pin the correspondence so the next
+    table addition cannot land half-done.
+    """
+    fields = set(ImportRequest.model_fields)
+    metadata = {"source", "adapter_id", "adapter_version", "note", "conflict_policy"}
+    assert fields - metadata == set(imports.TABLES)
+
+
 def test_import_requires_authentication(harness: Harness) -> None:
     response = _post(harness.client, None, _panel())
     assert response.status_code == 401
@@ -145,6 +179,111 @@ def test_import_requires_the_import_scope(harness: Harness) -> None:
 def test_import_succeeds_with_the_import_scope(harness: Harness) -> None:
     response = _post(harness.client, harness.import_token, _panel())
     assert response.status_code == 200
+
+
+# --------------------------------------------------------------------------
+# Range frameworks / framework ranges over HTTP (ADR-0058 §6) — the whole
+# point of making them importable is that the owner can fill a `no_range`
+# gap without a migration, so prove it through the real endpoint.
+# --------------------------------------------------------------------------
+
+
+def test_import_range_framework_then_its_ranges_over_http(harness: Harness) -> None:
+    framework = _post(
+        harness.client,
+        harness.import_token,
+        {
+            "source": "manual",
+            "conflict_policy": "upsert",
+            "range_frameworks": [
+                {
+                    "name": "generic_targets",
+                    "description": "A generic framework",
+                    "source_url": "https://example.org/targets",
+                }
+            ],
+        },
+    )
+    assert framework.status_code == 200
+    assert framework.json()["summary"]["range_frameworks"]["rows_inserted"] == 1
+
+    # A second batch: the framework must already be stored before its ranges
+    # can name it (ADR-0057 §9 same-batch constraint, inherited unchanged).
+    framework_id = _scalar(
+        harness, "SELECT id FROM range_frameworks WHERE name = ?", ("generic_targets",)
+    )
+    row = {
+        "framework_id": framework_id,
+        "biomarker_id": 1,
+        "range_high": 100.0,
+        "unit": "mg/dL",
+    }
+    first = _post(
+        harness.client,
+        harness.import_token,
+        {"source": "manual", "conflict_policy": "upsert", "framework_ranges": [row]},
+    )
+    assert first.status_code == 200
+    assert first.json()["summary"]["framework_ranges"]["rows_inserted"] == 1
+
+    # The dateless default reconciles on re-import rather than colliding with
+    # its own partial unique index (the nullable-key `IS` match, ADR-0058 §6).
+    again = _post(
+        harness.client,
+        harness.import_token,
+        {"source": "manual", "conflict_policy": "upsert", "framework_ranges": [row]},
+    )
+    assert again.status_code == 200
+    assert again.json()["summary"]["framework_ranges"]["rows_unchanged"] == 1
+    assert _scalar(harness, "SELECT count(*) FROM framework_ranges", ()) == 1
+
+
+def test_import_rejects_a_timestamped_effective_date_over_http(
+    harness: Harness,
+) -> None:
+    # Not a Pydantic `extra_forbidden`: the table is a registered field, so this
+    # must reach the engine and come back in the endpoint's own structured
+    # {table, row_index, message} error shape (ADR-0058 §6).
+    _post(
+        harness.client,
+        harness.import_token,
+        {
+            "source": "manual",
+            "conflict_policy": "upsert",
+            "range_frameworks": [{"name": "generic_targets"}],
+        },
+    )
+    framework_id = _scalar(
+        harness, "SELECT id FROM range_frameworks WHERE name = ?", ("generic_targets",)
+    )
+    response = _post(
+        harness.client,
+        harness.import_token,
+        {
+            "source": "manual",
+            "conflict_policy": "upsert",
+            "framework_ranges": [
+                {
+                    "framework_id": framework_id,
+                    "biomarker_id": 1,
+                    "range_high": 100.0,
+                    "unit": "mg/dL",
+                    "effective_date": "2025-01-01T00:00:00Z",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    # A flat list of {table, row_index, message} — the engine's own error shape,
+    # NOT pydantic's {type, loc, msg, input}. That distinction is the point: it
+    # proves the payload reached the engine rather than bouncing off
+    # ImportRequest's extra='forbid' allowlist as an unknown field.
+    assert isinstance(detail, list)
+    assert detail[0]["table"] == "framework_ranges"
+    assert detail[0]["row_index"] == 0
+    assert "effective_date" in detail[0]["message"]
+    assert _scalar(harness, "SELECT count(*) FROM framework_ranges", ()) == 0
 
 
 # --------------------------------------------------------------------------
