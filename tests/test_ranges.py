@@ -214,6 +214,23 @@ def test_step2_range_text_only_target_is_not_comparable() -> None:
     assert result.range_high is None
 
 
+def test_step2_reason_does_not_claim_range_text_when_there_is_none() -> None:
+    """A contentless range reports what it actually is, not the text-only shape.
+
+    The ADR-0005 CHECK forbids a stored row with no bounds *and* no range_text,
+    so this cannot arrive from the database — but compare() takes a
+    caller-built ResolvedRange (WI-4's CLI is the next such caller), and on
+    this path the reason string is the entire output. Claiming "range_text
+    only" while carrying range_text=None is a reason that contradicts its own
+    row, which is the opposite of ADR-0058 §2's naming promise.
+    """
+    result = _cmp(90.0, None, None, None, range_text=None)
+    assert result.flag == "not_comparable"
+    assert result.range_text is None
+    assert result.reason == "range has no numeric bounds and no range_text"
+    assert "range_text only" not in (result.reason or "")
+
+
 def test_step3_qualitative_result_against_numeric_range_is_not_comparable() -> None:
     result = _cmp(None, None, 0.0, 10.0, value_text="Not Detected")
     assert result.flag == "not_comparable"
