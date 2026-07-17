@@ -34,10 +34,12 @@ the rest of the pipeline only ever sees an id.
 """
 
 import contextlib
+import math
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 
 import sqlcipher3
 
@@ -638,7 +640,11 @@ def _validate(
             if handle in handle_seen:
                 row_errs.append(f"duplicate batch-local id {handle!r} in lab_draws")
             handle_seen.add(handle)
-        if all(raw.get(c) is not None for c in draw_spec.natural_key):
+        # `not row_errs` guards the same unhashable-key TypeError the catalog
+        # path guards (see _validate_identity_table): a draw_utc sent as a JSON
+        # list is already a collected error, and hashing it here would raise
+        # past that into a 500.
+        if not row_errs and all(raw.get(c) is not None for c in draw_spec.natural_key):
             key = tuple(raw.get(c) for c in draw_spec.natural_key)
             if key in draw_keys_seen:
                 row_errs.append(f"duplicate natural key {key} in lab_draws")
@@ -719,12 +725,20 @@ def _validate_identity_table(
     keys_seen: set[tuple[object, ...]] = set()
     for i, raw in enumerate(rows):
         row_errs = _row_errors(conn, spec, raw)
-        # The guard asks "is the key complete enough to match on", so a
-        # nullable key column is exempt: NULL there *is* the key value (the
+        # `not row_errs` first: a key component that already failed validation
+        # must not reach `keys_seen`. An unhashable value (a JSON list or object
+        # where a scalar belongs) raises TypeError from the set membership test
+        # and escapes as a 500, losing the structured 422 this row's error was
+        # already collected for. Pre-existing for every table — any column can
+        # be sent as a list — and reachable through `framework_ranges` because
+        # `effective_date` is exempt from the None check below.
+        #
+        # The rest of the guard asks "is the key complete enough to match on",
+        # so a nullable key column is exempt: NULL there *is* the key value (the
         # ADR-0005 dateless default), not a missing one. Its absence from the
         # payload and an explicit null are the same key, which is correct —
         # both mean "always current".
-        if all(
+        if not row_errs and all(
             raw.get(c) is not None
             for c in spec.natural_key
             if c not in spec.nullable_key
@@ -873,6 +887,20 @@ def _row_errors(
         if key not in allowed:
             errs.append(f"unknown column {key!r} for {spec.name}")
 
+    # Every supplied value must be a JSON scalar. Nothing else can be bound to
+    # a SQLite parameter, and a natural-key column additionally gets hashed
+    # into the duplicate-key set — where an unhashable list or dict raises
+    # TypeError and escapes as a 500 instead of this collected 422. Checking
+    # the type here rather than guarding the hash fixes the whole class at the
+    # boundary: it covers every table and every column, including the ones no
+    # per-table domain rule happens to inspect.
+    for key, value in raw.items():
+        if value is not None and not isinstance(value, str | int | float | bool):
+            errs.append(
+                f"{key} must be a string, number, boolean, or null for "
+                f"{spec.name}, got {type(value).__name__}"
+            )
+
     for col in spec.natural_key:
         if spec.parent_fk is not None and col == spec.parent_fk[0]:
             continue  # the handle's presence is checked in the child orchestration
@@ -919,11 +947,29 @@ def _framework_range_errors(raw: Row) -> list[str]:
             "framework_ranges needs at least one of range_low, range_high, "
             "or range_text (ADR-0005)"
         )
+    # Reject a non-finite or boolean bound before it can be stored. STRICT's
+    # REAL affinity accepts both (`True` silently becomes 1.0), and the
+    # `range_low <= range_high` CHECK cannot catch a NaN: `NaN <= x` is NULL,
+    # and a CHECK fails only on FALSE. A stored NaN bound then compares
+    # false against everything and flags `indeterminate` forever — a range
+    # that silently never decides, which is the quiet-wrong-answer family
+    # ADR-0005 exists to close. JSON has no NaN literal but Python's decoder
+    # accepts one, so this is reachable from a real client, not just in-process.
+    for name, bound in (("range_low", low), ("range_high", high)):
+        if bound is None:
+            continue
+        if isinstance(bound, bool) or not isinstance(bound, int | float):
+            errs.append(f"{name} must be a number, got {bound!r}")
+        elif not math.isfinite(bound):
+            errs.append(f"{name} must be a finite number, got {bound!r}")
+
     if (
         isinstance(low, int | float)
         and isinstance(high, int | float)
         and not isinstance(low, bool)
         and not isinstance(high, bool)
+        and math.isfinite(low)
+        and math.isfinite(high)
         and low > high
     ):
         errs.append(f"range_low ({low}) must be <= range_high ({high}) (ADR-0005)")
@@ -932,17 +978,31 @@ def _framework_range_errors(raw: Row) -> list[str]:
     # date portion of a result's `draw_utc` (ADR-0005's rule, ranges.py). That
     # is only sound for a date-only value: '2024-06-01T00:00:00Z' would sort
     # *after* '2024-06-01' and so silently lose its own effective day, resolving
-    # to the previous row or to none. Enforce the shape the rule assumes.
+    # to the previous row or to none. Enforce the shape the rule assumes — and
+    # the calendar behind it: '2025-02-30' matches the shape but is not a day
+    # that exists, so it would sort into the gap before '2025-03-01' and act as
+    # a date it does not name. `date.fromisoformat` is the calendar check;
+    # the regex still runs first because fromisoformat also accepts forms this
+    # rule must reject (it parses '20250101' and, on 3.11+, full timestamps).
     effective_date = raw.get("effective_date")
-    if effective_date is not None and (
-        not isinstance(effective_date, str)
-        or _ISO_DATE.fullmatch(effective_date) is None
-    ):
-        errs.append(
-            f"effective_date must be an ISO-8601 date (YYYY-MM-DD), got "
-            f"{effective_date!r}: point-in-time resolution compares it "
-            "lexically against a date-only draw date (ADR-0005)"
-        )
+    if effective_date is not None:
+        if (
+            not isinstance(effective_date, str)
+            or _ISO_DATE.fullmatch(effective_date) is None
+        ):
+            errs.append(
+                f"effective_date must be an ISO-8601 date (YYYY-MM-DD), got "
+                f"{effective_date!r}: point-in-time resolution compares it "
+                "lexically against a date-only draw date (ADR-0005)"
+            )
+        else:
+            try:
+                date.fromisoformat(effective_date)
+            except ValueError:
+                errs.append(
+                    f"effective_date {effective_date!r} is not a real calendar "
+                    "date (ADR-0005)"
+                )
     return errs
 
 
