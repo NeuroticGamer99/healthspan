@@ -15,13 +15,17 @@ from typing import Any
 import pytest
 from bot_review import (
     BOTS,
+    EXIT_CLEAN,
     BotReviewError,
     as_page,
+    comment_ts,
     count_note,
+    is_clean_comment,
     is_findings_review,
     parse_ts,
     run_cmd,
     same_login,
+    select_clean_comment,
     select_review,
     stated_count,
 )
@@ -136,6 +140,141 @@ def test_select_accepts_a_floor_expressed_in_local_time() -> None:
     chosen = select_review([stale, fresh], CODERABBIT, since)
     assert chosen is not None
     assert chosen["id"] == 2  # not the 18:09:41Z one the string compare preferred
+
+
+# --------------------------------------------------------------------------
+# Clean runs: CodeRabbit's no-findings run posts no review object at all
+# --------------------------------------------------------------------------
+
+# Transcribed (abridged) from PR #29, 2026-07-17: the first fully clean run
+# observed. Its only artifact was this issue comment — the reviews endpoint
+# stayed empty, so `wait` polled a finished clean review to its 30-min timeout.
+CLEAN_BODY = (
+    "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
+    "<!-- review_stack_entry_start -->\n\n"
+    "[![Review Change Stack](https://example.invalid/stack.svg)](https://example.invalid)\n\n"
+    "<!-- review_stack_entry_end -->\n"
+    "No actionable comments were generated in the recent review. 🎉\n\n"
+    "<details><summary>Recent review info</summary></details>\n"
+)
+
+# The same walkthrough comment as it reads on a findings run: the HTML marker
+# is present, the no-findings phrase is not.
+FINDINGS_WALKTHROUGH_BODY = (
+    "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
+    "<details><summary>📝 Walkthrough</summary>## Walkthrough\n...</details>\n"
+)
+
+
+def _comment(
+    comment_id: int,
+    login: str,
+    created_at: str,
+    updated_at: str,
+    body: str = CLEAN_BODY,
+) -> dict[str, Any]:
+    return {
+        "id": comment_id,
+        "user": {"login": login},
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "body": body,
+    }
+
+
+def test_the_clean_run_summary_is_recognized() -> None:
+    # PR #29 comment id 3110584518, transcribed above.
+    comment = _comment(
+        3110584518, "coderabbitai[bot]", "2026-07-17T19:35:53Z", "2026-07-17T19:35:53Z"
+    )
+    assert is_clean_comment(comment, CODERABBIT) is True
+
+
+def test_a_findings_run_walkthrough_is_not_a_clean_summary() -> None:
+    # Same author, same auto-generated marker — but no no-findings phrase.
+    comment = _comment(
+        1,
+        "coderabbitai[bot]",
+        "2026-07-17T19:35:53Z",
+        "2026-07-17T19:35:53Z",
+        body=FINDINGS_WALKTHROUGH_BODY,
+    )
+    assert is_clean_comment(comment, CODERABBIT) is False
+
+
+def test_the_phrase_quoted_in_prose_is_not_a_clean_summary() -> None:
+    # A human (or the bot, in a reply) quoting the phrase lacks the
+    # auto-generated-summary HTML marker, which the pattern requires *before*
+    # the phrase.
+    quoted = 'As CodeRabbit says, "No actionable comments were generated". Ship it.'
+    comment = _comment(
+        1, "coderabbitai[bot]", "2026-07-17T19:35:53Z", "2026-07-17T19:35:53Z", quoted
+    )
+    assert is_clean_comment(comment, CODERABBIT) is False
+
+
+def test_another_authors_clean_looking_comment_is_not_the_bots() -> None:
+    comment = _comment(
+        1, "not-coderabbitai[bot]", "2026-07-17T19:35:53Z", "2026-07-17T19:35:53Z"
+    )
+    assert is_clean_comment(comment, CODERABBIT) is False
+
+
+def test_copilot_has_no_clean_comment_mode() -> None:
+    # Copilot's clean run is still a review ("generated 0 comments"), which
+    # select_review finds; its spec deliberately opts out of comment scanning.
+    assert COPILOT.clean_marker is None
+    comment = _comment(
+        1,
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-17T19:35:53Z",
+        "2026-07-17T19:35:53Z",
+    )
+    assert is_clean_comment(comment, COPILOT) is False
+
+
+def test_comment_floor_uses_the_edit_time_not_the_creation_time() -> None:
+    # CodeRabbit edits its one walkthrough comment in place on every push, so
+    # on any PR past its first review created_at predates every floor. Keying
+    # on created_at would make a fresh clean run invisible — the same
+    # silent-failure family as the string-compared timestamps.
+    edited = _comment(
+        1, "coderabbitai[bot]", "2026-07-15T09:00:00Z", "2026-07-17T19:35:53Z"
+    )
+    assert comment_ts(edited) == parse_ts("2026-07-17T19:35:53Z")
+    since = parse_ts("2026-07-17T18:00:00Z")
+    chosen = select_clean_comment([edited], CODERABBIT, since)
+    assert chosen is not None
+    assert chosen["id"] == 1
+
+
+def test_a_stale_clean_summary_does_not_answer_for_a_new_push() -> None:
+    # The clean summary of an *earlier* run, untouched since: its updated_at
+    # sits at or before the floor, so it must not report the new push clean.
+    stale = _comment(
+        1, "coderabbitai[bot]", "2026-07-15T09:00:00Z", "2026-07-17T18:00:00Z"
+    )
+    since = parse_ts("2026-07-17T18:00:00Z")
+    assert select_clean_comment([stale], CODERABBIT, since) is None
+
+
+def test_select_clean_comment_takes_the_newest() -> None:
+    since = parse_ts("2026-07-17T00:00:00Z")
+    older = _comment(
+        1, "coderabbitai[bot]", "2026-07-17T09:00:00Z", "2026-07-17T09:00:00Z"
+    )
+    newer = _comment(
+        2, "coderabbitai[bot]", "2026-07-17T09:00:00Z", "2026-07-17T19:35:53Z"
+    )
+    chosen = select_clean_comment([older, newer], CODERABBIT, since)
+    assert chosen is not None
+    assert chosen["id"] == 2
+
+
+def test_clean_exit_code_is_distinct_from_ready_and_failure() -> None:
+    # 0 would send the caller to fetch-and-triage a review that does not
+    # exist; 1 would report a finished clean run as a failure.
+    assert EXIT_CLEAN not in (0, 1)
 
 
 # --------------------------------------------------------------------------
