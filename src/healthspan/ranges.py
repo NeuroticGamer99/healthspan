@@ -333,12 +333,22 @@ def compare(
     if range_row is None:
         return _incomplete(framework, "no_range", None, None)
 
-    # Step 2.
+    # Step 2. The reason describes what the row actually is, rather than
+    # assuming the range_text-only shape: this branch fires on "no numeric
+    # bounds", and a row with no range_text either is a different (and
+    # stranger) thing. The ADR-0005 CHECK forbids all three being NULL, so
+    # that row cannot come from the database — but compare() takes a
+    # caller-built ResolvedRange, and on this path the reason string *is* the
+    # whole output. A reason that misdescribes itself would undercut the one
+    # thing ADR-0058 §2 promises: that every ambiguous path is named honestly
+    # rather than collapsed.
     if range_row.range_low is None and range_row.range_high is None:
         return _incomplete(
             framework,
             "not_comparable",
-            "range has no numeric bounds (range_text only)",
+            "range has no numeric bounds (range_text only)"
+            if range_row.range_text is not None
+            else "range has no numeric bounds and no range_text",
             range_row,
         )
 
