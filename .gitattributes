@@ -1,0 +1,22 @@
+# Normalize line endings across platforms.
+#
+# The repository stores every text file with LF in the index. Forcing LF in
+# the working tree too (eol=lf) means the on-disk bytes match the index on
+# every git install — Windows (core.autocrlf=true), WSL/Ubuntu, Linux, macOS —
+# so the same working tree is never flagged as modified when two gits share it.
+* text=auto eol=lf
+
+# Binary types: never apply line-ending conversion (none tracked today; these
+# guard against a future commit silently corrupting a binary blob).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.gz   binary
+*.zip  binary
+*.whl  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
