@@ -4,6 +4,7 @@ import os
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -163,4 +164,48 @@ def test_windows_permission_error_carries_diagnostics(tmp_path: Path) -> None:
     assert "exited" in message
     # The label names the operation that failed, not just the first token.
     assert "/remove:g" in message
+    assert not message.rstrip().endswith(":")
+
+
+def _fake_icacls_run(
+    stdout: str, stderr: str
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["icacls"], returncode=52, stdout=stdout, stderr=stderr
+        )
+
+    return run
+
+
+def test_error_detail_retains_both_streams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Diagnostics keep whatever icacls printed, on either stream.
+
+    Mocked subprocess: the formatting logic is OS-independent, so this
+    runs on every platform, unlike the real-icacls tests above.
+    """
+    from healthspan.fsperm import _icacls  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(subprocess, "run", _fake_icacls_run("out-detail", "err-detail"))
+    with pytest.raises(PermissionSetError) as excinfo:
+        _icacls(tmp_path / "f", "/remove:g", "X")
+    message = str(excinfo.value)
+    assert "out-detail" in message
+    assert "err-detail" in message
+    assert "exited 52" in message
+
+
+def test_error_detail_names_silence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both streams empty must say so explicitly, never a bare colon."""
+    from healthspan.fsperm import _icacls  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(subprocess, "run", _fake_icacls_run("", ""))
+    with pytest.raises(PermissionSetError) as excinfo:
+        _icacls(tmp_path / "f", "/remove:g", "X")
+    message = str(excinfo.value)
+    assert "no diagnostic output" in message
     assert not message.rstrip().endswith(":")
