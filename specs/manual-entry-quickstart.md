@@ -26,9 +26,9 @@ uv sync
 ## Bootstrap: zero to first result
 
 ```shell
-uv run healthspan config path     # where config resolves from (a file is optional;
-uv run healthspan config show     #   defaults: loopback:8464, platform-dirs data path,
-                                  #   backups daily / retain 14)
+uv run healthspan config path     # where config resolves from; a config file is optional
+uv run healthspan config show     # effective defaults: loopback:8464, platform-dirs
+                                  #   data path, backups daily / retain 14
 uv run healthspan init            # credentials + encrypted database + sidecar
 uv run healthspan db migrate      # apply schema migrations; seeds the reference data
                                   #   (biomarker catalog, labs, categories, frameworks)
@@ -52,8 +52,9 @@ uv run healthspan service start
 ```
 
 The first start mints the default token set and prints it once to stderr; the CLI's
-`cli-admin` token is stored in the OS keyring (Windows Credential Manager) automatically —
-no manual token handling is needed for the commands below.
+`cli-admin` token is stored in the OS keyring automatically (Windows Credential Manager,
+macOS Keychain, or Secret Service on Linux) — no manual token handling is needed for the
+commands below.
 
 ```shell
 # Terminal B — entry and readback
