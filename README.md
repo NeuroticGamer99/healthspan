@@ -62,7 +62,7 @@ The platform is designed around these data types, with importers planned or in p
 
 | Data type | Sources | Status |
 |---|---|---|
-| Lab results | Manual CLI entry (shipped); Quest (via primary care and Function Health), patient portals | Manual entry shipped; importers planned |
+| Lab results | Manual CLI entry (implemented); Quest (via primary care and Function Health), patient portals | Manual entry implemented; importers planned |
 | Body composition | InBody 120, InBody 580 (via Enara Health) | Partially designed |
 | Continuous glucose | Levels (CSV export), Dexcom API | Partially designed |
 | Metabolic context | Levels (zone scores, glucose response) | Not yet designed |
