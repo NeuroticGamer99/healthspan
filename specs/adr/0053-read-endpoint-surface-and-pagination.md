@@ -1,7 +1,7 @@
 # ADR-0053: Read-Endpoint Surface, Keyset Pagination, and Value-Fidelity Serialization (Phase 2 WI-4)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

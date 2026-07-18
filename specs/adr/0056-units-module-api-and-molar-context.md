@@ -1,7 +1,7 @@
 # ADR-0056: Units-Module API and Molar Context (Phase 3 WI-1)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 [ADR-0031](0031-units-and-ucum.md) decided the units *representation* (UCUM strings, a canonical unit per biomarker, normalize-at-comparison) and resolved the conversion *engine* to `ucumvert` (+ `pint`) behind "a small internal units module." It deliberately did not fix that module's API surface: the function names, the error taxonomy, and — the load-bearing one — *how a molar conversion receives its mandatory biomarker context*, given that the biomarker catalog carries no molar-mass column ([ADR-0030](0030-biomarker-identity.md)'s `biomarkers` table).

@@ -1,7 +1,7 @@
 # ADR-0052: Bulk-Import Identity, Natural Keys, and Conflict Resolution (Phase 2 WI-3)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

@@ -1,7 +1,7 @@
 # ADR-0057: Reference-Data Catalog, Alias Resolver, and Catalog-Import Implementation Decisions (Phase 3 WI-2)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

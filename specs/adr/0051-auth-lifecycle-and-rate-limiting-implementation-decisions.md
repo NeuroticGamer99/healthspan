@@ -1,7 +1,7 @@
 # ADR-0051: Auth Lifecycle, Rate-Limiting, and Bootstrap Implementation Decisions (Phase 2 WI-2b)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

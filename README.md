@@ -52,7 +52,7 @@ CLI + plugins           ─┘
 - **Automation Host** — resident process where automation rules, notification channels, and the watch-folder importer run, reacting to events (see [ADR-0025](specs/adr/0025-plugin-host-process-matrix.md)). There is no separate import daemon — imports run as jobs submitted to the Core Service.
 - **Event bus** — SSE-based by default. ZeroMQ and MQTT designed as adapters for more complex deployments (see [ADR-0011](specs/adr/0011-event-bus.md)).
 
-Full architectural documentation is in [`specs/`](specs/), including 20+ Architecture Decision Records covering every major design choice.
+Full architectural documentation is in [`specs/`](specs/), including 50+ Architecture Decision Records covering every major design choice.
 
 ---
 
@@ -62,7 +62,7 @@ The platform is designed around these data types, with importers planned or in p
 
 | Data type | Sources | Status |
 |---|---|---|
-| Lab results | Quest (via primary care and Function Health), patient portals | Partially designed |
+| Lab results | Manual CLI entry (implemented); Quest (via primary care and Function Health), patient portals | Manual entry implemented; importers planned |
 | Body composition | InBody 120, InBody 580 (via Enara Health) | Partially designed |
 | Continuous glucose | Levels (CSV export), Dexcom API | Partially designed |
 | Metabolic context | Levels (zone scores, glucose response) | Not yet designed |
@@ -98,7 +98,7 @@ The plugin architecture is designed for the same kind of extensibility that made
 - **Encryption at rest** — SQLCipher AES-256. Two-factor key model: a randomly generated secret key (stored in the OS keychain) combined with a user master passphrase, derived via Argon2id. A printable Recovery Kit enables cross-device recovery. Passphrase-only mode available for headless or cross-device use cases.
 - **Local-first** — no cloud service required. All data stays on your machine by default.
 - **AI client agnostic** — works with any MCP-compatible AI client. Use a local LLM and your health data never leaves the machine.
-- **Authenticated API** — bearer token on every endpoint except the unauthenticated liveness probe ([ADR-0040](specs/adr/0040-health-endpoint-authentication.md)). Host header validation and CORS allowlist protect against DNS rebinding attacks even on localhost.
+- **Authenticated API** — bearer token on every endpoint except the unauthenticated liveness probe ([ADR-0040](specs/adr/0040-health-endpoint-authentication.md)). The service binds loopback-only by default; non-loopback (LAN) deployment is out of scope until its gated controls — Host header validation, CORS allowlist, HTTPS — land (see [`specs/security.md`](specs/security.md), Network Security).
 - **Plugins are trusted-user code** — they run with your privileges and are not sandboxed. Only install plugins you have read and trust.
 
 See [`specs/security.md`](specs/security.md) for the full security requirements and threat model.
@@ -107,11 +107,13 @@ See [`specs/security.md`](specs/security.md) for the full security requirements 
 
 ## Project status
 
-**Early development — design phase in-progress, implementation not yet started.**
+**Early development — Phases 0–3 of the [development plan](specs/development-plan.md) are complete; no installable release yet.**
 
-The full architecture is currently documented across the project's ADRs covering application architecture, plugin system, event bus, job abstraction, encryption, data model, and more. Work continues on the basic architecture specifications. No installable release exists yet.
+What runs today: an encrypted (SQLCipher) database with migrations, verified backups, and key rotation; the authenticated Core Service REST API with bulk import and read/query endpoints; UCUM unit normalization; reference-range frameworks with unit-normalized comparison; and an interactive CLI for manual lab entry. Real lab results are being entered, range-flagged, and queried. Next up is the AI surface — events, jobs, and the MCP server (Phase 4).
 
-If you want to follow along or contribute, the [`specs/`](specs/) directory is the place to start. [`specs/design-rationale.md`](specs/design-rationale.md) covers the core design philosophy. [`specs/open-questions.md`](specs/open-questions.md) lists known items that need to be decided.
+The architecture is documented across the project's ADRs covering application architecture, plugin system, event bus, job abstraction, encryption, data model, and more. No installable release exists yet — distribution is a later phase.
+
+If you want to follow along or contribute, the [`specs/`](specs/) directory is the place to start. [`specs/design-rationale.md`](specs/design-rationale.md) covers the core design philosophy. [`specs/development-plan.md`](specs/development-plan.md) tracks phase status. [`specs/open-questions.md`](specs/open-questions.md) lists known items that need to be decided.
 
 ---
 

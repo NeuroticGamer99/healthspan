@@ -1,7 +1,7 @@
 # ADR-0059: CLI Manual-Entry Tooling Implementation Decisions (Phase 3 WI-4)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

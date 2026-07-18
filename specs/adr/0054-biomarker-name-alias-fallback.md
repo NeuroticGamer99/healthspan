@@ -1,7 +1,7 @@
 # ADR-0054: Name-Based Biomarker Alias Fallback (Phase 3 D2)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

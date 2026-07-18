@@ -1,7 +1,7 @@
 # ADR-0055: Biomarker Category Taxonomy — First-Class Categories with a Reserved Default (Phase 3 D1)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 
