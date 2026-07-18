@@ -42,20 +42,23 @@ def test_windows_acl_grants_only_the_current_user(tmp_path: Path) -> None:
     subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     )
     set_owner_only(path)
     listing = subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path)],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     ).stdout
     user = subprocess.run(
         ["whoami"],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     ).stdout.strip()
     grant_lines = [
@@ -108,13 +111,15 @@ def test_windows_removes_unmappable_logon_session_ace(tmp_path: Path) -> None:
     subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path), "/grant", "*S-1-5-5-0-424242:(RX)"],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     )
     listing = subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path)],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     ).stdout
     assert "LogonSessionId_0_424242" in listing  # fabrication took hold
@@ -122,7 +127,8 @@ def test_windows_removes_unmappable_logon_session_ace(tmp_path: Path) -> None:
     listing = subprocess.run(  # noqa: S603 - fixed executable, no shell
         ["icacls", str(path)],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     ).stdout
     assert "LogonSessionId" not in listing
@@ -134,7 +140,8 @@ def test_windows_removes_unmappable_logon_session_ace(tmp_path: Path) -> None:
     user = subprocess.run(
         ["whoami"],  # noqa: S607
         capture_output=True,
-        text=True,
+        encoding="oem",
+        errors="replace",
         check=True,
     ).stdout.strip()
     # The sole surviving grant is the current user's full control.
