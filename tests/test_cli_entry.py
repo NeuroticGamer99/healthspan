@@ -9,6 +9,7 @@ containment).
 """
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,10 @@ def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CliEnv]
     config_path.write_text(
         'config_version = 1\n\n[database]\npath = "hs.db"\n', encoding="utf-8"
     )
+    # Owner-only, as `init` produces (ADR-0046/security.md). Otherwise on POSIX
+    # load_config warns "accessible beyond its owner", and that stderr line
+    # lands in the mixed CliRunner output and breaks json.loads on --json tests.
+    config_path.chmod(0o600)
     cfg = load_config(flag=config_path)
     db.provision(cfg.database.path, _key())
     migrate.migrate_database(cfg.database.path, _key())
@@ -88,12 +93,27 @@ def cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[CliEnv]
     )
     application = create_app(runtime)
     with TestClient(application):
+        # The app's lifespan installed a StreamHandler bound to whatever
+        # sys.stdout was at startup (logging_setup.configure_logging). The
+        # `enter` flow makes many in-process app requests, each of which would
+        # log through that handler *while* CliRunner has swapped sys.stdout —
+        # and under CI's --capture=tee-sys on POSIX that closes the stream
+        # (ValueError: I/O operation on closed file). Detach the handlers so
+        # in-process app logging never touches the volatile CliRunner streams;
+        # in production the CLI and Core Service are separate processes, so this
+        # collision is a test-harness artifact only. Restored on teardown.
+        root = logging.getLogger()
+        saved_handlers = root.handlers
+        root.handlers = []
+        try:
 
-        def portal_client(_cfg: object) -> _PortalClient:
-            return _PortalClient(application)
+            def portal_client(_cfg: object) -> _PortalClient:
+                return _PortalClient(application)
 
-        monkeypatch.setattr(cli_entry, "_build_client", portal_client)
-        yield CliEnv(config_path=config_path, app=application)
+            monkeypatch.setattr(cli_entry, "_build_client", portal_client)
+            yield CliEnv(config_path=config_path, app=application)
+        finally:
+            root.handlers = saved_handlers
 
 
 def _invoke(env: CliEnv, *args: str, stdin: str = "", expect: int = 0) -> str:
