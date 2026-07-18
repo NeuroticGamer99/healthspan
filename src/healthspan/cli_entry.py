@@ -547,16 +547,21 @@ def _validate_draw_utc(value: str) -> None:
 
 
 def _prompt_fasting() -> int | None:
-    answer = (
-        typer.prompt("Fasting? [y/n/blank=unknown]", default="", show_default=False)
-        .strip()
-        .casefold()
-    )
-    if answer in ("y", "yes"):
-        return 1
-    if answer in ("n", "no"):
-        return 0
-    return None  # blank or "unknown"
+    # Re-prompt on an unrecognized answer rather than silently recording
+    # "unknown": a typo ("yep", "1") must not quietly lose the entered metadata.
+    while True:
+        answer = (
+            typer.prompt("Fasting? [y/n/blank=unknown]", default="", show_default=False)
+            .strip()
+            .casefold()
+        )
+        if answer in ("y", "yes"):
+            return 1
+        if answer in ("n", "no"):
+            return 0
+        if answer in ("", "unknown"):
+            return None
+        typer.echo("  enter y, n, or leave blank for unknown.")
 
 
 def _prompt_results(

@@ -626,6 +626,20 @@ def test_enter_rejects_a_malformed_draw_date(cli_env: CliEnv) -> None:
     assert "must be YYYY-MM-DD" in output
 
 
+def test_fasting_reprompts_on_invalid_input(cli_env: CliEnv) -> None:
+    # An unrecognized fasting answer re-prompts rather than silently recording
+    # "unknown" (which would lose the entered metadata).
+    output = _invoke(
+        cli_env,
+        "enter",
+        stdin="Quest\n2026-05-01\nmaybe\ny\n\n\nTotal Cholesterol\n190\n\n\ny\n",
+    )
+    assert "enter y, n, or leave blank" in output
+    assert "Imported batch" in output
+    page = json.loads(_invoke(cli_env, "draws", "list", "--json"))
+    assert any(draw.get("fasting") == 1 for draw in page["items"])  # "y" took, not None
+
+
 def test_enter_warns_on_a_comma_decimal_value(cli_env: CliEnv) -> None:
     # "5,2" stays qualitative text (no locale guessing) but is NOT silent — the
     # owner is told they may have meant the number 5.2.

@@ -36,9 +36,18 @@ ClientFactory = Callable[[Config], httpx.Client]
 
 
 def default_client(cfg: Config) -> httpx.Client:
-    """The HTTP client for one command invocation (tests substitute this)."""
+    """The HTTP client for one command invocation (tests substitute this).
+
+    ``trust_env=False`` so an inherited ``HTTP_PROXY``/``HTTPS_PROXY`` cannot
+    route this loopback, bearer-token-bearing request through an external proxy
+    (httpx trusts those by default, and a stray ``NO_PROXY`` need not exempt
+    localhost). The Core Service is always local (ADR-0049 loopback-only), so
+    there is nothing a proxy should ever do here.
+    """
     return httpx.Client(
-        base_url=f"http://{cfg.service.host}:{cfg.service.port}", timeout=10.0
+        base_url=f"http://{cfg.service.host}:{cfg.service.port}",
+        timeout=10.0,
+        trust_env=False,
     )
 
 

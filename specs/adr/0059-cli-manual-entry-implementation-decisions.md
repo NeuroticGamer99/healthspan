@@ -170,8 +170,9 @@ because the approved §3 behavior is not deliverable without it.
 - Zero-config out of the box (default `cli-admin`) yet least-privilege-capable (`--token-name`).
 - The alias confirm-and-record loop turns each unrecognized name into durable future
   resolution, without ever guessing.
-- No new server endpoint, schema, or range semantics: the write path stays the single
-  validated `POST /v1/import`, and every data gap stays a loud flag.
+- No new **write** endpoint, schema, or range semantics: the write path stays the single
+  validated `POST /v1/import` (§6's `GET /v1/biomarker-aliases` is the one added read route), and
+  every data gap stays a loud flag.
 
 ### Negative Consequences / Tradeoffs
 
