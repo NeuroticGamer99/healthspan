@@ -101,14 +101,14 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0046](0046-filesystem-layout-and-config-discovery.md) | Filesystem Layout and Configuration Discovery | Accepted |
 | [ADR-0047](0047-crypto-surface-implementation-decisions.md) | Crypto-Surface Implementation Decisions (WI-2) | Accepted |
 | [ADR-0048](0048-migration-file-packaging.md) | Migration File Packaging and Discovery | Accepted |
-| [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) | Core-Service-Skeleton Implementation Decisions (Phase 2 WI-1) | Proposed |
-| [ADR-0050](0050-token-store-and-auth-implementation-decisions.md) | Token-Store and Auth-Enforcement Implementation Decisions (Phase 2 WI-2) | Proposed |
-| [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) | Auth Lifecycle, Rate-Limiting, and Bootstrap Implementation Decisions (Phase 2 WI-2b) | Proposed |
-| [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) | Bulk-Import Identity, Natural Keys, and Conflict Resolution (Phase 2 WI-3) | Proposed |
-| [ADR-0053](0053-read-endpoint-surface-and-pagination.md) | Read-Endpoint Surface, Keyset Pagination, and Value-Fidelity Serialization (Phase 2 WI-4) | Proposed |
-| [ADR-0054](0054-biomarker-name-alias-fallback.md) | Name-Based Biomarker Alias Fallback (Phase 3 D2) | Proposed |
-| [ADR-0055](0055-biomarker-category-taxonomy.md) | Biomarker Category Taxonomy — First-Class Categories with a Reserved Default (Phase 3 D1) | Proposed |
-| [ADR-0056](0056-units-module-api-and-molar-context.md) | Units-Module API and Molar Context (Phase 3 WI-1) | Proposed |
-| [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) | Reference-Data Catalog, Alias Resolver, and Catalog-Import Implementation Decisions (Phase 3 WI-2) | Proposed |
-| [ADR-0058](0058-range-comparison-implementation-decisions.md) | Range Comparison, Flag Vocabulary, and Molar-Mass Persistence (Phase 3 WI-3) | Proposed |
-| [ADR-0059](0059-cli-manual-entry-implementation-decisions.md) | CLI Manual-Entry Tooling Implementation Decisions (Phase 3 WI-4) | Proposed |
+| [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) | Core-Service-Skeleton Implementation Decisions (Phase 2 WI-1) | Accepted |
+| [ADR-0050](0050-token-store-and-auth-implementation-decisions.md) | Token-Store and Auth-Enforcement Implementation Decisions (Phase 2 WI-2) | Accepted |
+| [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) | Auth Lifecycle, Rate-Limiting, and Bootstrap Implementation Decisions (Phase 2 WI-2b) | Accepted |
+| [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) | Bulk-Import Identity, Natural Keys, and Conflict Resolution (Phase 2 WI-3) | Accepted |
+| [ADR-0053](0053-read-endpoint-surface-and-pagination.md) | Read-Endpoint Surface, Keyset Pagination, and Value-Fidelity Serialization (Phase 2 WI-4) | Accepted |
+| [ADR-0054](0054-biomarker-name-alias-fallback.md) | Name-Based Biomarker Alias Fallback (Phase 3 D2) | Accepted |
+| [ADR-0055](0055-biomarker-category-taxonomy.md) | Biomarker Category Taxonomy — First-Class Categories with a Reserved Default (Phase 3 D1) | Accepted |
+| [ADR-0056](0056-units-module-api-and-molar-context.md) | Units-Module API and Molar Context (Phase 3 WI-1) | Accepted |
+| [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) | Reference-Data Catalog, Alias Resolver, and Catalog-Import Implementation Decisions (Phase 3 WI-2) | Accepted |
+| [ADR-0058](0058-range-comparison-implementation-decisions.md) | Range Comparison, Flag Vocabulary, and Molar-Mass Persistence (Phase 3 WI-3) | Accepted |
+| [ADR-0059](0059-cli-manual-entry-implementation-decisions.md) | CLI Manual-Entry Tooling Implementation Decisions (Phase 3 WI-4) | Accepted |

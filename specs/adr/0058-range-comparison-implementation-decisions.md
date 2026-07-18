@@ -1,7 +1,7 @@
 # ADR-0058: Range Comparison, Flag Vocabulary, and Molar-Mass Persistence (Phase 3 WI-3)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

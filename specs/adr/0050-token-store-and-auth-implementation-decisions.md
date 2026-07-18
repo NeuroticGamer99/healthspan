@@ -1,7 +1,7 @@
 # ADR-0050: Token-Store and Auth-Enforcement Implementation Decisions (Phase 2 WI-2)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 

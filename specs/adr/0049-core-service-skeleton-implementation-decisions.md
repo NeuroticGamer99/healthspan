@@ -1,7 +1,7 @@
 # ADR-0049: Core-Service-Skeleton Implementation Decisions (Phase 2 WI-1)
 
 ## Status
-Proposed
+Accepted
 
 ## Context and Problem Statement
 Implementing the Phase-2 Core Service skeleton — the FastAPI process, its direct-start entry (`healthspan service start`), the unauthenticated liveness endpoint, single-instance locking, and structured logging — surfaces decisions the governing ADRs deliberately leave open, plus one new runtime dependency that needs a spec record:
