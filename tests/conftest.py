@@ -14,6 +14,7 @@ from hypothesis import settings
 from healthspan.config import (
     AuthConfig,
     BackupConfig,
+    CliConfig,
     Config,
     ConfigSource,
     DatabaseConfig,
@@ -85,6 +86,7 @@ def make_config(tmp_path: Path) -> Callable[[], Config]:
                 host="127.0.0.1", port=8464, passphrase_file=None, page_cap=100
             ),
             auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
+            cli=CliConfig(token_name="cli-admin"),
             path=tmp_path / "config.toml",
             source=ConfigSource.FLAG,
             loaded_from_file=True,

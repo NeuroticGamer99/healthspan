@@ -88,6 +88,20 @@ class AuthConfig:
 
 
 @dataclass(frozen=True)
+class CliConfig:
+    """Client-side CLI settings (ADR-0059).
+
+    ``token_name`` is the OS-keyring token the data-entry/readback CLI groups
+    authenticate as (entry ``token:<token_name>``); it defaults to the
+    always-minted ``cli-admin`` and is overridable per-invocation by
+    ``--token-name``. A narrower hand-minted token (``read``/``import``) can be
+    named here for least privilege.
+    """
+
+    token_name: str
+
+
+@dataclass(frozen=True)
 class Config:
     """Effective configuration: file values merged over defaults."""
 
@@ -97,6 +111,7 @@ class Config:
     logging: LoggingConfig
     service: ServiceConfig
     auth: AuthConfig
+    cli: CliConfig
     path: Path
     source: ConfigSource
     loaded_from_file: bool
@@ -177,6 +192,8 @@ def _defaults(path: Path, source: ConfigSource) -> Config:
         # Limiter defaults (ADR-0051): 5 free failures per bucket, then
         # exponential backoff capped at ADR-0026's decided 60 seconds.
         auth=AuthConfig(failure_threshold=5, max_backoff_seconds=60),
+        # CLI default credential (ADR-0059): the always-minted cli-admin token.
+        cli=CliConfig(token_name="cli-admin"),  # noqa: S106 - token name, not a secret
         path=path,
         source=source,
         loaded_from_file=False,
@@ -217,7 +234,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
 
     _reject_unknown_keys(
         data,
-        {"config_version", "database", "backup", "logging", "service", "auth"},
+        {"config_version", "database", "backup", "logging", "service", "auth", "cli"},
         path,
         where="top level",
     )
@@ -278,6 +295,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
 
     service = _parse_service(data, defaults.service, base, path)
     auth = _parse_auth(data, defaults.auth, path)
+    cli = _parse_cli(data, defaults.cli, path)
 
     return Config(
         config_version=version,
@@ -286,6 +304,7 @@ def _parse(data: dict[str, Any], path: Path, source: ConfigSource) -> Config:
         logging=logging_cfg,
         service=service,
         auth=auth,
+        cli=cli,
         path=path,
         source=source,
         loaded_from_file=True,
@@ -347,6 +366,19 @@ def _parse_auth(data: dict[str, Any], default: AuthConfig, path: Path) -> AuthCo
             "max_backoff_seconds", default.max_backoff_seconds
         ),
     )
+
+
+def _parse_cli(data: dict[str, Any], default: CliConfig, path: Path) -> CliConfig:
+    """Parse the optional ``[cli]`` table (ADR-0059)."""
+    table = _section(data, "cli", {"token_name"}, path)
+    if table is None:
+        return default
+    token_name = default.token_name
+    if "token_name" in table:
+        token_name = _expect_str(table["token_name"], path, "cli.token_name")
+        if not token_name:
+            raise ConfigError(f"{path}: cli.token_name must not be empty")
+    return CliConfig(token_name=token_name)
 
 
 def _reject_unknown_keys(

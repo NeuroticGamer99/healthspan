@@ -39,6 +39,7 @@ LAB_RESULTS_PATH = "/v1/lab-results"
 LABS_PATH = "/v1/labs"
 BIOMARKERS_PATH = "/v1/biomarkers"
 CATEGORIES_PATH = "/v1/categories"
+BIOMARKER_ALIASES_PATH = "/v1/biomarker-aliases"
 RANGE_FRAMEWORKS_PATH = "/v1/range-frameworks"
 FRAMEWORK_RANGES_PATH = "/v1/framework-ranges"
 
@@ -227,6 +228,33 @@ def list_categories(
 def get_category(request: Request, row_id: int) -> reads.Row:
     row = reads.get_category(_runtime(request).pool.connection(), row_id)
     return _found(row, "category", row_id)
+
+
+@router.get(BIOMARKER_ALIASES_PATH, dependencies=[require("read")])
+def list_biomarker_aliases(
+    request: Request,
+    biomarker_id: int | None = None,
+    order: Order = "asc",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    try:
+        page = reads.list_biomarker_aliases(
+            _runtime(request).pool.connection(),
+            biomarker_id=biomarker_id,
+            order=order,
+            limit=_effective_limit(request, limit),
+            cursor=cursor,
+        )
+    except reads.CursorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _page(page)
+
+
+@router.get(BIOMARKER_ALIASES_PATH + "/{row_id}", dependencies=[require("read")])
+def get_biomarker_alias(request: Request, row_id: int) -> reads.Row:
+    row = reads.get_biomarker_alias(_runtime(request).pool.connection(), row_id)
+    return _found(row, "biomarker alias", row_id)
 
 
 @router.get(RANGE_FRAMEWORKS_PATH, dependencies=[require("read")])
