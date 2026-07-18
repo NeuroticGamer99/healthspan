@@ -59,13 +59,33 @@ commands below.
 ```shell
 # Terminal B — entry and readback
 uv run healthspan enter           # draw-level template: lab + draw date once, then results
-uv run healthspan results list    # readback; also: draws / biomarkers / labs / frameworks
+uv run healthspan results list    # readback; also: draws / biomarkers / categories /
+                                  #   labs / frameworks
 ```
 
 `enter` resolves biomarker names against the canonical∪alias namespace and offers to
 record a confirmed alias for an unrecognized name. Range flags come from the lab's own
 reference range by default; `--framework <name>` opts into a seeded framework's ranges
 instead. `--help` on any command is the authoritative surface.
+
+**A biomarker missing from the catalog** (the pick flow finds no candidates at all):
+add it from a *third terminal* without leaving the running `enter` — skip the current
+result (blank at the pick prompt), run the add, then re-type the name at the next
+Biomarker prompt; the entry session re-checks the catalog on a miss and resolves it
+silently:
+
+```shell
+uv run healthspan categories list                 # category names for --category
+uv run healthspan biomarkers add "Apolipoprotein B" --unit mg/dL --category lipoproteins
+```
+
+If the session already ended, the after-the-fact pattern attaches the skipped result to
+the committed draw: `enter --on-conflict skip` with the same lab + draw date, entering
+only the missing result(s) — the existing draw is kept, new results attach.
+
+`labs add <name>` does the same for a missing lab (labs are resolved per-session at the
+lab prompt, so add the lab before starting `enter`). Both commands are add-only — an
+existing name with different details is rejected, never overwritten.
 
 ## After each session
 

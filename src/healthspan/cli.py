@@ -17,6 +17,7 @@ import typer
 from healthspan.cli_db import db_app
 from healthspan.cli_entry import (
     biomarkers_app,
+    categories_app,
     draws_app,
     enter,
     frameworks_app,
@@ -57,6 +58,7 @@ app.command("enter")(enter)
 app.add_typer(results_app, name="results")
 app.add_typer(draws_app, name="draws")
 app.add_typer(biomarkers_app, name="biomarkers")
+app.add_typer(categories_app, name="categories")
 app.add_typer(labs_app, name="labs")
 app.add_typer(frameworks_app, name="frameworks")
 

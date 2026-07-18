@@ -112,3 +112,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) | Reference-Data Catalog, Alias Resolver, and Catalog-Import Implementation Decisions (Phase 3 WI-2) | Accepted |
 | [ADR-0058](0058-range-comparison-implementation-decisions.md) | Range Comparison, Flag Vocabulary, and Molar-Mass Persistence (Phase 3 WI-3) | Accepted |
 | [ADR-0059](0059-cli-manual-entry-implementation-decisions.md) | CLI Manual-Entry Tooling Implementation Decisions (Phase 3 WI-4) | Accepted |
+| [ADR-0060](0060-cli-catalog-add-commands.md) | CLI Catalog-Add Commands (`biomarkers add`, `labs add`, `categories list`) | Proposed |

@@ -5,9 +5,11 @@ a **draw-level template** — enter the lab and draw date once, then each result
 against that draw — submits the batch through the single validated write path
 (``POST /v1/import``, ADR-0004/0052), and reads the entered results back
 range-flagged (``?framework=``, ADR-0058). The ``results``/``draws``/
-``biomarkers``/``labs``/``frameworks`` groups are thin read clients over the
-ADR-0053/0058 GET routes, so "range-flagged, queryable" is demonstrable from
-the CLI itself.
+``biomarkers``/``labs``/``frameworks``/``categories`` groups are thin read
+clients over the ADR-0053/0058 GET routes, so "range-flagged, queryable" is
+demonstrable from the CLI itself. ``biomarkers add`` and ``labs add``
+(ADR-0060) are equally thin clients over the catalog-import path — add-only,
+so a missing catalog entry never forces a detour through the raw endpoint.
 
 Each command opens **one** authenticated session (:class:`_Api`) — config read
 once, keyring read once, one keep-alive client — and threads it through every
@@ -47,8 +49,11 @@ results_app = typer.Typer(
     no_args_is_help=True,
 )
 draws_app = typer.Typer(help="Read lab draws.", no_args_is_help=True)
-biomarkers_app = typer.Typer(help="Browse the biomarker catalog.", no_args_is_help=True)
-labs_app = typer.Typer(help="Browse lab sources.", no_args_is_help=True)
+biomarkers_app = typer.Typer(
+    help="Browse the biomarker catalog, or add to it.", no_args_is_help=True
+)
+categories_app = typer.Typer(help="Browse biomarker categories.", no_args_is_help=True)
+labs_app = typer.Typer(help="Browse lab sources, or add one.", no_args_is_help=True)
 frameworks_app = typer.Typer(
     help="Browse reference-range frameworks.", no_args_is_help=True
 )
@@ -262,7 +267,30 @@ def _catalog_matches(rows: list[dict[str, Any]], query: str) -> list[dict[str, A
     ]
 
 
+def _refresh_resolution(
+    api: _Api,
+    index: dict[str, int],
+    rows: list[dict[str, Any]],
+    pending_aliases: list[dict[str, Any]],
+) -> None:
+    """Re-fetch the catalog + alias namespace in place (ADR-0060 §6).
+
+    A biomarker or alias added by *another* session mid-entry — the
+    two-terminal flow, ``biomarkers add`` beside a running ``enter`` —
+    becomes visible at the next unresolved name. This session's
+    queued-but-unwritten aliases are re-applied on top: they exist nowhere
+    server-side until the draw commits, so a plain rebuild would lose them.
+    """
+    rows[:] = _biomarker_catalog(api)
+    fresh = _resolution_index(api, rows)
+    index.clear()
+    index.update(fresh)
+    for alias in pending_aliases:
+        index[imports.normalize_name(str(alias["alias"]))] = int(alias["biomarker_id"])
+
+
 def _resolve_biomarker(
+    api: _Api,
     typed: str,
     index: dict[str, int],
     rows: list[dict[str, Any]],
@@ -271,12 +299,18 @@ def _resolve_biomarker(
     """A real biomarker id for ``typed``, or ``None`` if the owner skips.
 
     An exact (normalized) match over the canonical + alias namespace resolves
-    silently. Anything else drops into the interactive pick; if the owner then
+    silently. A miss refreshes the session snapshot (once per miss — the
+    catalog may have grown from another terminal mid-session, ADR-0060 §6)
+    and re-checks before dropping into the interactive pick; if the owner then
     confirms recording the typed string as an alias, it is queued in
     ``pending_aliases`` (written only if the draw commits) and added to
     ``index`` so it resolves silently for the rest of this session.
     """
     norm = imports.normalize_name(typed)
+    exact = index.get(norm)
+    if exact is not None:
+        return exact
+    _refresh_resolution(api, index, rows, pending_aliases)
     exact = index.get(norm)
     if exact is not None:
         return exact
@@ -376,7 +410,7 @@ def enter(
 
         catalog = _biomarker_catalog(api)
         index = _resolution_index(api, catalog)
-        result_rows, pending_aliases = _prompt_results(index, catalog)
+        result_rows, pending_aliases = _prompt_results(api, index, catalog)
         if not result_rows:
             typer.echo("No results entered; nothing to import.")
             raise typer.Exit()
@@ -472,8 +506,8 @@ def _resolve_lab(api: _Api, lab_id: int | None) -> int:
             f"{name!r} matches more than one lab by case ({known}); pass --lab-id."
         )
     raise fail(
-        f"no lab named {name!r}. Known labs: {known}. Add a new lab via "
-        "'POST /v1/import' (labs table), or pass --lab-id."
+        f"no lab named {name!r}. Known labs: {known}. Add it with "
+        "'healthspan labs add', or pass --lab-id."
     )
 
 
@@ -565,7 +599,7 @@ def _prompt_fasting() -> int | None:
 
 
 def _prompt_results(
-    index: dict[str, int], catalog: list[dict[str, Any]]
+    api: _Api, index: dict[str, int], catalog: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Prompt result rows against the shared draw; returns (rows, pending_aliases).
 
@@ -582,7 +616,7 @@ def _prompt_results(
         name = typer.prompt("  Biomarker", default="", show_default=False).strip()
         if not name:
             return rows, aliases
-        biomarker_id = _resolve_biomarker(name, index, catalog, aliases)
+        biomarker_id = _resolve_biomarker(api, name, index, catalog, aliases)
         if biomarker_id is None:
             typer.echo("  (result skipped)")
             continue
@@ -762,32 +796,38 @@ def _summary_line(body: dict[str, Any]) -> str:
 
 
 def _render_import_error(status: int, body: Any, on_conflict: str) -> None:
+    saw_conflict = _echo_error_rows(status, body)
+    if saw_conflict and on_conflict == imports.REJECT:
+        typer.echo(
+            "  These rows conflict with existing data. Re-run with "
+            "'--on-conflict upsert' to correct them, or '--on-conflict "
+            "skip' to keep the existing values.",
+            err=True,
+        )
+
+
+def _echo_error_rows(status: int, body: Any) -> bool:
+    """Render an import error's rows; returns whether any row was a conflict."""
     typer.echo(f"error: import rejected ({status})", err=True)
     detail = (
         cast(dict[str, Any], body).get("detail") if isinstance(body, dict) else None
     )
-    if isinstance(detail, list):
-        saw_conflict = False
-        for item in cast(list[Any], detail):
-            if isinstance(item, dict):
-                entry = cast(dict[str, Any], item)
-                message = str(entry.get("message", ""))
-                typer.echo(
-                    f"  - {entry.get('table')}[{entry.get('row_index')}]: {message}",
-                    err=True,
-                )
-                saw_conflict = saw_conflict or "conflict" in message
-            else:
-                typer.echo(f"  - {item}", err=True)
-        if saw_conflict and on_conflict == imports.REJECT:
+    if not isinstance(detail, list):
+        typer.echo(f"  {_error_detail(body)}", err=True)
+        return False
+    saw_conflict = False
+    for item in cast(list[Any], detail):
+        if isinstance(item, dict):
+            entry = cast(dict[str, Any], item)
+            message = str(entry.get("message", ""))
             typer.echo(
-                "  These rows conflict with existing data. Re-run with "
-                "'--on-conflict upsert' to correct them, or '--on-conflict "
-                "skip' to keep the existing values.",
+                f"  - {entry.get('table')}[{entry.get('row_index')}]: {message}",
                 err=True,
             )
-    else:
-        typer.echo(f"  {_error_detail(body)}", err=True)
+            saw_conflict = saw_conflict or "conflict" in message
+        else:
+            typer.echo(f"  - {item}", err=True)
+    return saw_conflict
 
 
 def _error_detail(body: Any) -> str:
@@ -795,6 +835,176 @@ def _error_detail(body: Any) -> str:
     if extracted is not None:
         return extracted
     return "(no response body)" if body is None else str(cast(object, body))
+
+
+# --------------------------------------------------------------------------
+# Catalog add commands (ADR-0060) — add-only, never edit
+# --------------------------------------------------------------------------
+
+
+def _catalog_add(api: _Api, table: str, row: dict[str, Any]) -> bool:
+    """Submit a one-row catalog add under ``reject``; exit cleanly on failure.
+
+    Returns whether a row was actually inserted — an *identical* row already
+    stored reconciles as ``rows_unchanged`` (a no-op ``200``, ADR-0057), and
+    the command must not claim it added anything. A row whose name exists
+    with *different* values is a ``reject`` conflict and lands in the error
+    path. Add-only is deliberate (ADR-0060): the import engine reconciles
+    the full column shape, so a partial upsert would overwrite unspecified
+    columns with defaults (e.g. reset an existing biomarker's category to
+    ``not_assigned``). Editing an existing entry therefore stays on the raw
+    endpoint until a merge-aware edit surface exists.
+    """
+    payload = {"source": "manual", "conflict_policy": imports.REJECT, table: [row]}
+    status, body = _submit_import(api, payload, dry_run=False)
+    if status == 200 and isinstance(body, dict):
+        summary = cast(dict[str, Any], body).get("summary")
+        summary_map = cast(dict[str, Any], summary) if isinstance(summary, dict) else {}
+        counts_obj = summary_map.get(table, {})
+        counts = (
+            cast(dict[str, Any], counts_obj) if isinstance(counts_obj, dict) else {}
+        )
+        return bool(counts.get("rows_inserted"))
+    saw_conflict = _echo_error_rows(status, body)
+    if saw_conflict:
+        typer.echo(
+            "  That name is already in the catalog with different details. "
+            "Editing an existing entry from the CLI is not supported yet; "
+            "see POST /v1/import with conflict_policy=upsert (full row "
+            "shape).",
+            err=True,
+        )
+    raise typer.Exit(code=1)
+
+
+def _resolve_category(api: _Api, category: str | None) -> int:
+    """A category id for ``category`` (case-insensitive name), default 0."""
+    if category is None:
+        return 0  # not_assigned — the reserved default (ADR-0055)
+    rows = _fetch_all(api, api_read.CATEGORIES_PATH, {})
+    for row in rows:
+        if str(row["name"]).casefold() == category.casefold():
+            return int(row["id"])
+    known = ", ".join(sorted(str(row["name"]) for row in rows))
+    raise fail(f"unknown category {category!r}. Known categories: {known}")
+
+
+@biomarkers_app.command("add")
+def biomarkers_add(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="Canonical biomarker name.")],
+    token_name: _TokenOpt = None,
+    unit: Annotated[
+        str | None,
+        typer.Option(
+            "--unit",
+            help="Canonical UCUM unit (the default unit 'enter' offers).",
+        ),
+    ] = None,
+    category: Annotated[
+        str | None,
+        typer.Option(
+            "--category",
+            help="Category name (default not_assigned; see 'categories list').",
+        ),
+    ] = None,
+    loinc: Annotated[str | None, typer.Option("--loinc", help="LOINC code.")] = None,
+    description: Annotated[
+        str | None, typer.Option("--description", help="Free-text description.")
+    ] = None,
+) -> None:
+    """Add a biomarker to the catalog (add-only; an existing name is rejected)."""
+    with _api(ctx, token_name) as api:
+        row: dict[str, Any] = {
+            "canonical_name": name,
+            "category_id": _resolve_category(api, category),
+        }
+        if unit is not None:
+            row["canonical_unit"] = unit
+        if loinc is not None:
+            row["loinc_code"] = loinc
+        if description is not None:
+            row["description"] = description
+        inserted = _catalog_add(api, "biomarkers", row)
+        needle = imports.normalize_name(name)
+        added = next(
+            (
+                entry
+                for entry in _biomarker_catalog(api)
+                if imports.normalize_name(str(entry["canonical_name"])) == needle
+            ),
+            None,
+        )
+        if added is None:  # absent on readback (removed out-of-band?)
+            typer.echo(f"Added biomarker '{name}'.")
+            return
+        if not inserted:
+            typer.echo(
+                f"'{added['canonical_name']}' is already in the catalog "
+                f"(id {added['id']}); nothing changed."
+            )
+            return
+        parts = [f"id {added['id']}", str(added.get("category", "?"))]
+        if added.get("canonical_unit"):
+            parts.append(str(added["canonical_unit"]))
+        typer.echo(f"Added biomarker '{added['canonical_name']}' ({', '.join(parts)}).")
+
+
+@labs_app.command("add")
+def labs_add(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="Lab source name.")],
+    token_name: _TokenOpt = None,
+    description: Annotated[
+        str | None, typer.Option("--description", help="Free-text description.")
+    ] = None,
+) -> None:
+    """Add a lab source (add-only; an existing name is rejected)."""
+    with _api(ctx, token_name) as api:
+        # labs.name is unique under *binary* collation and the import
+        # natural-key match is exact, but `enter` resolves lab names
+        # case-insensitively — so a case-variant would insert a second row
+        # that poisons every later lab prompt ("matches more than one lab
+        # by case"). Biomarkers get this guard server-side (ADR-0054
+        # normalization); labs get it here (ADR-0060 §2; the raw endpoint
+        # can still create variants — deferred, see open-questions.md).
+        clash = next(
+            (
+                lab
+                for lab in _fetch_all(api, api_read.LABS_PATH, {})
+                if str(lab["name"]).casefold() == name.casefold()
+                and str(lab["name"]) != name
+            ),
+            None,
+        )
+        if clash is not None:
+            raise fail(
+                f"a lab named {str(clash['name'])!r} already exists; lab names "
+                f"resolve case-insensitively at entry, so {name!r} would make "
+                "them ambiguous. Use the existing spelling or a different name."
+            )
+        row: dict[str, Any] = {"name": name}
+        if description is not None:
+            row["description"] = description
+        inserted = _catalog_add(api, "labs", row)
+        added = next(
+            (
+                lab
+                for lab in _fetch_all(api, api_read.LABS_PATH, {})
+                if str(lab["name"]) == name  # exact: report the row just added
+            ),
+            None,
+        )
+        if added is None:  # absent on readback (removed out-of-band?)
+            typer.echo(f"Added lab '{name}'.")
+            return
+        if not inserted:
+            typer.echo(
+                f"'{added['name']}' is already in the catalog "
+                f"(id {added['id']}); nothing changed."
+            )
+            return
+        typer.echo(f"Added lab '{added['name']}' (id {added['id']}).")
 
 
 # --------------------------------------------------------------------------
@@ -974,6 +1184,15 @@ def labs_list(
     """List lab sources."""
     with _api(ctx, token_name) as api:
         _list_named(api, api_read.LABS_PATH, json_out)
+
+
+@categories_app.command("list")
+def categories_list(
+    ctx: typer.Context, token_name: _TokenOpt = None, json_out: _JsonOpt = False
+) -> None:
+    """List biomarker categories."""
+    with _api(ctx, token_name) as api:
+        _list_named(api, api_read.CATEGORIES_PATH, json_out)
 
 
 @frameworks_app.command("list")
