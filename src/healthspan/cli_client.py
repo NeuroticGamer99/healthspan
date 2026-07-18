@@ -70,8 +70,9 @@ def token_plaintext(token_name: str) -> str:
             "default token (cli-admin/gui/mcp/...), run 'healthspan service "
             "start' once — the default set is minted at first start (ADR-0050). "
             "If it is a token you minted yourself, create it with 'healthspan "
-            f"token create {token_name} --scopes read,import' and store the "
-            f"printed value in the keyring entry '{keychain.token_entry(token_name)}'."
+            f"token create {token_name}' carrying the scopes that client needs "
+            "(read,import for the entry CLI), then store the printed value in "
+            f"the keyring entry '{keychain.token_entry(token_name)}'."
         )
     return token
 
