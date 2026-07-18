@@ -61,12 +61,12 @@ CLASSIFICATION_IDENTITY = "identity"
 # handle and the two server-owned provenance columns (ignored if supplied).
 _RESERVED_KEYS = frozenset({"id", "import_batch_id", "superseded_by"})
 
-_COMPARATORS = frozenset({"<", "<=", ">=", ">"})
+COMPARATORS = frozenset({"<", "<=", ">=", ">"})
 
 # A date-only ISO-8601 calendar date. `framework_ranges.effective_date` must
 # match this for ADR-0005's lexical point-in-time comparison to be sound
 # (see _framework_range_errors).
-_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _is_scalar(value: object) -> bool:
@@ -1028,7 +1028,7 @@ def _framework_range_errors(raw: Row) -> list[str]:
     if effective_date is not None:
         if (
             not isinstance(effective_date, str)
-            or _ISO_DATE.fullmatch(effective_date) is None
+            or ISO_DATE.fullmatch(effective_date) is None
         ):
             errs.append(
                 f"effective_date must be an ISO-8601 date (YYYY-MM-DD), got "
@@ -1057,7 +1057,7 @@ def _domain_errors(spec: ImportableTable, raw: Row) -> list[str]:
             errs.append("fasting must be 0 or 1")
     elif spec.name == "lab_results":
         comparator = raw.get("comparator")
-        if comparator is not None and comparator not in _COMPARATORS:
+        if comparator is not None and comparator not in COMPARATORS:
             errs.append("comparator must be one of <, <=, >=, > (ADR-0030)")
     elif spec.name == "framework_ranges":
         errs.extend(_framework_range_errors(raw))

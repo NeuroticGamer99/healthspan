@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from healthspan import db, migrate, tokens
 from healthspan.api_import import IMPORT_PATH
 from healthspan.api_read import (
+    BIOMARKER_ALIASES_PATH,
     BIOMARKERS_PATH,
     CATEGORIES_PATH,
     FRAMEWORK_RANGES_PATH,
@@ -419,6 +420,44 @@ def test_categories_pagination_walk_to_exhaustion(harness: Harness) -> None:
         params = {"cursor": page["next_cursor"]}
     assert seen == sorted(seen)
     assert len(seen) == 20  # reserved + 19 seeded categories
+
+
+def test_biomarker_aliases_read_endpoint(harness: Harness) -> None:
+    """The WI-4 alias read route (ADR-0059): import an alias, read it back."""
+    payload = {
+        "source": "manual",
+        "conflict_policy": "reject",
+        "biomarker_aliases": [
+            {"biomarker_id": _FIXTURE_BIOMARKER_1, "alias": "Allergen X"}
+        ],
+    }
+    created = harness.client.post(
+        IMPORT_PATH,
+        json=payload,
+        headers={"Authorization": f"Bearer {harness.import_token}"},
+    )
+    assert created.status_code == 200, created.text
+
+    page = _get(harness, BIOMARKER_ALIASES_PATH).json()
+    aliases = [row["alias_normalized"] for row in page["items"]]
+    assert "allergen x" in aliases  # server-normalized
+    row = next(r for r in page["items"] if r["alias_normalized"] == "allergen x")
+    assert row["biomarker_id"] == _FIXTURE_BIOMARKER_1
+    assert row["alias"] == "Allergen X"  # display spelling preserved
+
+    filtered = _get(
+        harness,
+        BIOMARKER_ALIASES_PATH,
+        params={"biomarker_id": str(_FIXTURE_BIOMARKER_1)},
+    ).json()
+    assert [r["alias_normalized"] for r in filtered["items"]] == ["allergen x"]
+
+    # read scope required
+    denied = harness.client.get(
+        BIOMARKER_ALIASES_PATH,
+        headers={"Authorization": f"Bearer {harness.import_token}"},
+    )
+    assert denied.status_code == 403
 
 
 def test_range_frameworks_and_framework_ranges_seeded(harness: Harness) -> None:

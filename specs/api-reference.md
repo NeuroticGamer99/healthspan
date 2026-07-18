@@ -106,7 +106,7 @@ The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 (
 | `GET /v1/labs`, `GET /v1/labs/{id}` | — |
 | `GET /v1/biomarkers`, `GET /v1/biomarkers/{id}` | `category` — a **case-insensitive category-NAME lookup** (Phase 3 WI-2, [ADR-0055](adr/0055-biomarker-category-taxonomy.md) §1; breaking change from the Phase 2 free-text `category` filter). An unknown name answers an empty page, never an error. Biomarker rows carry both the resolved category **name** in `category` (back-compat with the Phase-2 field) and the raw FK in `category_id`. |
 
-See [Reference data](#reference-data) below for `categories`, `range-frameworks`, and `framework-ranges` — the read counterparts to the six catalog import tables (`labs` and `biomarkers` are documented in this section; `biomarker_aliases` has no read endpoint yet).
+See [Reference data](#reference-data) below for `categories`, `biomarker-aliases`, `range-frameworks`, and `framework-ranges` — the read counterparts to the six catalog import tables (`labs` and `biomarkers` are documented in this section).
 
 **Pagination** — every list route takes `limit`, `cursor`, and `order`, and answers `{"items": [...], "next_cursor": <token|null>}`. The cursor is an opaque token; pass it back verbatim (with filters and `order` unchanged) to fetch the next page; `null` means exhaustion. Ordering is fixed per resource: `lab-draws`/`lab-results` by draw time, **newest-first** by default (`order=asc` for chronological walks); `labs`/`biomarkers` by name ascending. Page sizes are bounded by the server-enforced cap (`service.page_cap`, default 100 — the single enforcement point, MCP tool-convention rule 3 below): an omitted `limit` means a full capped page, an oversized `limit` **clamps** to the cap, `limit < 1`, a malformed cursor, or a cursor replayed under the other `order` is a `422`.
 
@@ -211,10 +211,11 @@ Lab sources, biomarker catalog, reference range frameworks. Read-mostly endpoint
 | Endpoint | List filters | Sort |
 |---|---|---|
 | `GET /v1/categories`, `GET /v1/categories/{id}` | — | `name` asc |
+| `GET /v1/biomarker-aliases`, `GET /v1/biomarker-aliases/{id}` | `biomarker_id` | `alias_normalized` asc |
 | `GET /v1/range-frameworks`, `GET /v1/range-frameworks/{id}` | — | `name` asc |
 | `GET /v1/framework-ranges`, `GET /v1/framework-ranges/{id}` | `framework_id`, `biomarker_id` | `id` asc (no name column) |
 
-`categories` rows mirror the migration 0004 `categories` table columns (`id`, `name`, `description`) — the reserved `not_assigned` row (`id` 0) is included like any other row. `biomarker_aliases` has no read endpoint yet (deferred to WI-4); aliases are import-only for now.
+`categories` rows mirror the migration 0004 `categories` table columns (`id`, `name`, `description`) — the reserved `not_assigned` row (`id` 0) is included like any other row. `biomarker-aliases` rows mirror the migration 0004 `biomarker_aliases` columns (`id`, `biomarker_id`, `alias`, `alias_normalized`, `source`, `created_utc`); it landed in Phase 3 WI-4 ([ADR-0059](adr/0059-cli-manual-entry-implementation-decisions.md)) so the manual-entry CLI can resolve a typed name against the canonical ∪ alias namespace client-side, mirroring the server resolver ([ADR-0054](adr/0054-biomarker-name-alias-fallback.md) §3).
 
 `range_frameworks`/`framework_ranges` **are seeded as of Phase 3 WI-3** (migration 0005, [ADR-0058](adr/0058-range-comparison-implementation-decisions.md) §5) — they answered empty pages under WI-2. Three frameworks ship, each carrying a `description` and a `source_url` (coverage is partial by design — HDL, for one, is deliberately unseeded: see [open-questions.md](open-questions.md) on cohort-dimensioned ranges): `nih_medlineplus_lipid_targets`, `ada_standards_of_care`, and `aha_cdc_hscrp_risk_strata`. Every seeded range is the dateless default (`effective_date` `null` = "always current", [ADR-0005](adr/0005-reference-range-frameworks.md)). Coverage is **deliberately partial** — only defensibly-sourced ranges are seeded, so a biomarker with no row flags `no_range` rather than carrying a guessed target.
 

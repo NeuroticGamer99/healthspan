@@ -14,14 +14,16 @@ from typing import Annotated, Any
 import httpx
 import typer
 
-from healthspan import keychain, tokens
+from healthspan import cli_client, tokens
 from healthspan.api_tokens import (
     RESET_LIMITS_PATH,
     ROTATE_MCP_SECRET_PATH,
     TOKENS_PATH,
 )
-from healthspan.cli_support import fail, load_config_or_exit
+from healthspan.cli_support import fail
 from healthspan.config import Config
+
+ADMIN_TOKEN_NAME = "cli-admin"  # noqa: S105 - token name, not a credential
 
 token_app = typer.Typer(
     help="Manage named scoped tokens (requires the Core Service running).",
@@ -44,71 +46,25 @@ _SHOWN_ONCE = (
 
 def _build_client(cfg: Config) -> httpx.Client:
     """The HTTP client for one command invocation (tests substitute this)."""
-    return httpx.Client(
-        base_url=f"http://{cfg.service.host}:{cfg.service.port}", timeout=10.0
-    )
-
-
-def _admin_token() -> str:
-    try:
-        token = keychain.load_token_plaintext("cli-admin")
-    except keychain.KeychainError as exc:
-        raise fail(str(exc)) from exc
-    if token is None:
-        raise fail(
-            "no cli-admin token in the OS keyring (entry 'token:cli-admin'). "
-            "If this machine never ran 'healthspan service start', start it "
-            "once - the default token set is minted at first start "
-            "(ADR-0050). If the set was already minted and the keyring "
-            "entry was lost, restore the entry, or rotate cli-admin from a "
-            "client still holding a valid admin credential."
-        )
-    return token
+    return cli_client.default_client(cfg)
 
 
 def _request(ctx: typer.Context, method: str, path: str, **kwargs: Any) -> Any:
-    """One authenticated call; API and transport errors become CLI failures."""
-    cfg = load_config_or_exit(ctx)
-    headers = {"Authorization": f"Bearer {_admin_token()}"}
-    try:
-        with _build_client(cfg) as client:
-            response = client.request(method, path, headers=headers, **kwargs)
-    except httpx.ConnectError as exc:
-        raise fail(
-            f"the Core Service is not reachable at "
-            f"http://{cfg.service.host}:{cfg.service.port} ({exc}). Start it "
-            "with 'healthspan service start' - token management goes through "
-            "its REST API (ADR-0026/0051)."
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise fail(f"request to the Core Service failed: {exc}") from exc
-    if response.status_code == 401:
-        raise fail(
-            "the Core Service rejected the cli-admin credential (401): the "
-            "'token:cli-admin' keyring entry is stale. If the token was "
-            "rotated, the rotation response carried the new value - store it "
-            "in the keyring entry and retry."
-        )
-    if response.status_code >= 400:
-        detail = _detail(response)
-        raise fail(f"the Core Service answered {response.status_code}: {detail}")
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise fail(
-            f"the Core Service answered {response.status_code} with a "
-            "non-JSON body; is something else listening on its port?"
-        ) from exc
+    """One authenticated ``cli-admin`` call over the shared REST client.
 
-
-def _detail(response: httpx.Response) -> str:
-    try:
-        body = response.json()
-    except ValueError:
-        return response.text
-    if isinstance(body, dict) and "detail" in body:
-        return str(body["detail"])  # pyright: ignore[reportUnknownArgumentType]
-    return response.text
+    Delegates to :func:`cli_client.request`, binding the ``cli-admin`` token
+    name and this module's ``_build_client`` seam (which the tests
+    monkeypatch), so the token/auth/mcp groups share the one client
+    implementation with :mod:`healthspan.cli_entry`.
+    """
+    return cli_client.request(
+        ctx,
+        method,
+        path,
+        token_name=ADMIN_TOKEN_NAME,
+        build_client=_build_client,
+        **kwargs,
+    )
 
 
 def _parse_csv(value: str) -> list[str]:

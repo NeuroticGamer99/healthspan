@@ -15,6 +15,14 @@ from typing import Annotated
 import typer
 
 from healthspan.cli_db import db_app
+from healthspan.cli_entry import (
+    biomarkers_app,
+    draws_app,
+    enter,
+    frameworks_app,
+    labs_app,
+    results_app,
+)
 from healthspan.cli_keys import init_command, keys_app
 from healthspan.cli_service import service_app
 from healthspan.cli_support import AppState, load_config_or_exit, state
@@ -45,6 +53,12 @@ app.add_typer(service_app, name="service")
 app.add_typer(token_app, name="token")
 app.add_typer(auth_app, name="auth")
 app.add_typer(mcp_app, name="mcp")
+app.command("enter")(enter)
+app.add_typer(results_app, name="results")
+app.add_typer(draws_app, name="draws")
+app.add_typer(biomarkers_app, name="biomarkers")
+app.add_typer(labs_app, name="labs")
+app.add_typer(frameworks_app, name="frameworks")
 
 
 def _version_callback(value: bool) -> None:
@@ -129,6 +143,9 @@ def _render_toml(cfg: Config) -> str:
             "[auth]",
             f"failure_threshold = {cfg.auth.failure_threshold}",
             f"max_backoff_seconds = {cfg.auth.max_backoff_seconds}",
+            "",
+            "[cli]",
+            f"token_name = {toml_quote(cfg.cli.token_name)}",
         ]
     )
 

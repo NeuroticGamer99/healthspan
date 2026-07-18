@@ -378,6 +378,36 @@ def test_categories_list_and_get(conn: sqlcipher3.Connection) -> None:
     assert reserved["name"] == "not_assigned"
 
 
+def test_biomarker_aliases_list_get_and_filter(conn: sqlcipher3.Connection) -> None:
+    """The WI-4 biomarker-aliases read endpoint (ADR-0059): list/get + filter."""
+    conn.execute("BEGIN IMMEDIATE")
+    for alias, normalized, biomarker_id in (
+        ("A1C", "a1c", _FIXTURE_BIOMARKER_1),
+        ("Chol", "chol", _FIXTURE_BIOMARKER_2),
+        ("HbA1c", "hba1c", _FIXTURE_BIOMARKER_1),
+    ):
+        conn.execute(
+            "INSERT INTO biomarker_aliases (biomarker_id, alias, alias_normalized, "
+            "created_utc) VALUES (?, ?, ?, '2026-01-01T00:00:00Z')",
+            (biomarker_id, alias, normalized),
+        )
+    conn.execute("COMMIT")
+
+    page = reads.list_biomarker_aliases(conn, limit=10)
+    # Ordered by alias_normalized asc.
+    assert [row["alias_normalized"] for row in page.items] == ["a1c", "chol", "hba1c"]
+    one = page.items[0]
+    fetched = reads.get_biomarker_alias(conn, int(one["id"]))
+    assert fetched is not None
+    assert fetched["alias"] == "A1C"
+
+    # Filtered by biomarker_id.
+    filtered = reads.list_biomarker_aliases(
+        conn, biomarker_id=_FIXTURE_BIOMARKER_1, limit=10
+    )
+    assert {row["alias_normalized"] for row in filtered.items} == {"a1c", "hba1c"}
+
+
 def test_categories_pagination_partition(conn: sqlcipher3.Connection) -> None:
     all_names = [row["name"] for row in reads.list_categories(conn, limit=100).items]
     names: list[str] = []

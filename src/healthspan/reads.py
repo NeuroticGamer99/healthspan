@@ -32,7 +32,6 @@ resolved and applied *after* the page query and plays no part in the cursor.
 """
 
 import base64
-import binascii
 import dataclasses
 import json
 from dataclasses import dataclass
@@ -118,6 +117,11 @@ _BIOMARKERS = _Resource(
 _CATEGORIES = _Resource(
     select="SELECT c.* FROM categories c", sort_expr="c.name", id_expr="c.id"
 )
+_BIOMARKER_ALIASES = _Resource(
+    select="SELECT a.* FROM biomarker_aliases a",
+    sort_expr="a.alias_normalized",
+    id_expr="a.id",
+)
 _RANGE_FRAMEWORKS = _Resource(
     select="SELECT f.* FROM range_frameworks f", sort_expr="f.name", id_expr="f.id"
 )
@@ -147,7 +151,11 @@ def decode_cursor(raw: str, order: str) -> tuple[str, int]:
     """
     try:
         payload: object = json.loads(base64.urlsafe_b64decode(raw.encode("ascii")))
-    except binascii.Error, UnicodeError, ValueError:
+    except ValueError:
+        # Covers every malformed-token case: binascii.Error (bad base64),
+        # UnicodeError (non-ASCII), and json.JSONDecodeError are all ValueError
+        # subclasses. One base type — never the PEP 758 bare-comma multi-except,
+        # which ruff format is unstable on under Python 3.14.
         raise CursorError("invalid cursor") from None
     if not isinstance(payload, dict):
         raise CursorError("invalid cursor")
@@ -250,11 +258,11 @@ def display_value(
     in the triple); the ADR-0030 CHECK guarantees at least one is set.
     """
     if value_num is not None:
-        return f"{comparator or ''}{_format_num(value_num)}"
+        return f"{comparator or ''}{format_num(value_num)}"
     return value_text if value_text is not None else ""
 
 
-def _format_num(value: float) -> str:
+def format_num(value: float) -> str:
     # SQLite REAL round-trips as float; render integral magnitudes without
     # the trailing ".0" a float str() would add ("5", not "5.0").
     if value.is_integer() and abs(value) < 1e15:
@@ -518,6 +526,27 @@ def list_categories(
 
 def get_category(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
     return _get(conn, _CATEGORIES, row_id)
+
+
+def list_biomarker_aliases(
+    conn: sqlcipher3.Connection,
+    *,
+    biomarker_id: int | None = None,
+    order: str = "asc",
+    limit: int,
+    cursor: str | None = None,
+) -> Page:
+    filters: list[tuple[str, object]] = []
+    if biomarker_id is not None:
+        filters.append(("a.biomarker_id = ?", biomarker_id))
+    rows, next_cursor = _list(
+        conn, _BIOMARKER_ALIASES, filters, order=order, limit=limit, cursor=cursor
+    )
+    return Page(rows, next_cursor)
+
+
+def get_biomarker_alias(conn: sqlcipher3.Connection, row_id: int) -> Row | None:
+    return _get(conn, _BIOMARKER_ALIASES, row_id)
 
 
 def list_range_frameworks(
