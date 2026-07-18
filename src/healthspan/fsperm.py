@@ -10,6 +10,7 @@ SYSTEM/Administrators explicitly on new files).
 
 import functools
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -34,16 +35,45 @@ def set_owner_only(path: Path) -> None:
     _set_owner_only_windows(path)
 
 
+# A logon-session ACE renders as ``NT AUTHORITY\LogonSessionId_<hi>_<lo>``
+# but that name cannot be mapped back to a SID (LookupAccountName fails),
+# so ``/remove:g <name>`` exits nonzero having processed nothing. The SID
+# itself is recoverable from the name — ``S-1-5-5-<hi>-<lo>`` — and icacls
+# accepts the ``*SID`` form. Files created inside an already-restricted
+# directory (no inheritable ACEs) get the creator token's default DACL,
+# which in a non-elevated session carries exactly this ACE — so `init`
+# hits it on the second file it protects.
+_LOGON_SESSION_RE = re.compile(r"(?:^|\\)LogonSessionId_(\d+)_(\d+)$", re.IGNORECASE)
+_SID_RE = re.compile(r"^S-1-\d+(?:-\d+)+$", re.IGNORECASE)
+
+
+def _removal_target(principal: str) -> str:
+    match = _LOGON_SESSION_RE.search(principal)
+    if match:
+        return f"*S-1-5-5-{match.group(1)}-{match.group(2)}"
+    if _SID_RE.match(principal):
+        # icacls prints a principal it cannot resolve to a name (e.g. a
+        # deleted account) as the bare SID string; passing that back as a
+        # *name* is wrong syntax, so use the *SID form. Note the syntax
+        # fix is not a guarantee: observed icacls behavior is to resolve
+        # even starred SIDs via LookupAccountSid and refuse ones that no
+        # longer resolve — in that residue set_owner_only still fails
+        # loudly, now with full diagnostics from _icacls.
+        return f"*{principal}"
+    return principal
+
+
 def _set_owner_only_windows(path: Path) -> None:
     user = _current_windows_user()
     # /inheritance:r drops inherited entries; /grant:r replaces the user's
     # explicit grant with full control.
     _icacls(path, "/inheritance:r", "/grant:r", f"{user}:(F)")
     # /inheritance:r leaves *explicit* entries other principals may already
-    # hold; remove every grant that is not the current user's.
+    # hold; remove every grant that is not the current user's. Unmappable
+    # logon-session pseudo-names are removed via their reconstructed SID.
     for principal in _explicit_principals(path):
         if principal.lower() != user.lower():
-            _icacls(path, "/remove:g", principal)
+            _icacls(path, "/remove:g", _removal_target(principal))
 
 
 def _icacls(path: Path, *args: str) -> str:
@@ -55,8 +85,19 @@ def _icacls(path: Path, *args: str) -> str:
         check=False,
     )
     if result.returncode != 0:
+        # icacls splits its diagnostics inconsistently across the two
+        # streams (name-mapping failures leave stderr empty), so report
+        # both plus the exit code — an empty detail is itself a bug.
+        detail = (
+            " | ".join(
+                part for part in (result.stdout.strip(), result.stderr.strip()) if part
+            )
+            or "no diagnostic output"
+        )
+        operation = " ".join(args) if args else "list"
         raise PermissionSetError(
-            f"could not set owner-only ACL on {path}: {result.stderr.strip()}"
+            f"could not set owner-only ACL on {path} "
+            f"(icacls {operation} exited {result.returncode}): {detail}"
         )
     return result.stdout
 
