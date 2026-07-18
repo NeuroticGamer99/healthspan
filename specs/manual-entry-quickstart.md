@@ -17,7 +17,7 @@ Owning ADRs for the pieces this touches: [ADR-0046](adr/0046-filesystem-layout-a
   [One database, many checkouts](#one-database-many-checkouts) below — the database is
   per-machine, not per-checkout.
 
-```
+```shell
 git clone <repo-url> healthspan-testing
 cd healthspan-testing
 uv sync
@@ -25,7 +25,7 @@ uv sync
 
 ## Bootstrap: zero to first result
 
-```
+```shell
 uv run healthspan config path     # where config resolves from (a file is optional;
 uv run healthspan config show     #   defaults: loopback:8464, platform-dirs data path,
                                   #   backups daily / retain 14)
@@ -34,16 +34,19 @@ uv run healthspan db migrate      # apply schema migrations; seeds the reference
                                   #   (biomarker catalog, labs, categories, frameworks)
 ```
 
-**Save the Recovery Kit.** `init` renders it to the terminal (add `--output <path>` for a
-file). It is your only offline copy of the key material — store it *outside* any repository
-checkout (password manager, or print it and delete the file, per
-[ADR-0033](adr/0033-plaintext-artifact-disposal.md)). Two-factor mode (secret key in the OS
-keychain + master passphrase) is the default; `--key-from-passphrase` is the single-factor
-portable alternative.
+**Save the Recovery Kit (default two-factor mode).** In the default mode (secret key in the
+OS keychain + master passphrase), `init` renders the Recovery Kit to the terminal (add
+`--output <path>` for a file). It is your only offline copy of the secret key — store it
+*outside* any repository checkout (password manager, or print it and delete the file, per
+[ADR-0033](adr/0033-plaintext-artifact-disposal.md)).
+
+**Passphrase-only mode has no kit.** `--key-from-passphrase` is the single-factor portable
+alternative: there is no secret key, so `init` renders no Recovery Kit — preserving the
+master passphrase *is* the recovery requirement in that mode.
 
 Then two terminals:
 
-```
+```shell
 # Terminal A — the Core Service (foreground; Ctrl+C stops it)
 uv run healthspan service start
 ```
@@ -52,7 +55,7 @@ The first start mints the default token set and prints it once to stderr; the CL
 `cli-admin` token is stored in the OS keyring (Windows Credential Manager) automatically —
 no manual token handling is needed for the commands below.
 
-```
+```shell
 # Terminal B — entry and readback
 uv run healthspan enter           # draw-level template: lab + draw date once, then results
 uv run healthspan results list    # readback; also: draws / biomarkers / labs / frameworks
@@ -82,6 +85,16 @@ one discipline:
 > migrations; migrating the real database from there strands it ahead of what `main` can
 > open. The service refuses on a schema mismatch either way — the guard catches the
 > mistake, but the backup is what undoes it.
+
+**Development-side isolation.** The pytest suite is sandboxed by design — an autouse
+in-memory keyring fixture and `tmp_path`-rooted configs (`tests/conftest.py`) mean test
+runs never touch the real config, database, or OS keychain; running the suite while the
+real service is up is safe. Interactive CLI runs outside the suite are **not** sandboxed:
+the keyring namespace is machine-global ([open-questions.md](open-questions.md), "Keyring
+credential entries are machine-global"), so even with a scratch `--config`, a two-factor
+`init` overwrites the real secret-key entry and a first `service start` against an empty
+database bootstrap-mints tokens over the real ones. Until per-database namespacing exists,
+do development testing through the suite, never through ad-hoc `init`/`service start` runs.
 
 ## While you use it: what to record
 
