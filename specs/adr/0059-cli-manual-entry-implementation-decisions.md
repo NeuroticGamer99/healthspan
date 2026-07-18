@@ -203,6 +203,7 @@ because the approved §3 behavior is not deliverable without it.
   each annotated that WI-4 shipped without folding it in and its trigger is now live.
 
 ## Links
+- Extended by: [ADR-0060](0060-cli-catalog-add-commands.md) — catalog-add commands (`biomarkers add`, `labs add`, `categories list`) grow the CLI surface beyond entry + readback
 - Implements: the Phase 3 WI-4 "CLI manual-entry tooling" item in [development-plan.md](../development-plan.md)
 - Builds on: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the import identity and conflict model the CLI submits against
 - Builds on: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the `biomarker_name` resolver and alias namespace the entry flow uses

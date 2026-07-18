@@ -724,3 +724,264 @@ def test_enter_unknown_lab_id_fails(cli_env: CliEnv) -> None:
 def test_enter_unknown_lab_name_fails(cli_env: CliEnv) -> None:
     output = _invoke(cli_env, "enter", stdin="No Such Lab\n", expect=1)
     assert "no lab named" in output
+
+
+# --------------------------------------------------------------------------
+# Catalog add commands (ADR-0060)
+# --------------------------------------------------------------------------
+
+
+def test_categories_list_shows_the_seed(cli_env: CliEnv) -> None:
+    output = _invoke(cli_env, "categories", "list")
+    assert "not_assigned" in output
+    assert "lipoproteins" in output
+
+
+def test_biomarkers_add_then_enter_resolves_it(cli_env: CliEnv) -> None:
+    added = _invoke(
+        cli_env,
+        "biomarkers",
+        "add",
+        "Apolipoprotein B-48",
+        "--unit",
+        "mg/dL",
+        "--category",
+        "lipoproteins",
+        "--loinc",
+        "1756-4",
+        "--description",
+        "chylomicron-associated ApoB isoform",
+    )
+    assert "Added biomarker 'Apolipoprotein B-48'" in added
+    assert "lipoproteins" in added
+    assert "mg/dL" in added
+    # Every optional flag round-trips into storage under its right column.
+    rows = json.loads(_invoke(cli_env, "biomarkers", "list", "--json"))["items"]
+    stored = next(r for r in rows if r["canonical_name"] == "Apolipoprotein B-48")
+    assert stored["loinc_code"] == "1756-4"
+    assert stored["description"] == "chylomicron-associated ApoB isoform"
+    assert stored["canonical_unit"] == "mg/dL"
+    assert stored["category"] == "lipoproteins"
+    # The new biomarker resolves silently in `enter` (no pick flow), and its
+    # canonical unit is offered as the default.
+    output = _invoke(
+        cli_env,
+        "enter",
+        stdin="Quest\n2026-06-01\n\n\n\nApolipoprotein B-48\n88\n\n\ny\n",
+    )
+    assert "matches no biomarker name" not in output
+    assert "Imported batch" in output
+
+
+def test_biomarkers_add_duplicate_semantics(cli_env: CliEnv) -> None:
+    _invoke(cli_env, "biomarkers", "add", "Apolipoprotein B-100")
+    # An *identical* re-add reconciles as unchanged (ADR-0057) — an honest
+    # no-op, never a false "Added".
+    identical = _invoke(cli_env, "biomarkers", "add", "Apolipoprotein B-100")
+    assert "already in the catalog" in identical
+    assert "Added" not in identical
+    # The same name with *different* details is a reject conflict.
+    differing = _invoke(
+        cli_env,
+        "biomarkers",
+        "add",
+        "Apolipoprotein B-100",
+        "--unit",
+        "g/L",
+        expect=1,
+    )
+    assert "different details" in differing
+    # A name-variant normalizing to an existing canonical name is rejected
+    # by the server's ambiguity validation (ADR-0054), not inserted.
+    variant = _invoke(cli_env, "biomarkers", "add", "  GLUCOSE ", expect=1)
+    assert "normalizes the same" in variant
+
+
+def test_biomarkers_add_unknown_category_fails(cli_env: CliEnv) -> None:
+    output = _invoke(
+        cli_env,
+        "biomarkers",
+        "add",
+        "Nonesterified Fatty Acids",
+        "--category",
+        "no_such_category",
+        expect=1,
+    )
+    assert "unknown category" in output
+    assert "lipoproteins" in output  # the known list is offered
+
+
+def test_biomarkers_add_defaults_to_not_assigned(cli_env: CliEnv) -> None:
+    output = _invoke(cli_env, "biomarkers", "add", "Nonesterified Fatty Acids")
+    assert "not_assigned" in output
+
+
+def test_labs_add_then_enter_finds_it(cli_env: CliEnv) -> None:
+    added = _invoke(
+        cli_env,
+        "labs",
+        "add",
+        "Cascadia Diagnostics",
+        "--description",
+        "regional reference lab",
+    )
+    assert "Added lab 'Cascadia Diagnostics'" in added
+    listing = _invoke(cli_env, "labs", "list")
+    assert "Cascadia Diagnostics" in listing
+    output = _invoke(
+        cli_env,
+        "enter",
+        stdin="Cascadia Diagnostics\n2026-06-02\n\n\n\nTotal Cholesterol\n182\n\n\ny\n",
+    )
+    assert "Imported batch" in output
+
+
+def test_labs_add_duplicate_semantics(cli_env: CliEnv) -> None:
+    # Identical re-add of a seeded lab: honest no-op with its id.
+    identical = _invoke(cli_env, "labs", "add", "Quest")
+    assert "already in the catalog" in identical
+    assert "Added" not in identical
+    # Same name, different details: reject conflict.
+    differing = _invoke(
+        cli_env, "labs", "add", "Quest", "--description", "not the same", expect=1
+    )
+    assert "different details" in differing
+
+
+# --------------------------------------------------------------------------
+# Mid-session catalog refresh (ADR-0060 §6)
+# --------------------------------------------------------------------------
+
+
+class _FakeCatalogApi:
+    """A stub _Api serving a catalog that grows between fetches.
+
+    Models the two-terminal flow: `biomarkers add` commits from another
+    session while this session's snapshot predates it.
+    """
+
+    def __init__(self, catalogs: list[list[dict[str, Any]]]) -> None:
+        self._catalogs = catalogs
+        self.fetches = 0
+
+    def get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        from healthspan import api_read
+
+        if path == api_read.BIOMARKERS_PATH:
+            self.fetches += 1
+            served = self._catalogs[min(self.fetches, len(self._catalogs)) - 1]
+            return {"items": served, "next_cursor": None}
+        assert path == api_read.BIOMARKER_ALIASES_PATH
+        return {"items": [], "next_cursor": None}
+
+
+def _stub_resolve(
+    api: _FakeCatalogApi,
+    typed: str,
+    index: dict[str, int],
+    rows: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+) -> int | None:
+    from typing import cast
+
+    from healthspan.cli_entry import (
+        _resolve_biomarker,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    return _resolve_biomarker(cast(Any, api), typed, index, rows, pending)
+
+
+def test_resolver_refreshes_on_miss_and_finds_a_mid_session_add() -> None:
+    stale = [{"id": 1, "canonical_name": "Glucose"}]
+    fresh = [
+        {"id": 1, "canonical_name": "Glucose"},
+        {"id": 99, "canonical_name": "Apolipoprotein B-48"},
+    ]
+    api = _FakeCatalogApi([fresh])  # every fetch serves the grown catalog
+    index = {"glucose": 1}  # session-start snapshot: no ApoB-48
+    rows = list(stale)
+    # Resolves silently after the refresh - never reaches the interactive
+    # pick (which would try to prompt and fail outside a CliRunner).
+    resolved = _stub_resolve(api, "Apolipoprotein B-48", index, rows, [])
+    assert resolved == 99
+    assert api.fetches == 1  # exactly one refresh, on the miss path
+    assert any(int(r["id"]) == 99 for r in rows)  # snapshot updated in place
+    # A hit never refreshes.
+    assert _stub_resolve(api, "Glucose", index, rows, []) == 1
+    assert api.fetches == 1
+
+
+def test_refresh_preserves_session_queued_aliases() -> None:
+    from typing import cast
+
+    from healthspan.cli_entry import (
+        _refresh_resolution,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    catalog = [{"id": 1, "canonical_name": "Glucose"}]
+    api = _FakeCatalogApi([catalog])
+    index = {"glucose": 1, "blood sugar": 1}  # 'blood sugar' queued this session
+    rows = list(catalog)
+    pending = [{"biomarker_id": 1, "alias": "Blood Sugar", "source": "manual"}]
+    _refresh_resolution(cast(Any, api), index, rows, pending)
+    # The rebuild re-applied the queued alias the server does not know yet.
+    assert index["blood sugar"] == 1
+
+
+def test_labs_add_case_variant_is_rejected_not_duplicated(cli_env: CliEnv) -> None:
+    """The F1 regression: a case-variant must not insert a second lab.
+
+    labs.name is binary-unique and the import key matches exactly, but the
+    `enter` lab prompt resolves case-insensitively - a second "quest" row
+    would make every later "Quest" prompt ambiguous (ADR-0060 §2).
+    """
+    output = _invoke(cli_env, "labs", "add", "quest", expect=1)
+    assert "already exists" in output
+    assert "case-insensitively" in output
+    listing = _invoke(cli_env, "labs", "list")
+    # The listing renders "  {id}  {name}  {description}"; compare the name
+    # field itself ("Function Health (Quest)" must not count as a Quest row).
+    names = [line.strip().split("  ")[1] for line in listing.splitlines() if line]
+    assert "quest" not in names  # the variant was not inserted
+    assert names.count("Quest") == 1  # still exactly one Quest
+
+
+def test_labs_add_reports_the_row_it_inserted(cli_env: CliEnv) -> None:
+    # The success line must carry the *new* row's id (exact-name selection),
+    # matching what `labs list` shows for it.
+    added = _invoke(cli_env, "labs", "add", "Cascadia Diagnostics")
+    listing = _invoke(cli_env, "labs", "list")
+    row = next(line for line in listing.splitlines() if "Cascadia Diagnostics" in line)
+    new_id = row.split()[0]
+    assert f"(id {new_id})" in added
+
+
+def test_refresh_drops_a_queued_alias_the_server_now_owns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Server-wins on a queued-alias collision - session continues, alias drops.
+
+    A concurrent session recorded the same name for a different biomarker;
+    the refresh must keep the authoritative mapping, drop the stale queued
+    alias (so commit never submits it), and say so - never abort the draw.
+    """
+    from typing import cast
+
+    from healthspan.cli_entry import (
+        _refresh_resolution,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    catalog = [
+        {"id": 1, "canonical_name": "Glucose"},
+        {"id": 2, "canonical_name": "Blood Sugar Panel"},
+    ]
+    api = _FakeCatalogApi([catalog])
+    # Session queued 'blood sugar panel' -> 1; server's canonical namespace
+    # now maps it to biomarker 2.
+    index = {"glucose": 1, "blood sugar panel": 1}
+    rows = [dict(catalog[0])]
+    pending = [{"biomarker_id": 1, "alias": "Blood Sugar Panel", "source": "manual"}]
+    _refresh_resolution(cast(Any, api), index, rows, pending)
+    assert index["blood sugar panel"] == 2  # the server mapping won
+    assert pending == []  # the stale queued alias will not be recorded
+    assert "keeping the server mapping" in capsys.readouterr().out
