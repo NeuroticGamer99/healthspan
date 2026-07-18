@@ -2,7 +2,7 @@
 
 High-level code development plan: the phase sequence from empty repository to a complete v1 platform. This is a living design document — phases are re-scoped as implementation teaches us things — but the **sequencing constraints** and **decision gates** recorded here are binding until explicitly revisited.
 
-Written 2026-07-09, at the close of the spec phase: 34 ADRs Accepted, CI skeleton live ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)), decision-capture convention in [CLAUDE.md](../CLAUDE.md), no code yet.
+Written 2026-07-09, at the close of the spec phase: 34 ADRs Accepted, CI skeleton live ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)), decision-capture convention in [CLAUDE.md](../CLAUDE.md), no code yet. **Status markers on the phase headings below are the plan's rolling state — as of 2026-07-17, Phases 0–3 are complete and real data entry has begun.**
 
 ---
 
@@ -19,7 +19,7 @@ Rules that apply to every phase:
 
 ---
 
-## Phase 0 — Skeleton and CI activation (the first code PR)
+## Phase 0 — Skeleton and CI activation (the first code PR) — ✅ complete 2026-07-09 (PR #6)
 
 An installable, empty-but-real `healthspan` package: uv build backend, `src/` layout, Python 3.14, ruff + pyright (strict) configuration, one trivial test.
 
@@ -33,7 +33,7 @@ This PR executes the **entire first-code-PR checklist** from [ADR-0045](adr/0045
 
 **Milestone:** `uv pip install -e .` works on all three OSes; CI matrix green; branch protection active.
 
-## Phase 1 — Data foundation (CLI-only, no server)
+## Phase 1 — Data foundation (CLI-only, no server) — ✅ complete
 
 Everything below the API line, exercisable entirely through the CLI — `healthspan db migrate` and `healthspan db backup` are the two sanctioned direct-database exceptions ([ADR-0006](adr/0006-application-architecture.md)), so no server is needed to make this phase real.
 
@@ -48,7 +48,7 @@ Everything below the API line, exercisable entirely through the CLI — `healths
 
 **Milestone:** an encrypted database exists on disk, migrated to schema 0001, with a verified backup.
 
-## Phase 2 — Core Service minimum
+## Phase 2 — Core Service minimum — ✅ complete
 
 The FastAPI Core Service, smallest useful surface:
 
@@ -60,7 +60,7 @@ The FastAPI Core Service, smallest useful surface:
 
 **Milestone:** an authenticated client can write and read data through the REST API; nothing but the two CLI exceptions touches the database directly.
 
-## Phase 3 — Manual data entry end-to-end ← first real-value milestone
+## Phase 3 — Manual data entry end-to-end ← first real-value milestone — ✅ complete 2026-07-17 (PRs #24, #26, #28, #31)
 
 - Reference data: biomarker catalog, lab sources, reference range frameworks ([ADR-0005](adr/0005-reference-range-frameworks.md)) and their read endpoints.
 - CLI manual-entry tooling with a draw-level template — enter lab + draw date once, then results — resolving the manual-entry-efficiency question in [open-questions.md](open-questions.md).
@@ -83,7 +83,7 @@ Both critical-path gates are now decided; Phase 3 is fully ungated.
 - Job abstraction ([ADR-0012](adr/0012-job-abstraction.md)); imports become jobs ([ADR-0025](adr/0025-plugin-host-process-matrix.md)).
 - MCP server: fastmcp, Streamable HTTP ([ADR-0007](adr/0007-mcp-transport.md), [ADR-0029](adr/0029-mcp-streamable-http.md)), implementing the full **tool output contract** already specified in [api-reference.md](api-reference.md) — censoring fidelity, structured output, pagination caps, instruction-shielded free text.
 - Export endpoints ([ADR-0015](adr/0015-data-export.md)).
-- **Disposition of [ADR-0014](adr/0014-websocket.md)** (WebSocket — Proposed, never on a flip list): the SSE implementation work makes it naturally resolvable; expected outcome is supersession/subsumption by [ADR-0011](adr/0011-event-bus.md). One-line decision, recorded then.
+- **Disposition of [ADR-0014](adr/0014-websocket.md)** (WebSocket — Proposed, never on a flip list): the SSE implementation work makes it naturally resolvable; expected outcome is supersession/subsumption by [ADR-0011](adr/0011-event-bus.md). Mechanics decided 2026-07-17: since ADR-0011 is Accepted and immutable (it cannot absorb the rationale itself), the disposition is recorded as a **small new ADR that supersedes ADR-0014** — the new ADR carries the one-line rationale, 0014's status flips to `Superseded by ADR-XXXX`, and 0011 gains a navigation link.
 
 **Milestone:** an AI client connects over MCP and queries real health data with full value fidelity.
 

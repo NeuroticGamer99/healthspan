@@ -36,7 +36,7 @@ Get-by-id answers `404` for an id that is absent *or superseded* — the current
 
 ### 2. Pagination: opaque keyset cursor, fixed per-resource order
 
-List responses are `{"items": [...], "next_cursor": <token|null>}`. The cursor is an opaque base64url token encoding a schema version, the direction it was minted under, and the last row's `(sort key, id)` keyset — resumable and stable under concurrent inserts, with none of OFFSET's drift or rescan cost. Ordering is **fixed per resource**: clinical rows by `draw_utc` with `id` as tiebreak, **newest-first by default** (`?order=asc` flips to chronological, for export-style walks); catalog rows by name, ascending. No arbitrary sort parameters this phase — a deterministic total order is what makes keyset pagination correct, and every added sort key is a new index commitment.
+List responses are `{"items": [...], "next_cursor": <token|null>}`. The cursor is an opaque base64url token encoding a cursor-format version (a versioning handle for the token layout itself — unrelated to the database `schema_version`), the direction it was minted under, and the last row's `(sort key, id)` keyset — resumable and stable under concurrent inserts, with none of OFFSET's drift or rescan cost. Ordering is **fixed per resource**: clinical rows by `draw_utc` with `id` as tiebreak, **newest-first by default** (`?order=asc` flips to chronological, for export-style walks); catalog rows by name, ascending. No arbitrary sort parameters this phase — a deterministic total order is what makes keyset pagination correct, and every added sort key is a new index commitment.
 
 A cursor replayed under the other `order`, or malformed in any way, is a `422`. Filters are not embedded in the cursor: the client keeps its filters constant while paginating (documented in [api-reference.md](../api-reference.md)); changing them mid-walk yields well-formed but unhelpful pages, not an error.
 
@@ -80,6 +80,10 @@ Each `lab_results` row embeds read-only `draw_utc` and `lab_id` from its draw (j
 
 ## Links
 
+- Extended by: [ADR-0055](0055-biomarker-category-taxonomy.md) — the `?category=` filter becomes a case-insensitive category-name lookup over the new catalog (a breaking change from the Phase-2 free-text filter)
+- Extended by: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — the reference-data resources (`categories`, `range-frameworks`, `framework-ranges`) join the read surface under the same list/get + pagination pattern
+- Extended by: [ADR-0058](0058-range-comparison-implementation-decisions.md) — the opt-in `?framework=` range-comparison projection on the lab-results routes (shape unchanged when absent)
+- Extended by: [ADR-0059](0059-cli-manual-entry-implementation-decisions.md) — the `biomarker-aliases` read resource
 - Implements: [ADR-0027](0027-audit-trail-and-corrections.md) — readers consume `*_current` views
 - Implements: [ADR-0030](0030-biomarker-identity.md) / [ADR-0031](0031-units-and-ucum.md) — value-model and unit fidelity on the wire
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — `read` scope

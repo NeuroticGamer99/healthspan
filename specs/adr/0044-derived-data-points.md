@@ -14,7 +14,7 @@ Yet the full schema is not designable well today, because "derived series" is se
 - Contamination by disguise must be closed now, and closing it is cheap — it is a principle, not a table
 - The two subtypes (rebuildable vs. snapshot) have different correction semantics; conflating them in a prematurely designed schema is the expensive trap
 - The design will be materially better informed after the analyses table is in use and its attachments show what derived data actually gets produced
-- The project has 44 ADRs and no code: decisions should be principle-sized now, schema-sized when implementation reaches them
+- Decisions should be principle-sized now, schema-sized when implementation reaches them
 
 ## Considered Options
 1. **Design the full first-class derived-series schema now**

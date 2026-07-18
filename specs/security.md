@@ -87,16 +87,15 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 ## Network Security
 
-**DNS rebinding protection.** The platform defends against DNS rebinding attacks (malicious websites making requests to localhost services) with two independent controls:
+**Binding address.** Default binding is `127.0.0.1` (localhost only), and loopback-only operation is the design center: **non-loopback (LAN or Docker-bridge) binding is out of scope for the initial development plan** ([development-plan.md](development-plan.md), Phases 0–8). The config parser accepts a non-loopback `service.host` as an explicit, user-typed opt-in ([ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md) §Binding posture), but the platform does not *support* it until the gated controls below land — tracked in [open-questions.md](open-questions.md), "Non-loopback binding hardening".
 
-1. **Host header validation** — the server rejects any request whose `Host` header does not match a configured expected value. Configured in TOML. Default: `localhost` and `127.0.0.1`.
-2. **Bearer token authentication** — browsers cannot send custom `Authorization` headers cross-origin without a CORS preflight. The server denies preflights from non-allowlisted origins, blocking the attack even if host validation were bypassed.
+**Gated controls — required before any non-loopback bind is supported.** The following are requirements on the future LAN-deployment work item, not descriptions of current behavior:
 
-**CORS.** All HTTP services use an explicit allowlist of permitted origins. Default: empty (deny all cross-origin requests). Users configure allowed origins in TOML for their specific AI client or web UI.
+1. **Host header validation** (DNS-rebinding defense) — the server rejects any request whose `Host` header does not match a configured expected value. Configured in TOML. Default: `localhost` and `127.0.0.1`.
+2. **CORS allowlist** — an explicit allowlist of permitted origins, default empty (deny all cross-origin requests). The server denies preflights from non-allowlisted origins; combined with bearer-token authentication (browsers cannot send custom `Authorization` headers cross-origin without a preflight), this blocks DNS rebinding even if host validation were bypassed.
+3. **HTTPS** — required for any non-localhost binding, on both the server listener and the CLI client path (a non-loopback `service.host` today would put the bearer token on the wire in cleartext — CWE-319). For LAN deployment, a self-signed certificate with pinning or a local CA (mkcert). For internet-exposed deployment (not a supported use case for personal health data), a trusted CA. For localhost, HTTPS stays recommended but not required.
 
-**Binding address.** Default binding is `127.0.0.1` (localhost only). LAN or Docker deployment requires explicitly setting the binding address in config. Binding to `0.0.0.0` on a non-localhost address requires HTTPS and is documented as requiring additional network-level controls (firewall, VPN).
-
-**HTTPS.** Required for any non-localhost binding. For localhost development, HTTPS is recommended but not required. For LAN deployment, use a self-signed certificate with pinning, or a local CA (mkcert). For internet-exposed deployment (not a supported use case for personal health data), use a trusted CA.
+LAN or Docker deployment additionally requires documented network-level controls (firewall, VPN) — a documentation obligation of the same gated work item.
 
 ---
 

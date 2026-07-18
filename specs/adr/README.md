@@ -92,10 +92,10 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0037](0037-core-service-concurrency-and-driver.md) | Core Service Concurrency Model and Database Driver Choice | Accepted |
 | [ADR-0038](0038-backup-execution-and-verification.md) | Backup Execution and Verification | Accepted |
 | [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) | Startup Sequence — Migration Ownership and Passphrase Handoff | Accepted |
-| [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — Liveness Exemption and Monitor Scope | Accepted |
+| [ADR-0040](0040-health-endpoint-authentication.md) | Health Endpoint Authentication — the Liveness Exemption and the Monitor Scope | Accepted |
 | [ADR-0041](0041-clinical-document-fts.md) | Clinical Document Full-Text Search | Accepted |
 | [ADR-0042](0042-process-supervision-and-single-instance-locking.md) | Process Supervision and Single-Instance Locking | Accepted |
-| [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the Annotate Scope | Proposed |
+| [ADR-0043](0043-ai-authored-analyses-and-annotate-scope.md) | AI-Authored Analyses and the `annotate` Scope | Proposed |
 | [ADR-0044](0044-derived-data-points.md) | Derived Data Points — Distinct Class Now, Schema Deferred | Proposed |
 | [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) | Repository Workflow and CI Enforcement | Accepted |
 | [ADR-0046](0046-filesystem-layout-and-config-discovery.md) | Filesystem Layout and Configuration Discovery | Accepted |

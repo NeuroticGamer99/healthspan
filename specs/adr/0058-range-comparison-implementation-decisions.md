@@ -163,6 +163,7 @@ Three decisions this forced:
 - Depends on: [ADR-0030](0030-biomarker-identity.md) — the result value model (comparator/qualitative) comparison must respect
 - Depends on: [ADR-0031](0031-units-and-ucum.md) — UCUM strings and the normalization mechanism
 - Extends: [ADR-0056](0056-units-module-api-and-molar-context.md) — resolves the deferred molar-mass persistence question
-- Builds on: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the read surface and value-fidelity serialization this comparison joins
-- Builds on: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — the reference-data catalog and catalog-import path (Phase 3 WI-2)
+- Extends: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — §6 adds `range_frameworks`/`framework_ranges` to its importable registry and generalizes the natural-key model with `nullable_key`
+- Extends: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — adds the opt-in `?framework=` projection to its lab-results routes (shape unchanged when absent)
+- Extends: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — adds the two framework tables to its catalog-import registry, with the `nullable_key` generalization
 - Related: [open-questions.md](../open-questions.md) — biomarker molar-mass persistence (this WI is its named trigger)
