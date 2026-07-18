@@ -166,7 +166,7 @@ one-line decision whose *mechanics* are worth agreeing on before Phase 4.
 - The open-questions "Database integrity & sanity check" consolidation entry (lines
   101-108) double-tracks the draw_utc, UCUM-at-import, and view-recreation invariants,
   which also stand as separate entries. Decide fold-in vs. standalone before the ADRs
-  citing them freeze.
+  that cite them freeze.
 
 **C5 — NOTE. ADR-0044 line 520** ("The project has 44 ADRs and no code") is dated context
 that will fossilize if 0044 is ever accepted verbatim. Not in this lock-in (0044 is
