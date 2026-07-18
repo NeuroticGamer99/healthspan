@@ -141,6 +141,7 @@ The launcher does hold one credential — the `supervise`-scoped `launcher` toke
 ## Links
 
 - Extends: [ADR-0026](0026-named-scoped-tokens.md) — adds the `monitor` scope, amends the default token set (`cli-admin`, `gui`), and adds the `public` route-declaration marker
+- Extended by: [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) — decision 4 fixes the per-source-address liveness rate cap this ADR requires but leaves unnumbered (30 requests per rolling second)
 - Related: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — the argv/env channel discipline that rules out option 2; the launcher polls liveness after passphrase handoff
 - Related: [ADR-0008](0008-process-lifecycle.md) — launcher readiness gating
 - Related: [specs/observability.md](../observability.md) — health endpoint and metrics specifications

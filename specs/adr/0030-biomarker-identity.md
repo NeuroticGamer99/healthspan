@@ -110,7 +110,7 @@ These constraints compose unchanged with the `STRICT` table declaration recorded
 
 ## Links
 - Related: [ADR-0031](0031-units-and-ucum.md) — units (UCUM) and the `canonical_unit` column referenced above
-- Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — one biomarker concept, many LOINC codes; where the reported code is stored
+- Extended by: [ADR-0032](0032-biomarker-loinc-cardinality.md) — one biomarker concept, many LOINC codes; where the reported code is stored
 - Related: [ADR-0005](0005-reference-range-frameworks.md) — framework range comparison relies on this value model and the canonical unit
 - Related: [ADR-0018](0018-fhir-interoperability.md) — `Observation.code` is a LOINC coding; `valueQuantity.comparator` is the value model adopted here
 - Concretized by: [ADR-0055](0055-biomarker-category-taxonomy.md) — the sketched `category` column becomes a `category_id` FK to a first-class `categories` table (identity/LOINC/value model unchanged)

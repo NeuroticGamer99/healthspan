@@ -126,6 +126,7 @@ The kernel releases the lock automatically when the holding process exits for an
 
 ## Links
 - Extends: [ADR-0008](0008-process-lifecycle.md) — supplies the restart-with-backoff supervision ADR-0008 explicitly leaves out ("no automatic restart on crash"); launcher-as-default and process ordering unchanged
+- Extended by: [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) — decision 6 makes the single-instance advisory lock the service-up guard the sanctioned direct-database CLI commands consult
 - Resolves: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md)'s parked "Constraint on future supervision (T2.8)" — chooses direct-to-full-auto-unlock over passphrase retention, so the launcher still drops its copy after handoff
 - Replaces mechanism in: [ADR-0019](0019-multi-device-sync.md) — the single-instance lock file becomes an OS advisory lock held for the process lifetime; ADR-0019's single-writer *policy* is unchanged
 - Backs the claim in: [ADR-0025](0025-plugin-host-process-matrix.md) — makes the "supervised resident process" language for the Automation Host honest

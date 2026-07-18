@@ -7,16 +7,15 @@ ADR-0053 contract is unchanged). An unknown framework name is a `422`,
 deliberately unlike `?category=`'s empty-page rule — see
 :class:`healthspan.reads.FrameworkNotFoundError`.
 
-Fourteen ``read``-scoped GET routes: list/get over the current-state views
-for the import-populated tables (``lab-draws``, ``lab-results``) and the
-catalog tables a client needs to resolve their foreign keys and browse
-reference data (``labs``, ``biomarkers``, ``categories``,
-``range-frameworks``, ``framework-ranges``). List responses are ``{"items":
-[...], "next_cursor": ...}``; pagination is keyset, bounded by the
-server-enforced page cap (``service.page_cap``, default 100) — the single
-enforcement point every client inherits (api-reference.md, MCP
-tool-convention rule 3). A ``limit`` above the cap clamps to
-it; the cap can only shrink a page, never grow one.
+Every route is a ``read``-scoped GET: list/get pairs over the current-state
+views for the import-populated tables and over the catalog tables a client
+needs to resolve their foreign keys and browse reference data — the
+``*_PATH`` constants below are the authoritative resource set. List
+responses are ``{"items": [...], "next_cursor": ...}``; pagination is
+keyset, bounded by the server-enforced page cap (``service.page_cap``,
+default 100) — the single enforcement point every client inherits
+(api-reference.md, MCP tool-convention rule 3). A ``limit`` above the cap
+clamps to it; the cap can only shrink a page, never grow one.
 
 Handlers are synchronous (ADR-0037): FastAPI runs them on the AnyIO worker
 threadpool, where the thread-affine pool hands each its thread's

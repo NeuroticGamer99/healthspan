@@ -313,6 +313,7 @@ Cross-platform Python access to these systems is not mature today. When the ecos
 ## Links
 - Extended by: [ADR-0028](0028-key-derivation-and-rotation.md) — precise KDF construction, key/passphrase rotation, key and connection lifetime, and corrections to the code-signing requirement and macOS keychain claim (both assumed the Nuitka distribution superseded by ADR-0023)
 - Extended by: [ADR-0033](0033-plaintext-artifact-disposal.md) — Recovery Kit digital artifact handling and the plaintext disposal policy applied to `healthspan db encrypt`
+- Extended by: [ADR-0034](0034-clinical-document-storage.md) — the encryption boundary extended to original clinical-document files, stored inside the database
 - Related: [specs/security.md](../security.md) — platform-wide security requirements
 - Related: [ADR-0006](0006-application-architecture.md) — Core Service owns all DB connections; plugins never access the DB directly
 - Related: [ADR-0008](0008-process-lifecycle.md) — headless Linux deployment variant

@@ -122,8 +122,8 @@ Notable seeding judgment calls, each following an explicit ADR-0055 §6 steer or
 - Extended by: [ADR-0058](0058-range-comparison-implementation-decisions.md) §6 — adds `range_frameworks`/`framework_ranges` to this ADR's catalog-import registry, and generalizes it with a nullable natural-key column (`ImportableTable.nullable_key`) for the ADR-0005 dateless default; §9's same-batch constraint applies to both unchanged
 - Implements: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the alias table, resolver, and normalization rule
 - Implements: [ADR-0055](0055-biomarker-category-taxonomy.md) — the categories catalog, reserved default, and delete-guard
-- Related: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the import engine this generalizes (`has_supersession`/`has_provenance`), and the natural-key/conflict machinery the resolver feeds into
-- Related: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the list/get pattern the new `categories`/`range-frameworks`/`framework-ranges` routes reuse
+- Extends: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the import engine this generalizes (`has_supersession`/`has_provenance`), and the natural-key/conflict machinery the resolver feeds into
+- Extends: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — adds the `categories`/`range-frameworks`/`framework-ranges` resources to its read surface, under the same list/get + pagination pattern
 - Related: [ADR-0030](0030-biomarker-identity.md) — the biomarker identity and value model this catalog work concretizes without reversing
 - Related: [ADR-0031](0031-units-and-ucum.md) — the UCUM unit strings validated in the seeded biomarker catalog
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — catalog writes/deletes are audited insert/update/delete, never supersession

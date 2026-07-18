@@ -58,12 +58,13 @@ class ConnectionPool:
         """Whether this thread can reach the database (``SELECT 1``)."""
         try:
             return self.connection().execute("SELECT 1").fetchone() == (1,)
-        # PEP 758 (Python 3.14): an `except` with no `as` may omit the
-        # parentheses around its exception tuple. This is valid — the
-        # project floor is 3.14 — and `ruff format` actively strips the
-        # parens, so this bare form is the formatter-stable one. (It reads
-        # like the Python 2 `except A, e:` syntax but is unrelated.)
-        except sqlcipher3.Error, db.DatabaseError, PoolClosedError:
+        # Project convention: always parenthesize a multi-exception
+        # `except`, even where PEP 758 (Python 3.14) allows the bare
+        # comma form — the bare form reads like the removed Python 2
+        # `except A, e:` syntax and trips reviewers and tools. `ruff
+        # format` at the pinned version actively strips these parens, so
+        # the line carries a `fmt: skip` guard to keep them.
+        except (sqlcipher3.Error, db.DatabaseError, PoolClosedError):  # fmt: skip
             return False
 
     @property

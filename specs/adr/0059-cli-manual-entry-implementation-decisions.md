@@ -206,7 +206,7 @@ because the approved §3 behavior is not deliverable without it.
 - Implements: the Phase 3 WI-4 "CLI manual-entry tooling" item in [development-plan.md](../development-plan.md)
 - Builds on: [ADR-0052](0052-bulk-import-identity-and-conflict-resolution.md) — the import identity and conflict model the CLI submits against
 - Builds on: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the `biomarker_name` resolver and alias namespace the entry flow uses
-- Builds on: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the read surface the CLI queries
+- Extends: [ADR-0053](0053-read-endpoint-surface-and-pagination.md) — the read surface the CLI queries; §6 adds the `biomarker-aliases` resource to it
 - Builds on: [ADR-0058](0058-range-comparison-implementation-decisions.md) — the `?framework=` range-comparison enrichment the CLI renders inline
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — the token/scope model the CLI's credential draws from
 - Related: [open-questions.md](../open-questions.md) — Manual entry efficiency (resolved here); the WI-3 deferrals this surface triggers
