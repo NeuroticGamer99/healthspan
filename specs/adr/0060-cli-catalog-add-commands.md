@@ -79,10 +79,14 @@ case-insensitively, so `labs add "quest"` beside a stored `"Quest"` would insert
 second row that poisons every later lab prompt ("matches more than one lab by case").
 Biomarkers are immune via the server-side normalization guard; labs have no server
 equivalent, so `labs add` rejects a case-insensitive clash with a different exact
-spelling before submitting. The guard covers only this command — the raw endpoint can
-still create case-variants — and the identity-layer fix (case-insensitive lab-name
-uniqueness for *all* import callers) is deferred with its own
-[open-questions.md](../open-questions.md) entry.
+spelling before submitting. The guard is a **best-effort preflight, not a transactional
+invariant**: it covers only this command (the raw endpoint can still create
+case-variants), and two racing adds could slip a variant past it — accepted at
+single-user, human-paced CLI scale, where the residue's damage is an ambiguous lab
+prompt (recoverable via `--lab-id`), not corruption. The identity-layer fix
+(case-insensitive lab-name uniqueness enforced for *all* import callers, atomically) is
+deferred with its own [open-questions.md](../open-questions.md) entry and closes both
+gaps when its trigger fires.
 
 ### 4. Category by name, resolved case-insensitively, default `not_assigned`
 `--category` takes the category *name* (matching the `?category=` read-filter ergonomics,

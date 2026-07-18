@@ -954,3 +954,34 @@ def test_labs_add_reports_the_row_it_inserted(cli_env: CliEnv) -> None:
     row = next(line for line in listing.splitlines() if "Cascadia Diagnostics" in line)
     new_id = row.split()[0]
     assert f"(id {new_id})" in added
+
+
+def test_refresh_drops_a_queued_alias_the_server_now_owns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Server-wins on a queued-alias collision - session continues, alias drops.
+
+    A concurrent session recorded the same name for a different biomarker;
+    the refresh must keep the authoritative mapping, drop the stale queued
+    alias (so commit never submits it), and say so - never abort the draw.
+    """
+    from typing import cast
+
+    from healthspan.cli_entry import (
+        _refresh_resolution,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    catalog = [
+        {"id": 1, "canonical_name": "Glucose"},
+        {"id": 2, "canonical_name": "Blood Sugar Panel"},
+    ]
+    api = _FakeCatalogApi([catalog])
+    # Session queued 'blood sugar panel' -> 1; server's canonical namespace
+    # now maps it to biomarker 2.
+    index = {"glucose": 1, "blood sugar panel": 1}
+    rows = [dict(catalog[0])]
+    pending = [{"biomarker_id": 1, "alias": "Blood Sugar Panel", "source": "manual"}]
+    _refresh_resolution(cast(Any, api), index, rows, pending)
+    assert index["blood sugar panel"] == 2  # the server mapping won
+    assert pending == []  # the stale queued alias will not be recorded
+    assert "keeping the server mapping" in capsys.readouterr().out

@@ -285,8 +285,28 @@ def _refresh_resolution(
     fresh = _resolution_index(api, rows)
     index.clear()
     index.update(fresh)
+    # Re-apply this session's queued aliases — except where the server has
+    # meanwhile acquired the same name for a *different* biomarker (another
+    # session recorded it). The server mapping wins and the stale queued
+    # alias is dropped, with a visible note; never an aborted session — the
+    # in-progress draw is not hostage to an owner-vs-owner naming conflict,
+    # and committed results are unaffected either way (they carry the picked
+    # biomarker's real id, never the alias).
+    kept: list[dict[str, Any]] = []
     for alias in pending_aliases:
-        index[imports.normalize_name(str(alias["alias"]))] = int(alias["biomarker_id"])
+        normalized = imports.normalize_name(str(alias["alias"]))
+        biomarker_id = int(alias["biomarker_id"])
+        existing = index.get(normalized)
+        if existing is not None and existing != biomarker_id:
+            typer.echo(
+                f"  note: queued alias {str(alias['alias'])!r} now resolves "
+                "to a different biomarker on the server; keeping the server "
+                "mapping and not recording the queued alias."
+            )
+            continue
+        index[normalized] = biomarker_id
+        kept.append(alias)
+    pending_aliases[:] = kept
 
 
 def _resolve_biomarker(
@@ -935,8 +955,11 @@ def biomarkers_add(
             ),
             None,
         )
-        if added is None:  # absent on readback (removed out-of-band?)
-            typer.echo(f"Added biomarker '{name}'.")
+        if added is None:  # the import summary confirmed it; readback did not
+            typer.echo(
+                f"Added biomarker '{name}' (readback could not confirm the "
+                "id; check 'biomarkers list')."
+            )
             return
         if not inserted:
             typer.echo(
@@ -995,8 +1018,11 @@ def labs_add(
             ),
             None,
         )
-        if added is None:  # absent on readback (removed out-of-band?)
-            typer.echo(f"Added lab '{name}'.")
+        if added is None:  # the import summary confirmed it; readback did not
+            typer.echo(
+                f"Added lab '{name}' (readback could not confirm the id; "
+                "check 'labs list')."
+            )
             return
         if not inserted:
             typer.echo(
