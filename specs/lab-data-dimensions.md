@@ -134,7 +134,7 @@ Add-only was a deliberate ADR-0060 choice, but real use showed it is one-way: a 
 
 ## 8. Derived data
 
-Values the lab computes and prints, but that are not measurements. [ADR-0044](adr/0044-derived-data-points.md) classes these as a distinct content type that must **not** enter source-data tables; the schema is deferred to Phase 5. Two subtypes, both seen:
+Values the lab computes and prints, but that are not measurements. [ADR-0044](adr/0044-derived-data-points.md) classifies these as a distinct content type that must **not** enter source-data tables; the schema is deferred to Phase 5. Two subtypes, both seen:
 
 | Subtype | Examples | Reproducible? | Handling |
 |---|---|---|---|
