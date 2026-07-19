@@ -69,8 +69,10 @@ finding's fix would cross one of these lines, treat it as a scope decision and s
 Don't declare a finding fixed on faith. For code changes, run the same gates CI runs — read the
 pinned versions from the `env:` block of `.github/workflows/ci.yml` and run ruff / pyright /
 pytest over the affected area; for behavior with a runtime surface, drive it (the `verify`
-skill). For ADR or index edits, run `python scripts/check_adr_index.py`. Report a gate that
-comes back red — never paper over it.
+skill). For ADR or index edits, run `python scripts/check_adr_index.py`; always run
+`python scripts/check_spec_links.py` (it validates link targets anywhere in the repo, so a
+change *outside* `specs/` can break a spec link). Report a gate that comes back red — never paper
+over it.
 
 ## 5. Report outcomes
 

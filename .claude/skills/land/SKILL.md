@@ -16,6 +16,7 @@ Walk these steps in order for the change currently in the working tree. Report e
 Run whatever the repository currently has; skip what doesn't exist yet and say so:
 
 - `python scripts/check_adr_index.py` — ADR index consistency (always, if `specs/adr/` or its README changed).
+- `python scripts/check_spec_links.py` — spec cross-link integrity (**always** — it validates link targets anywhere in the repo, so a rename or deletion *outside* `specs/` can break a spec link; CI runs it unconditionally in the docs-consistency job, ADR-0061).
 - Once the code phases land (see `specs/development-plan.md` Phase 0): `ruff check`, `ruff format --check`, `pyright`, `pytest -n auto` — run each if configured in the repo. The `-n auto` (pytest-xdist) is the intended local invocation — the suite is isolated for worker parallelism (see the dev-dependency comment in `pyproject.toml`); only CI runs serial, for its ordered `tee-sys` log capture. Don't add `-n` to `addopts` in `pyproject.toml` — that would leak into CI's invocation.
 
 A failing gate stops the landing; fix or escalate before proceeding.
