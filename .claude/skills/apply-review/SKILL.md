@@ -23,7 +23,9 @@ Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>
   and match `*/scratchpad/code-review-*.md` — take the newest, name the file and which session it
   came from, and confirm with the user before using it, since it may be an unrelated review.
 - Read the report's **Branch / HEAD** and **Diff scope** lines, then run `git rev-parse HEAD`
-  and `git rev-parse --abbrev-ref HEAD`. If HEAD has moved or the branch differs, warn the user:
+  and `git rev-parse --abbrev-ref HEAD`. Compare on the **full** SHA (the `Branch / HEAD` line
+  records it); if a report carries only a short SHA, match it against the prefix rather than
+  reporting false drift. If HEAD has moved or the branch differs, warn the user:
   findings may reference lines that have since shifted. This does not abort the run — step 3
   re-verifies every finding anyway — but a large drift is worth flagging up front.
 

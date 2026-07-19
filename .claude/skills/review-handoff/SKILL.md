@@ -29,7 +29,9 @@ of `high`.
 While reviewing, keep hold of what step 2 needs:
 
 - the exact diff scope reviewed (base ref and the command that produced the diff)
-- branch and HEAD (`git rev-parse --abbrev-ref HEAD`, `git rev-parse --short HEAD`)
+- branch and HEAD — both representations: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`
+  (the **full** SHA the `Branch / HEAD` line records — `apply-review` compares against it), and
+  `git rev-parse --short HEAD` for the report title
 - areas examined that produced **no** findings
 
 ## 2. Write the report
@@ -37,7 +39,7 @@ While reviewing, keep hold of what step 2 needs:
 Write the file with the **Write tool** (never PowerShell redirection — encoding corruption) to
 the scratchpad directory listed in the system prompt:
 
-```
+```text
 <scratchpad>/code-review-<branch>-<timestamp>.md
 ```
 
