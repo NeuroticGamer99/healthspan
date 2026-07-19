@@ -293,3 +293,11 @@ def test_check_validates_image_target(
     errors = csl.check()
     assert len(errors) == 1
     assert "missing.png" in errors[0]
+
+
+def test_link_targets_ignores_escaped_opener() -> None:
+    # \[text](t.md) is escaped prose, not a link; but \\[text](t.md) has escaped
+    # backslashes, leaving the [ live.
+    bs = chr(92)  # backslash
+    assert csl.link_targets(bs + "[a](one.md)") == []
+    assert csl.link_targets(bs * 2 + "[a](one.md)") == [(1, "one.md")]

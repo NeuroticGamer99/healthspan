@@ -44,6 +44,12 @@ widening is deliberate rather than a surprise:
   - Links split across a hard line wrap, and links inside an HTML comment, are
     scanned as ordinary prose -- line-based scanning is what keeps the reported
     line numbers, and the fence logic, simple.
+  - An inline code span that crosses a line break is not tracked (spans are
+    matched per line), so a link on an interior line of a multi-line `` `...` ``
+    span is scanned as live -- a *loud* false positive. Tracking cross-line
+    span state risks the swallow-the-rest-of-the-file failure the fence logic
+    was hardened against, and multi-line code is normally a fenced block, which
+    *is* handled -- so this is left as a documented limitation.
   - Existence is checked against the working-tree filesystem. In CI that equals
     the git checkout, so the gate's authoritative run validates git truth; a
     *local* run may diverge -- an untracked linked file, or a case-only mismatch
@@ -117,7 +123,14 @@ def link_targets(md_text: str) -> list[tuple[int, str]]:
         if opener is not None:
             fence = opener
             continue
-        for match in LINK_RE.finditer(strip_code_spans(raw)):
+        stripped = strip_code_spans(raw)
+        for match in LINK_RE.finditer(stripped):
+            # An escaped opener (\[...]) is not a link. An odd run of backslashes
+            # before the [ escapes it; an even run escapes the backslashes
+            # themselves, leaving the [ live.
+            before = stripped[: match.start()]
+            if (len(before) - len(before.rstrip("\\"))) % 2 == 1:
+                continue
             targets.append((lineno, match.group(1)))
     return targets
 
