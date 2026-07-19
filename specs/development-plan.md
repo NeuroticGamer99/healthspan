@@ -2,13 +2,15 @@
 
 High-level code development plan: the phase sequence from empty repository to a complete v1 platform. This is a living design document — phases are re-scoped as implementation teaches us things — but the **sequencing constraints** and **decision gates** recorded here are binding until explicitly revisited.
 
-Written 2026-07-09, at the close of the spec phase: 34 ADRs Accepted, CI skeleton live ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)), decision-capture convention in [CLAUDE.md](../CLAUDE.md), no code yet. **Status markers on the phase headings below are the plan's rolling state — as of 2026-07-17, Phases 0–3 are complete and real data entry has begun.**
+Written 2026-07-09, at the close of the spec phase: 34 ADRs Accepted, CI skeleton live ([ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)), decision-capture convention in [CLAUDE.md](../CLAUDE.md), no code yet. **Status markers on the phase headings below are the plan's rolling state — as of 2026-07-18, Phases 0–3 are complete, real data entry has begun, and Phase 3.5 (data-lifecycle hardening) is inserted next.**
 
 ---
 
 ## Plan shape
 
-Phases are **vertical slices ending at usable milestones**, not horizontal layers. The guiding constraint: reach "real lab results in an encrypted database, queryable" as early as possible (end of Phase 3), because accumulated real data is itself the design trigger for several deliberately deferred decisions (subjective-observation vocabulary, [ADR-0044](adr/0044-derived-data-points.md) derived-data schema — see [open-questions.md](open-questions.md)).
+Phases **end at usable milestones**, and are **vertical slices by default** — not horizontal layers built ahead of need. The guiding constraint that set the early sequence: reach "real lab results in an encrypted database, queryable" as early as possible (end of Phase 3), because accumulated real data is itself the design trigger for several deliberately deferred decisions (subjective-observation vocabulary, [ADR-0044](adr/0044-derived-data-points.md) derived-data schema — see [open-questions.md](open-questions.md)).
+
+A **horizontal slice earns its place** only when real usage — not speculation — proves a cross-cutting gap that no vertical owns, and only if it still ends at a crisp, testable milestone. Phase 3.5 is the first: real data entry revealed a data-lifecycle-integrity gap (catalog hygiene, entry fidelity) that recurs at every later ingress. That is the anti-speculative-layering principle *working*, not an exception to it — the need was demonstrated, not guessed. Later phases stay coarse and vertical; the same catalog-hygiene concern is **inherited explicitly** by Phase 6 (GUI catalog CRUD) and Phase 7 (import at scale), not rediscovered there.
 
 Rules that apply to every phase:
 
@@ -75,6 +77,29 @@ The FastAPI Core Service, smallest useful surface:
 Both critical-path gates are now decided; Phase 3 is fully ungated.
 
 **Milestone:** real lab results entered into the encrypted database via the CLI, range-flagged correctly, queryable. Real data begins accumulating — which starts the clock on the accumulation-triggered deferrals.
+
+## Phase 3.5 — Data-lifecycle hardening (inserted 2026-07-18)
+
+*Identified after Phase 3 closed, when real data entry exposed gaps no vertical phase owns. Numbered with a decimal deliberately: it inserts a slice without renumbering Phases 4–8, whose numbers are bound to concepts ("Phase 4 = the event-bus/MCP surface", "Phase 7 = ingestion adapters") and referenced from Accepted, immutable ADRs (e.g. [ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md), [ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md), [ADR-0055](adr/0055-biomarker-category-taxonomy.md)) — a renumber would falsify those references and cannot edit the immutable bodies to follow. See "Plan shape" on why this horizontal slice earns its place.*
+
+Phase 3 delivered catalog **growth** (add a biomarker / lab / alias) but no catalog **correction**, and `enter` captures a result's value but not the lab's own printed reference range. The first real report exercised both gaps within one session: a same-concept duplicate biomarker with no in-app way to remove or merge it, and lab-provided ranges dropped on entry. These are not Phase-3 bugs — they are a horizontal **data-lifecycle** concern (catalog hygiene, entry fidelity) that recurs at every later data ingress. Left unhardened they also block Phase 4, whose milestone is MCP over real data *with full fidelity* — which needs a clean, correctable dataset, and manual entry is the only ingress until Phase 7.
+
+Scope — deliberately bounded to the orphan, **not** a second Phase 3:
+
+- **Catalog correction** — `biomarkers` / `labs` remove (unreferenced rows), merge (re-point results and aliases onto a surviving row), and first-class alias management, closing the [open-questions.md](open-questions.md) "CLI catalog editing" deferral and the alias-vs-duplicate trap that produces same-concept duplicates.
+- **Entry fidelity** — `enter` captures the lab's printed reference range into the existing `lab_results.reference_low` / `reference_high` / `reference_text` columns (added by migration 0001, serialized on reads per [ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)), which the schema already carries — and the `results` readback already shows ([ADR-0059](adr/0059-cli-manual-entry-implementation-decisions.md) §5) — but the `enter` write path leaves `NULL`.
+- **A fuller built-in catalog** — the survey's biomarker/alias/category findings seed a more complete starter catalog (names/units/categories are risk-free reference data; a generous seed makes the tool more useful, not less). Range *values* stay conservative — only the validated cells — because a wrong range mis-flags where a missing one merely stays silent.
+
+Explicitly **out of scope** (owned elsewhere, must not be pulled forward, or Phase 3.5 becomes a second Phase 3 that never closes):
+
+- The **range-model expressiveness** cluster — cohort dimensions (sex/age/fasting), non-numeric (categorical/ordinal) comparison, exclusive bounds, `physical_min` — stays in its own range-model PR ([open-questions.md](open-questions.md), Schema), each on its own trigger.
+- The **derived-data** schema stays [ADR-0044](adr/0044-derived-data-points.md)-deferred to Phase 5; the interim rule, now written into the manual-entry policy, is *do not enter derived values* — every one reconstructs from stored components (the reproducible calcs) or from its stored inputs (the opaque ones), so deferring costs no information.
+
+**Scoping instrument — the source survey.** Phase 3.5's precise work items are finalized by a deliberate **discovery activity**: reviewing the owner's real reports across all sources to enumerate the full set of data dimensions up front, rather than migrating the schema reactively one report at a time. Its output is [lab-data-dimensions.md](lab-data-dimensions.md) — a generic domain model of value shapes, range dimensions, catalog-structure needs, and source-format quirks, each marked *validated by real data* vs *known-needed but unexercised* (the axes the owner's single corpus cannot itself exercise: female / pediatric / pregnancy ranges, SI-default units, specialty result types). The survey enumerates *reality*; its **decisions** route to ADRs / [data-model.md](data-model.md) / [open-questions.md](open-questions.md) as usual, so it never becomes a shadow spec.
+
+**Containment.** The survey analyzes real reports **in chat or under `specs/personal/`** (gitignored, raw corpus staged in `specs/personal/ingestion/`) and writes only the *structural distillation* — value shapes, dimensions, biomarker names/units, source-format quirks — to the public survey. Personal values, result patterns, and identifiers never leave `specs/personal/`. This is the [CLAUDE.md](../CLAUDE.md) containment rule applied to a discovery activity; the `/land` containment gate and `spec-reviewer` are the backstops.
+
+**Milestone:** the manual-entry catalog is correctable (no unfixable duplicates) and entry is faithful (lab ranges captured) — a clean, trustworthy dataset ready to be Phase 4's MCP substrate.
 
 ## Phase 4 — AI surface: events, jobs, MCP
 
