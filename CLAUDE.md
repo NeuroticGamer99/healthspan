@@ -18,7 +18,7 @@
 
 When creating or editing any file, verify it contains no personal health data before placing it outside `specs/personal/`.
 
-**Working with real data:** analyze the owner's actual reports and exports in conversation or under `specs/personal/`; publish only the generic structure they reveal — value shapes, units, range dimensions, source-format quirks — never the values or their provenance.
+**Working with real data:** analyze the owner's actual reports and exports in conversation or under `specs/personal/`; publish only the generic structure they reveal — value shapes, units, range dimensions, source-format quirks — never the values or their provenance (attributing a quirk or format to one of the owner's actual sources is provenance, even with no values attached).
 
 ## PowerShell file encoding
 
