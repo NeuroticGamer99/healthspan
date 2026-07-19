@@ -70,5 +70,5 @@ ADR-0007's five security requirements apply to Streamable HTTP unchanged, with t
 - Related: [ADR-0011](0011-event-bus.md) — internal SSE event stream, explicitly unaffected
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — token storage and scoping as applied to the MCP server
 - Related: [specs/security.md](../security.md)
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 3.B
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.6 — ecosystem check: static bearer viable, OAuth not advertised, no transport extension required
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), item 3.B
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 2.6 — ecosystem check: static bearer viable, OAuth not advertised, no transport extension required

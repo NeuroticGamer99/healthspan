@@ -182,6 +182,6 @@ The two-factor model is what actually carries the weight here, unchanged: keycha
 - Extended by: [ADR-0038](0038-backup-execution-and-verification.md) — backup verification definition adopted by the pre-rekey backup; CLI exclusive-access discipline extended to `db backup`
 - Extended by: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — the passphrase handoff channel (TTY/stdin/secret-file, never argv/env) that derive-once-at-startup presupposes
 - Related: [specs/security.md](../security.md) — encryption requirements; no-interpolation rule and its single sanctioned exception
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.C, 2.2, 2.3, 3.C
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), items 2.7, 3.H
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 2.3 — passphrase-only rotation semantics (the sidecar salt as the secret key's analog) and `keys convert-mode`
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), items 1.C, 2.2, 2.3, 3.C
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), items 2.7, 3.H
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 2.3 — passphrase-only rotation semantics (the sidecar salt as the secret key's analog) and `keys convert-mode`

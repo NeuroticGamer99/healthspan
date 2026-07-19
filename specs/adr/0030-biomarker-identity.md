@@ -117,5 +117,5 @@ These constraints compose unchanged with the `STRICT` table declaration recorded
 - Fallback specified by: [ADR-0054](0054-biomarker-name-alias-fallback.md) — the name-based alias fallback this ADR anticipated
 - Related: [open-questions.md](../open-questions.md) — biomarker alias table (reduced, not replaced, by LOINC)
 - Related: [design-rationale.md](../design-rationale.md) — canonical biomarker names and the multi-source lab data rationale
-- Resolves review item 3.E (biomarker identity portion) from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B (value-model portion) — `CHECK` constraints enforcing the numeric/comparator/text model in the schema
+- Resolves review item 3.E (biomarker identity portion) from [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.B (value-model portion) — `CHECK` constraints enforcing the numeric/comparator/text model in the schema

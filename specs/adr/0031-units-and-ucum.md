@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-Health values are meaningless without units, and comparing values across units without normalization produces dangerous errors. The [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md) flagged this as a real safety bug in the reference-range sketch ([ADR-0005](0005-reference-range-frameworks.md)): an ApoB target expressed in mg/dL compared against a result in g/L silently produces garbage flags (a factor-of-100 error). The platform therefore needs (a) a standard, unambiguous way to record units, and (b) a defined path to normalize units before any comparison.
+Health values are meaningless without units, and comparing values across units without normalization produces dangerous errors. The [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md) flagged this as a real safety bug in the reference-range sketch ([ADR-0005](0005-reference-range-frameworks.md)): an ApoB target expressed in mg/dL compared against a result in g/L silently produces garbage flags (a factor-of-100 error). The platform therefore needs (a) a standard, unambiguous way to record units, and (b) a defined path to normalize units before any comparison.
 
 Units appear in at least four places: the unit a lab reported a result in, a canonical unit per biomarker (see [ADR-0030](0030-biomarker-identity.md)'s `canonical_unit`), the unit a reference-range framework's thresholds are expressed in ([ADR-0005](0005-reference-range-frameworks.md)), and the dose of an intervention ([data-model.md](../data-model.md) intervention dose history). All must speak the same units language for normalization to be possible.
 
@@ -77,4 +77,4 @@ The property-based conversion suite in [testing-strategy.md](../testing-strategy
 - Related: [ADR-0032](0032-biomarker-loinc-cardinality.md) — method-variant LOINC codes can carry different reported units
 - External: [ucumvert](https://github.com/dalito/ucumvert) (chosen engine), [pyucum / stomioka-ucum](https://github.com/stomioka/ucum) (evaluated, rejected — remote-API-dependent), [UCUM at NLM](https://ucum.nlm.nih.gov/)
 - Related: [testing-strategy.md](../testing-strategy.md) — the property-based conversion suite is the acceptance harness the `ucumvert`-backed units module must pass
-- Resolves review item 3.E (units portion) and supports 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
+- Resolves review item 3.E (units portion) and supports 3.D from [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)

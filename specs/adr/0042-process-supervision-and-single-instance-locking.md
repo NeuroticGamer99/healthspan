@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) item 3.E found that the launcher's supervision story is weaker than the reliability claims built on it, in two related ways:
+The [2026-07-06 architecture review](../reviews/architecture-review-2026-07-06.md) item 3.E found that the launcher's supervision story is weaker than the reliability claims built on it, in two related ways:
 
 1. **The "supervised" language is not backed by a mechanism.** [ADR-0008](0008-process-lifecycle.md) concedes the launcher has "no automatic restart on crash," yet [ADR-0025](0025-plugin-host-process-matrix.md) sells the Automation Host as "a supervised resident process" whose honest reliability story justifies the fourth process. A crashed Automation Host — or Core Service — currently stays down until the user notices. Either the launcher gains restart-with-backoff, or the "supervised" language is downgraded and an OS service manager is documented as *the* reliability path.
 
@@ -136,5 +136,5 @@ The kernel releases the lock automatically when the holding process exits for an
 - Related: [ADR-0011](0011-event-bus.md) — the `system.process.*` / `system.core.restarted` catalog entries; the reserved-namespace rule this ADR's reporting mechanism respects
 - Related: [ADR-0040](0040-health-endpoint-authentication.md) — liveness polling stays credential-free; the `launcher` token is a separate channel used only for supervision reports
 - Related: [specs/security.md](../security.md) — INV-1 (sole key-holder) is the fact supervision splits on
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.E
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 1.A — supervision reporting via `POST /v1/system/process-reports` and the launcher status file; item 2.5 — the interactive-mode re-prompt's reverse channel (TTY re-spawn / GUI exit-code handoff) named
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.E
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 1.A — supervision reporting via `POST /v1/system/process-reports` and the launcher status file; item 2.5 — the interactive-mode re-prompt's reverse channel (TTY re-spawn / GUI exit-code handoff) named

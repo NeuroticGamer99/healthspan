@@ -208,5 +208,5 @@ The orphan-reaping PID-reuse guard needs each process's creation time, for which
 - Related: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import uses the job system; ad-hoc local imports upload content through it rather than passing server-side paths
 - Related: [ADR-0015](0015-data-export.md) — export output paths are file-typed params subject to the containment rules above
 - Related: [specs/security.md](../security.md) — file path validation under Input Validation
-- Resolves review item 2.8 from [../architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
-- Resolves review item 2.3 from [../architecture-review-2026-07-06.md](../architecture-review-2026-07-06.md) — job lifetime bounds so ephemeral tokens cannot live forever
+- Resolves review item 2.8 from [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)
+- Resolves review item 2.3 from [architecture-review-2026-07-06.md](../reviews/architecture-review-2026-07-06.md) — job lifetime bounds so ephemeral tokens cannot live forever

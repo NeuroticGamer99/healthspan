@@ -241,5 +241,5 @@ This ADR adds **INV-5** to the invariants table in [security.md](../security.md)
 - Extended by: [ADR-0051](0051-auth-lifecycle-and-rate-limiting-implementation-decisions.md) — limiter defaults and `429` shape, rotation as in-place hash replacement, self-revocation refusal, REST-routed MCP-secret rotation, `cli-admin` publish-namespace members
 - Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — the `supervise` scope and `launcher` token serve its supervision-report endpoint (review 2026-07-07 item 1.A)
 - Related: [ADR-0027](0027-audit-trail-and-corrections.md) — the pre-delete backup offer under these scopes (review 2026-07-07 item 1.B)
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.6 — MCP client-facing credential spec (format, hashed keyring storage, rotation command)
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), item 2.1 and the auth items of 2.10
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 2.6 — MCP client-facing credential spec (format, hashed keyring storage, rotation command)

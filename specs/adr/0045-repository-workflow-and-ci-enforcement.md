@@ -106,4 +106,4 @@ The remaining gates — ruff lint+format, pyright strict, the test matrix, the l
 - Related: [ADR-0036](0036-plugin-package-installation-integrity.md) — the hash-verification discipline the gitleaks install step follows
 - Related: [ADR-0023](0023-distribution-mechanism.md) — `publish.yml`, which gains the release-blocking pip-audit step when dependencies exist
 - Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — example of the cross-platform seam the 3-OS matrix exists to test
-- Resolves (docs half): [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 4.B — index/docs generate-or-test; the code-facing half waits for enforcement code to exist
+- Resolves (docs half): [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 4.B — index/docs generate-or-test; the code-facing half waits for enforcement code to exist

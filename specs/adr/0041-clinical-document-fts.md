@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-Clinical documents and visit notes ([data-model.md](../data-model.md)) are among the highest-value data types for AI clients, and the `body` free-text column is their primary queryable surface — an AI client answers "what did my cardiologist say about my LDL trajectory?" by searching clinician narrative, not structured values. [open-questions.md](../open-questions.md) left the search strategy undecided among three options: SQLite FTS5, application-level scan in the Core Service, or embedding-based semantic search via a plugin. The [architecture review](../architecture-review-2026-07-06.md) (item 3.D) recommended resolving it now — and deciding it *with the documents table*, so the index and its triggers ship in migration 0001 rather than being retrofitted onto a populated table later.
+Clinical documents and visit notes ([data-model.md](../data-model.md)) are among the highest-value data types for AI clients, and the `body` free-text column is their primary queryable surface — an AI client answers "what did my cardiologist say about my LDL trajectory?" by searching clinician narrative, not structured values. [open-questions.md](../open-questions.md) left the search strategy undecided among three options: SQLite FTS5, application-level scan in the Core Service, or embedding-based semantic search via a plugin. The [architecture review](../reviews/architecture-review-2026-07-06.md) (item 3.D) recommended resolving it now — and deciding it *with the documents table*, so the index and its triggers ship in migration 0001 rather than being retrofitted onto a populated table later.
 
 [ADR-0034](0034-clinical-document-storage.md) decided where the *original binary* lives (content-addressed BLOBs inside the encrypted database) and explicitly disclaimed the search question: FTS indexes the extracted `body` text, not the stored binary. This ADR decides that separate concern.
 
@@ -109,6 +109,6 @@ Embedding-based semantic search is genuinely valuable and explicitly *not* rejec
 - Related: [ADR-0010](0010-cli-plugin-model.md) — embedding/semantic search as a future `analysis`/`query` plugin layer over FTS
 - Related: [api-reference.md](../api-reference.md) — MCP tool output contract (review 3.G) governs returned `body` free text
 - Related: [data-model.md](../data-model.md) — Clinical Documents & Visit Notes schema
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.D — FTS5 external-content over `body`, encryption inheritance, trigger mechanics, embeddings as a future in-boundary plugin layer
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 3.B — update trigger narrowed to `AFTER UPDATE OF body` so metadata-only updates cause no index churn
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.D — FTS5 external-content over `body`, encryption inheritance, trigger mechanics, embeddings as a future in-boundary plugin layer
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 3.B — update trigger narrowed to `AFTER UPDATE OF body` so metadata-only updates cause no index churn
 - Resolves: [open-questions.md](../open-questions.md) — "Clinical documents — full-text search strategy"

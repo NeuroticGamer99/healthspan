@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-[ADR-0024](0024-plugin-extensions.md) (Accepted) gave plugins `PLUGIN_PACKAGES` and a curated catalog of approved packages at pinned versions. The [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md) (item 2.7) found two gaps in it:
+[ADR-0024](0024-plugin-extensions.md) (Accepted) gave plugins `PLUGIN_PACKAGES` and a curated catalog of approved packages at pinned versions. The [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md) (item 2.7) found two gaps in it:
 
 1. **Version pins don't authenticate content.** A pin says *which release* was meant, not *what bytes* arrive. A compromised package index (or a re-uploaded artifact) can serve different content under the same version string, and the loader would install it silently.
 2. **The loader installs before it validates.** ADR-0024's loader sequence installs `PLUGIN_PACKAGES` (step 4) before building the dependency graph and checking cycles and conflicts (steps 5–7) — so a plugin that is about to fail validation gets its packages installed anyway, mutating the environment for nothing.
@@ -98,5 +98,5 @@ The age gate ([ADR-0020](0020-plugin-registry.md)) and the hash lock are complem
 - Related: [ADR-0023](0023-distribution-mechanism.md) — `uv` toolchain that generates the catalog and installs into the tool environment
 - Related: [specs/security.md](../security.md) — plugin supply-chain paragraph
 - Related: [specs/testing-strategy.md](../testing-strategy.md) — hash-mismatch rejection, validation-installs-nothing, and static-extraction test targets
-- Resolves review item 2.7 from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
-- Resolves review item 2.8 from [architecture-review-2026-07-06.md](../architecture-review-2026-07-06.md)
+- Resolves review item 2.7 from [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)
+- Resolves review item 2.8 from [architecture-review-2026-07-06.md](../reviews/architecture-review-2026-07-06.md)

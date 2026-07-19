@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The clinical documents data type ([data-model.md](../data-model.md)) stores a `source_file_hash` — the SHA-256 of the original imported file — which implies the original (lab PDF, CCDA export, FHIR DocumentReference payload) is retained somewhere. Nothing specified where. The [architecture review](../architecture-review-2026-06-10.md) (item 2.9) flagged the default failure mode: a plain `documents/` directory next to the database would be plaintext PHI outside the SQLCipher encryption boundary, silently voiding the trust model's guarantees ([security.md](../security.md)) — "cloud sync of the encrypted file is safe" and "device theft yields ciphertext" are both false the moment a folder of original PDFs sits beside the database.
+The clinical documents data type ([data-model.md](../data-model.md)) stores a `source_file_hash` — the SHA-256 of the original imported file — which implies the original (lab PDF, CCDA export, FHIR DocumentReference payload) is retained somewhere. Nothing specified where. The [architecture review](../reviews/architecture-review-2026-06-10.md) (item 2.9) flagged the default failure mode: a plain `documents/` directory next to the database would be plaintext PHI outside the SQLCipher encryption boundary, silently voiding the trust model's guarantees ([security.md](../security.md)) — "cloud sync of the encrypted file is safe" and "device theft yields ciphertext" are both false the moment a folder of original PDFs sits beside the database.
 
 Originals are worth retaining: extraction into the `body` text column is lossy (layout, signatures, charts in lab reports), parser improvements motivate re-extraction, and the source document itself has reference value. So the question is not *whether* to keep them but *where* — inside which encryption boundary.
 
@@ -79,4 +79,4 @@ If document volume ever outgrows the single-file model, the designed escape is o
 - Related: [ADR-0019](0019-multi-device-sync.md) — backup remains the single sync-safe artifact; cold-store sync properties noted for the escape hatch
 - Related: [ADR-0015](0015-data-export.md) — saving an original to disk is an export
 - Related: [data-model.md](../data-model.md) — clinical documents schema considerations; [open-questions.md](../open-questions.md) FTS strategy is unaffected (FTS indexes extracted text, not the binary)
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 2.9
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), item 2.9
