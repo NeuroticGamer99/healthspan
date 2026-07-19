@@ -146,4 +146,4 @@ The launcher does hold one credential — the `supervise`-scoped `launcher` toke
 - Related: [ADR-0008](0008-process-lifecycle.md) — launcher readiness gating
 - Related: [specs/observability.md](../observability.md) — health endpoint and metrics specifications
 - Related: [specs/security.md](../security.md) — Authentication section wording
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 1.E
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 1.E

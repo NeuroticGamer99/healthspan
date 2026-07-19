@@ -33,4 +33,4 @@ TBD — deferred. [ADR-0030](0030-biomarker-identity.md) stands without this: `b
 - Related: [ADR-0018](0018-fhir-interoperability.md) — reported LOINC feeds `Observation.code` fidelity
 - Related: [open-questions.md](../open-questions.md) — biomarker alias resolution
 - Related: [design-rationale.md](../design-rationale.md) — longitudinal series integrity and assay/method variability
-- Raised by review item 3.E follow-up in [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
+- Raised by review item 3.E follow-up in [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)

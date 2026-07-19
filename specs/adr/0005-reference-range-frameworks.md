@@ -108,6 +108,6 @@ Notes:
 - Related: [data-model.md](../data-model.md)
 - Depends on: [ADR-0030](0030-biomarker-identity.md) — biomarker `canonical_unit` and the result value model comparison must respect
 - Depends on: [ADR-0031](0031-units-and-ucum.md) — UCUM unit strings and unit-normalized comparison
-- Resolves review item 3.D from [architecture-review-2026-06-10.md](../architecture-review-2026-06-10.md)
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B (framework portion) — `UNIQUE(framework_id, biomarker_id, effective_date)` + partial default index + deterministic point-in-time lookup rule; STRICT-legal `effective_date TEXT`
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 3.C — `framework_ranges` integrity CHECKs (no inverted range; no contentless row)
+- Resolves review item 3.D from [architecture-review-2026-06-10.md](../reviews/architecture-review-2026-06-10.md)
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.B (framework portion) — `UNIQUE(framework_id, biomarker_id, effective_date)` + partial default index + deterministic point-in-time lookup rule; STRICT-legal `effective_date TEXT`
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 3.C — `framework_ranges` integrity CHECKs (no inverted range; no contentless row)

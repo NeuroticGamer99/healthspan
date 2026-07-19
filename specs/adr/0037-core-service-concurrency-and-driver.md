@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) (item 3.C) found that nothing in the specs says how the synchronous SQLCipher driver meets async FastAPI. The default failure mode — calling the driver inside `async def` endpoints — blocks the event loop, stalling the SSE stream (ADR-0011) and every concurrent request while query work runs. ADR-0028 decided a persistent connection pool exists; it did not decide the pool's structure, the threading model, or where blocking work (blob streaming, backups) runs. Every endpoint inherits this decision, which is why it must be written down before anything downstream assumes an answer.
+The [2026-07-06 architecture review](../reviews/architecture-review-2026-07-06.md) (item 3.C) found that nothing in the specs says how the synchronous SQLCipher driver meets async FastAPI. The default failure mode — calling the driver inside `async def` endpoints — blocks the event loop, stalling the SSE stream (ADR-0011) and every concurrent request while query work runs. ADR-0028 decided a persistent connection pool exists; it did not decide the pool's structure, the threading model, or where blocking work (blob streaming, backups) runs. Every endpoint inherits this decision, which is why it must be written down before anything downstream assumes an answer.
 
 A second question was folded in during resolution: whether to move from the Python DB-API driver (`sqlcipher3`, named in ADR-0013) to **apsw** for more direct SQLite control — apsw has no implicit transaction management (the defect class ADR-0035 had to specify around), exposes exact SQLite error codes, and gives fine-grained control of the backup and incremental-blob APIs. SQLite lock-in was accepted as a non-issue going in: portability is already fictional (SQLCipher, the pragma discipline, WAL semantics, FTS5, and the supersession SQL are all SQLite-specific, and design-rationale.md no longer offers PostgreSQL as an option).
 
@@ -134,4 +134,4 @@ Facts established while resolving the driver question, recorded so future revisi
 - Related: [ADR-0012](0012-job-abstraction.md) — long-running work belongs in job children, which is why a small threadpool suffices
 - Related: [ADR-0023](0023-distribution-mechanism.md) — the wheel-availability constraint that disqualified source-built apsw
 - Related: [ADR-0036](0036-plugin-package-installation-integrity.md) — the pin-and-hash-verify discipline applied to the wheel channel
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.C — sync/async bridging model (and the apsw driver question raised during resolution)
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.C — sync/async bridging model (and the apsw driver question raised during resolution)

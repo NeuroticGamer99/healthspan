@@ -20,15 +20,15 @@ accurate at `3d6975f` and are not maintained afterward. Severity is scoped to th
   masses, 3 frameworks), limiter parameters, cursor semantics, natural keys and partial
   unique indexes, CLI manual-entry behaviors, alias routes — found no falsehoods beyond
   findings A1/A2 below.
-- [api-reference.md](api-reference.md) ↔ all 26 registered routes: paths, methods, scopes,
+- [api-reference.md](../api-reference.md) ↔ all 26 registered routes: paths, methods, scopes,
   and error behavior match; every remaining *Endpoints TBD* marker corresponds to
   legitimately-future surface (Phase 4+), none hides shipped surface.
-- [data-model.md](data-model.md) ↔ migrations 0001–0005: exact match (categories + reserved
+- [data-model.md](../data-model.md) ↔ migrations 0001–0005: exact match (categories + reserved
   row + delete trigger, `category_id` FK, `biomarker_aliases`, `molar_mass` CHECK, framework
   tables, natural-key indexes).
-- [security.md](security.md) INV-1…INV-6: upheld or vacuously N/A (plugin and annotate
+- [security.md](../security.md) INV-1…INV-6: upheld or vacuously N/A (plugin and annotate
   surfaces not yet built); the nine-scope vocabulary matches `tokens.SCOPES` exactly.
-- [observability.md](observability.md) and [testing-strategy.md](testing-strategy.md) ↔
+- [observability.md](../observability.md) and [testing-strategy.md](../testing-strategy.md) ↔
   code and `ci.yml`: structured-log fields, metrics shape, serial CI with canary, 3-OS
   matrix, pinned tool versions, Hypothesis profiles — all reconcile.
 - Personal-data containment scan of `specs/` (excluding `specs/personal/`): clean. The
@@ -40,7 +40,7 @@ accurate at `3d6975f` and are not maintained afterward. Severity is scoped to th
   (`fd08c31`) was a navigation link or status normalization (verified via git diffs).
 - `Decisions:` convention: present on every Phase-3 merge commit; tooling commits correctly
   state "none".
-- [open-questions.md](open-questions.md) §-references all resolve to real sections;
+- [open-questions.md](../open-questions.md) §-references all resolve to real sections;
   deferral symmetry with 0049–0059 holds in both directions (exceptions catalogued in C4).
 
 ---
@@ -48,7 +48,7 @@ accurate at `3d6975f` and are not maintained afterward. Severity is scoped to th
 ## A. Fix inside the soon-immutable ADRs while they are still Proposed
 
 **A1 — SHOULD-FIX (borderline blocker). ADR-0049 §7 dangling deferral.**
-[ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md) line 63: "How to
+[ADR-0049](../adr/0049-core-service-skeleton-implementation-decisions.md) line 63: "How to
 expose API docs *securely* (behind auth, or `monitor`-gated) is a WI-2 question decided
 with the auth layer." WI-2 shipped (ADR-0050/0051) and decided nothing about it; no
 open-questions entry exists anywhere in `specs/`; the code hard-disables all three doc
@@ -57,10 +57,10 @@ never resolved the question. Fix while Proposed: reword to a proper deferral wit
 open-questions entry, or record the decision ("docs stay disabled until X").
 
 **A2 — SHOULD-FIX. ADR-0050 §5 makes a security claim the shipped limiter does not
-deliver.** [ADR-0050](adr/0050-token-store-and-auth-implementation-decisions.md) line 41
+deliver.** [ADR-0050](../adr/0050-token-store-and-auth-implementation-decisions.md) line 41
 (echoed line 58): "The unauthenticated-failure audit write is bounded by the WI-2b rate
 limiter once it lands." It is not: every throttled attempt still writes an `auth_audit`
-row (`api_security.py:325-338`; contractual at [api-reference.md](api-reference.md) line 23
+row (`api_security.py:325-338`; contractual at [api-reference.md](../api-reference.md) line 23
 "A rate-limited request writes an `auth_audit` row"), and 429s are answered immediately, so
 per-request audit growth under a local flood is unchanged. The limiter bounds its own
 in-memory state, not audit-table growth; ADR-0051 does not correct the claim. The same
@@ -69,15 +69,15 @@ has closed — fix in the same edit. Alternative: consciously accept the unbound
 property (mitigated by the loopback-only default bind) and say so.
 
 **A3 — MINOR. ADR-0053 §2 misleading term.**
-[ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md) line 39 says the pagination
+[ADR-0053](../adr/0053-read-endpoint-surface-and-pagination.md) line 39 says the pagination
 cursor encodes "a schema version"; the code encodes a cursor-*format* version
 (`reads.py:44`, `CURSOR_VERSION = 1`), unrelated to the database `schema_version`. Reword
 to "format version" while editable.
 
 **A4 — MINOR. ADR-0055 §2 implies an app-level delete-guard mechanism.**
-[ADR-0055](adr/0055-biomarker-category-taxonomy.md) line 73 describes the reserved-row
+[ADR-0055](../adr/0055-biomarker-category-taxonomy.md) line 73 describes the reserved-row
 guard as "mirroring ADR-0051's reserved-name guard" (an app-level check); the implementing
-[ADR-0057](adr/0057-reference-data-and-catalog-import-implementation-decisions.md) §1 chose
+[ADR-0057](../adr/0057-reference-data-and-catalog-import-implementation-decisions.md) §1 chose
 a SQL `BEFORE DELETE` trigger and declares it the single enforcement point (migration
 `0004`, trigger `categories_reserved_no_delete`). Not a contradiction — 0055 delegates
 mechanics to the implementing WI — but frozen as-is it permanently implies a mechanism
@@ -92,7 +92,7 @@ immutable records built on still-editable contracts. Order the flips 0049–0053
 together with) 0054–0059.
 
 **B2 — SHOULD-FIX. ADR-0052's Links understate its extenders.**
-[ADR-0052](adr/0052-bulk-import-identity-and-conflict-resolution.md) line 98 declares only
+[ADR-0052](../adr/0052-bulk-import-identity-and-conflict-resolution.md) line 98 declares only
 "Extended by: ADR-0054", but ADR-0057 generalized the import engine (catalog-table flags,
 four new tables) and ADR-0058 §6 added two more plus `nullable_key`; the importable
 registry 0052 fixed at two tables now has eight (`imports.py`, `IMPORT_ORDER`). 0052
@@ -101,7 +101,7 @@ anticipated exactly this (line 86: "extended, not contradicted, when they land")
 
 **B3 — SHOULD-FIX. ADR-0053's Links carry no Extended-by entries at all.** Since 0053
 shipped: (a) ADR-0055 changed the `category` filter from free-text equality to
-case-insensitive category-name lookup — [api-reference.md](api-reference.md) line 107
+case-insensitive category-name lookup — [api-reference.md](../api-reference.md) line 107
 itself calls this a "breaking change from the Phase 2 free-text `category` filter"; (b)
 ADR-0058 added the `?framework=` parameter to 0053's own lab-results routes; (c)
 ADR-0057/0059 grew the surface from eight `read`-scoped routes over four resources to
@@ -110,31 +110,31 @@ from "Related" to "Extends") — or accept 0053 explicitly as a Phase-2 historic
 whose surface enumeration is dated.
 
 **B4 — SHOULD-FIX. Accepted-side navigation-link gaps (all permitted in-place edits).**
-- [ADR-0013](adr/0013-encryption-at-rest.md) Links is missing `Extended by: ADR-0034`
-  ([ADR-0034](adr/0034-clinical-document-storage.md) line 75 declares "Extends: ADR-0013").
+- [ADR-0013](../adr/0013-encryption-at-rest.md) Links is missing `Extended by: ADR-0034`
+  ([ADR-0034](../adr/0034-clinical-document-storage.md) line 75 declares "Extends: ADR-0013").
   The only broken extend/extended-by pair in ADRs 0001–0048.
-- [ADR-0040](adr/0040-health-endpoint-authentication.md) mandates a per-source-address rate
+- [ADR-0040](../adr/0040-health-endpoint-authentication.md) mandates a per-source-address rate
   cap with no number; ADR-0049 §4 fixes it (30 req / rolling 1 s) but lists 0040 only as
   "Related". Add `Extended by: ADR-0049` to 0040.
-- [ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md) has no
+- [ADR-0042](../adr/0042-process-supervision-and-single-instance-locking.md) has no
   counterpart link for ADR-0049 decision 6, which repurposes 0042's advisory lock as the
   `db migrate`/`backup`/`restore` service-up guard.
 
 **B5 — MINOR. Index and verb nits (uncaught by CI, which never compares titles).**
 `adr/README.md` title drift for 0040 ("…Liveness Exemption and Monitor Scope" vs the file's
 "…the Liveness Exemption and the Monitor Scope") and 0043 ("the Annotate Scope" vs "the
-`annotate` Scope"). [ADR-0032](adr/0032-biomarker-loinc-cardinality.md) says "Extends:
-ADR-0030" while [ADR-0030](adr/0030-biomarker-identity.md) lists 0032 only as "Related" —
+`annotate` Scope"). [ADR-0032](../adr/0032-biomarker-loinc-cardinality.md) says "Extends:
+ADR-0030" while [ADR-0030](../adr/0030-biomarker-identity.md) lists 0032 only as "Related" —
 asymmetric verbs, harmless while 0032 is a stub.
 
 ## C. Decisions to make deliberately at lock-in (not text defects)
 
 **C1 — Non-loopback posture (the finding that touches decision content).** Accepting
 ADR-0049 hardens its §Binding-posture LAN-bind opt-in while the open question
-([open-questions.md](open-questions.md) lines 182-185) still offers resolution (b) —
+([open-questions.md](../open-questions.md) lines 182-185) still offers resolution (b) —
 rejecting non-loopback hosts in the config parser — which would then require a superseding
 ADR instead of an in-place amendment. Related wording issue:
-[security.md](security.md) lines 92-95 describe Host-header validation and CORS as *active*
+[security.md](../security.md) lines 92-95 describe Host-header validation and CORS as *active*
 controls ("the server rejects any request whose Host header does not match…"), but neither
 is implemented (`service.py` adds only Metrics/RequestID middleware). security.md is a
 mutable standing-requirements doc — those controls could be re-worded as "required before
@@ -142,9 +142,9 @@ any non-loopback bind", which is what open-questions already says. Decide (a) vs
 flipping 0049, or flip with eyes open.
 
 **C2 — ADR-0020 stub carries load-bearing normative content.** The "Proposed — stub" with
-Decision Outcome "TBD" ([ADR-0020](adr/0020-plugin-registry.md) lines 326-341) contains a
+Decision Outcome "TBD" ([ADR-0020](../adr/0020-plugin-registry.md) lines 326-341) contains a
 binding requirement — the publication age gate, default `min_release_age_days = 14` — that
-Accepted [ADR-0036](adr/0036-plugin-package-installation-integrity.md) treats as part of
+Accepted [ADR-0036](../adr/0036-plugin-package-installation-integrity.md) treats as part of
 its stated control set (lines 45, 76). An Accepted decision depends on content that lives
 only in a TBD stub. Promote the age-gate content to a decided ADR (Phase 7 timing works) or
 record the dependency deliberately.
@@ -181,7 +181,7 @@ repo at "no code yet" (line 5, historically dated but misleading in a living doc
 per-phase status markers.
 
 **D2 — MINOR. specs/README.md** design-documents index omits
-[molar-mass-provenance.md](molar-mass-provenance.md) (created in PR #28); the
+[molar-mass-provenance.md](../molar-mass-provenance.md) (created in PR #28); the
 architecture-review files are deliberately unlisted, but this is a durable design doc.
 
 **D3 — MINOR. open-questions.md line 52** says the cohort-dimension instances arose "in a

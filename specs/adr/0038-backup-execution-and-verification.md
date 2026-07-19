@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) (item 2.1) found that scheduled backups — the platform's entire recovery story (ADR-0027 rejects event sourcing partly because backups carry recovery; ADR-0019 makes backup output the only sync-safe artifact) — have **no process that can run them**. ADR-0019 prescribes "a scheduled `healthspan db backup`," but: heavyweight job children never receive the key (INV-1, ADR-0012); the Automation Host has no key and cannot run a CLI command that prompts for a passphrase; and the CLI path requires a human present. The only process that can open the database while the platform runs is the Core Service.
+The [2026-07-06 architecture review](../reviews/architecture-review-2026-07-06.md) (item 2.1) found that scheduled backups — the platform's entire recovery story (ADR-0027 rejects event sourcing partly because backups carry recovery; ADR-0019 makes backup output the only sync-safe artifact) — have **no process that can run them**. ADR-0019 prescribes "a scheduled `healthspan db backup`," but: heavyweight job children never receive the key (INV-1, ADR-0012); the Automation Host has no key and cannot run a CLI command that prompts for a passphrase; and the CLI path requires a human present. The only process that can open the database while the platform runs is the Core Service.
 
 Two adjacent defects ride along: backup verification exists only as ADR-0028's mandatory pre-rekey check (a recovery story built on unverified backups is a hope, not a story), and ADR-0012's lightweight-job definition ("asyncio tasks within the Core Service process") predates [ADR-0037](0037-core-service-concurrency-and-driver.md) and would put a driver-blocking backup on the event loop — exactly what ADR-0037 prohibits.
 
@@ -56,7 +56,7 @@ The CLI command remains for stopped-service use — the rekey flow, restores, an
 
 ### CLI `healthspan db restore`: closing the recovery loop
 
-`healthspan db restore <backup-file>` installs a verified backup as the live database — the [2026-07-07 review](../architecture-review-2026-07-07.md) (item 2.1) found this last mile unspecified: every backup was verified when made, but nothing verified the artifact before it *became* the live database. `--latest` selects the newest published backup pair from the configured `[backup]` destination directory — the routine case ADR-0019 describes ("restore from the latest synced backup").
+`healthspan db restore <backup-file>` installs a verified backup as the live database — the [2026-07-07 review](../reviews/architecture-review-2026-07-07.md) (item 2.1) found this last mile unspecified: every backup was verified when made, but nothing verified the artifact before it *became* the live database. `--latest` selects the newest published backup pair from the configured `[backup]` destination directory — the routine case ADR-0019 describes ("restore from the latest synced backup").
 
 Restore is **offline-only, structurally**: there is no in-service restore job and cannot be — the live file cannot be swapped under a running Core Service. The command refuses while Core Service is up and holds the ADR-0042 advisory lock on `<database-path>.lock` for its duration — the same baton discipline as the launcher's migration phase, so even the restore window is single-instance-protected.
 
@@ -133,5 +133,5 @@ The pipeline is the backup pipeline mirrored — **verify-then-install**, so not
 - Related: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — the launcher migration phase that brings an older restored schema forward
 - Related: [ADR-0013](0013-encryption-at-rest.md) — `healthspan init --restore` recovers credentials; `db restore` installs the data file
 - Related: [specs/security.md](../security.md) — INV-1; single database owner
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 2.1 — scheduled backup execution locus and routine verification
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 2.1 — the restore command and round-trip verification; item 2.5 — `foreign_key_check` added to the verification definition
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 2.1 — scheduled backup execution locus and routine verification
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 2.1 — the restore command and round-trip verification; item 2.5 — `foreign_key_check` added to the verification definition

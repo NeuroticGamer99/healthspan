@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The [2026-07-06 architecture review](../architecture-review-2026-07-06.md) found two gaps on the startup path (items 1.C and 2.2) that are one design surface:
+The [2026-07-06 architecture review](../reviews/architecture-review-2026-07-06.md) found two gaps on the startup path (items 1.C and 2.2) that are one design surface:
 
 1. **Two documents describe two different migration designs.** [ADR-0008](0008-process-lifecycle.md) (launcher step 3: "runs any pending database migrations") and [ADR-0035](0035-migration-execution-semantics.md) ("the launcher runs migrations before the Core Service starts" — its exclusive-access argument depends on it) assume the launcher/CLI path; [observability.md](../observability.md) said "Core Service (runs migrations on startup)" and listed "migration pending" as a health-endpoint 503 cause. If Core Service ran migrations itself, the migration runner's foreign-keys-off connection would coexist with the runtime pool's foreign-keys-on factory in one process, and ADR-0035's exclusive-access reasoning would be fiction.
 2. **Nothing specifies how the master passphrase reaches the process that derives the key.** [ADR-0028](0028-key-derivation-and-rotation.md) decides *derive once, at Core Service startup* but not how the passphrase gets there. The sequence between "user types passphrase," "migrations run against the encrypted database," and "Core Service derives and holds the key" must be one coherent story — reading even `schema_version` requires opening the encrypted database, so whoever checks for pending migrations must hold the key first.
@@ -124,4 +124,4 @@ The launcher (and a GUI parent) must not retain the passphrase after handoff: th
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — the stdin-not-argv/env precedent for job tokens
 - Related: [ADR-0042](0042-process-supervision-and-single-instance-locking.md) — resolves the "Constraint on future supervision (T2.8)" named above; supervision restarts the key-holder unattended only in full-auto-unlock mode, so this ADR's drop-after-handoff decision stands
 - Related: [specs/observability.md](../observability.md) — startup order corrected; "migration pending" 503 removed
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), items 1.C and 2.2
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), items 1.C and 2.2

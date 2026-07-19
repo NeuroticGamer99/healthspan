@@ -269,4 +269,4 @@ Conforming edits required by this ADR (all target documents are Proposed or free
 - Related: [ADR-0033](0033-plaintext-artifact-disposal.md) — disposal policy behind the watch folder's `dispose` action; its rule 6 (non-interactive runs must choose) is why the action is config-declared
 - Related: [ADR-0034](0034-clinical-document-storage.md) — the source-disposal offer whose unattended form is the watch folder's config-declared post-import action
 - Related: [specs/security.md](../security.md) — Security Invariants
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 1.A and 3.H
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), items 1.A and 3.H

@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-ADR-0009 (Accepted) chose a custom migration runner and promised "atomic per migration." The [architecture review](../architecture-review-2026-06-10.md) found the promise does not survive contact with the driver, and two adjacent defects in the same ADR (items 3.F and 1.G — the latter deferred here because fixing it changes decision content in an Accepted ADR):
+ADR-0009 (Accepted) chose a custom migration runner and promised "atomic per migration." The [architecture review](../reviews/architecture-review-2026-06-10.md) found the promise does not survive contact with the driver, and two adjacent defects in the same ADR (items 3.F and 1.G — the latter deferred here because fixing it changes decision content in an Accepted ADR):
 
 1. **The driver silently breaks migration atomicity** (3.F). Python's DB-API sqlite driver — and `sqlcipher3`, a pysqlite fork — has legacy implicit transaction handling: in its default mode it auto-begins transactions around DML and issues implicit commits around DDL statements. A migration file containing several `CREATE TABLE`/`ALTER TABLE` statements gets committed piecemeal; a mid-file failure leaves the schema half-migrated — exactly the partial state ADR-0009 says cannot happen. ADR-0009's runner sketch ("begin a transaction, execute the SQL") assumed transaction control it never actually had.
 2. **Two load-bearing pragmas were never recorded as decisions** (3.F). `PRAGMA foreign_keys` is **off by default** in SQLite and per-connection — every FK constraint in the schema is decorative on any connection that forgets it. `PRAGMA journal_mode=WAL` is what makes concurrent reads under FastAPI work; [ADR-0028](0028-key-derivation-and-rotation.md)'s connection-pool decision leans on it and explicitly deferred the pragma discipline to this review item.
@@ -92,7 +92,7 @@ Two integrity constraints belong to the tables they constrain and are recorded i
 - Related: [ADR-0039](0039-startup-sequence-and-passphrase-handoff.md) — makes launcher-owned migrations definitive and specifies the surrounding passphrase/key sequence; the Core Service refuses to start on a `schema_version` mismatch
 - Related: [ADR-0019](0019-multi-device-sync.md) — WAL sidecar files and live-file sync unsafety
 - Related: [specs/testing-strategy.md](../testing-strategy.md) — migration test targets updated to match (mid-file atomicity, foreign_key_check, pragma verification)
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 3.F (transaction discipline, pragmas) and 1.G (both corrections)
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.B — STRICT tables and `application_id` (the value-model CHECKs and framework uniqueness are recorded in ADR-0030 and ADR-0005)
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 3.C — `PRAGMA optimize` on connection close added to the pragma discipline
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), items 3.F (transaction discipline, pragmas) and 1.G (both corrections)
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.B — STRICT tables and `application_id` (the value-model CHECKs and framework uniqueness are recorded in ADR-0030 and ADR-0005)
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 3.C — `PRAGMA optimize` on connection close added to the pragma discipline
 - Related: [ADR-0030](0030-biomarker-identity.md) / [ADR-0005](0005-reference-range-frameworks.md) — table-specific integrity constraints (value-model CHECKs; framework uniqueness + lookup rule) that accompany the STRICT and pragma discipline here

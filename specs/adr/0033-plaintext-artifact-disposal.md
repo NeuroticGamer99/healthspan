@@ -4,7 +4,7 @@
 Accepted
 
 ## Context and Problem Statement
-The [architecture review](../architecture-review-2026-06-10.md) found three related defects in how the platform handles plaintext artifacts on disk:
+The [architecture review](../reviews/architecture-review-2026-06-10.md) found three related defects in how the platform handles plaintext artifacts on disk:
 
 1. **The secure-deletion requirement overpromises** (review 2.5). security.md required temporary files to be "overwritten with zeroes (or equivalent) before deletion," implying that overwriting erases data. On modern storage this is false: SSD wear leveling remaps writes to fresh physical blocks, copy-on-write and journaling filesystems (APFS, Btrfs, ZFS; NTFS journaling) preserve prior block contents, filesystem snapshots pin old versions, and cloud-sync version history retains deleted and overwritten files entirely outside the platform's reach ([ADR-0019](0019-multi-device-sync.md) already documents that last point). A security document that promises erasure it cannot deliver violates the platform's honesty standard ([ADR-0013](0013-encryption-at-rest.md)'s threat-model table, [ADR-0026](0026-named-scoped-tokens.md)'s limitations section, [ADR-0028](0028-key-derivation-and-rotation.md)'s zeroization caveat).
 2. **`healthspan db encrypt` deliberately leaves a plaintext health database on disk** (review 2.4). security.md's migration path said the command "retains the original as a backup" — an unbounded-lifetime plaintext copy of the user's full health history, from a platform that applies owner-only permissions and disposal rules to plaintext it holds for seconds.
@@ -101,4 +101,4 @@ The *printed* kit remains governed by ADR-0013's existing physical-custody warni
 - Related: [ADR-0015](0015-data-export.md) — deliberate plaintext exports are user custody, out of scope here
 - Related: [ADR-0034](0034-clinical-document-storage.md) — applies this policy to import-source files and document renders
 - Related: [specs/security.md](../security.md) — Temporary Files and Encryption at Rest sections carry the policy
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), items 2.4, 2.5, 2.6
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), items 2.4, 2.5, 2.6

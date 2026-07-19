@@ -175,9 +175,9 @@ The full command/query split is rejected along with event sourcing. What remains
 
 ## Links
 - Resolves: [open-questions.md](../open-questions.md) — longitudinal data correction, audit trail, event sourcing, CQRS
-- Resolves: [architecture review 2026-06-10](../architecture-review-2026-06-10.md), item 3.A
-- Resolves: [architecture review 2026-07-06](../architecture-review-2026-07-06.md), item 3.A — bulk-import audit granularity (batch-level for inserts)
-- Resolves: [architecture review 2026-07-07](../architecture-review-2026-07-07.md), item 1.B — the pre-delete backup offer names a mechanism each client can reach
+- Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), item 3.A
+- Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.A — bulk-import audit granularity (batch-level for inserts)
+- Resolves: [architecture review 2026-07-07](../reviews/architecture-review-2026-07-07.md), item 1.B — the pre-delete backup offer names a mechanism each client can reach
 - Related: [ADR-0038](0038-backup-execution-and-verification.md) — the `backup.database` job is the in-service pre-delete backup; `healthspan db backup` refuses to run against a live service
 - Related: [ADR-0021](0021-time-series-aggregation.md) — aggregates as rebuildable read models; invalidation via `data.*` events
 - Related: [ADR-0026](0026-named-scoped-tokens.md) — `actor` from token identity; `auth_audit` as the distinct security record

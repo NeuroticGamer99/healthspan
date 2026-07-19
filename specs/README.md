@@ -6,11 +6,13 @@ This directory contains all architectural documentation for the Healthspan platf
 
 ## How this documentation is organized
 
-There are two layers of documentation here, each with a different purpose:
+There are three layers of documentation here, each with a different purpose:
 
 **Design documents** (this directory) are living documents that evolve as the project develops. They capture requirements, design principles, data models, and open questions. They may reference multiple ADRs and synthesize information across concerns.
 
 **Architecture Decision Records** ([`adr/`](adr/)) are immutable historical records. Each ADR captures a single architectural decision: the context, the options considered, and the reasoning behind the choice. Once accepted, an ADR's content is not modified — if a decision changes, a new ADR supersedes the old one. See [`adr/README.md`](adr/README.md) for the full index and status conventions.
+
+**Review records** ([`reviews/`](reviews/)) are point-in-time snapshots — architecture/security reviews and ADR consistency reviews produced at project milestones. Their findings are transferred into ADRs, [open-questions.md](open-questions.md), and the design documents above; the records themselves are kept as immutable historical artifacts. New review reports belong there, not in this top-level directory. See [`reviews/README.md`](reviews/README.md).
 
 The design documents inform ADRs; the ADRs formalize specific decisions that emerge from the design process.
 
