@@ -6,7 +6,7 @@
 
 **What belongs in `specs/personal/`:**
 - Any document containing the database owner's actual health values, lab results, diagnoses, medications, or clinical history
-- The provenance or sequence of the owner's actual records — which lab, which panel, in what order — personal even with no values attached
+- The provenance or sequence of the owner's actual records — which lab, which panel, in what order — is personal even with no values attached
 - Session-orientation files (e.g. `project-context-personal.md`)
 - Any notes that would identify the database owner as an individual
 
