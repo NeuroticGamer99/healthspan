@@ -25,6 +25,7 @@ gate.
   uv run --with "pyright==$PYRIGHT_VERSION" --with "pytest==$PYTEST_VERSION" pyright
   uv run --with "pytest==$PYTEST_VERSION" pytest -q -n auto
   uv run python scripts/check_adr_index.py   # when specs/adr/ is touched
+  uv run python scripts/check_spec_links.py  # when any specs/ .md is touched
   ```
 
   The `--with "pytest==…"` on the **pyright** line is not redundant: it is how CI resolves the test

@@ -57,7 +57,7 @@ table in `specs/adr/README.md`.
 Decisions get written into it **as they are made**, not reconstructed at the end — that
 reconstruction is where decision records go wrong.
 
-Confirm the docs gate still passes: `uv run python scripts/check_adr_index.py`.
+Confirm the docs gates still pass: `uv run python scripts/check_adr_index.py` and `uv run python scripts/check_spec_links.py`.
 
 ## 4. Ask the clarifying questions
 

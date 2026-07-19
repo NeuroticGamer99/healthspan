@@ -4,10 +4,11 @@ name: CI
 # gate content specified in specs/testing-strategy.md (CI Gates).
 #
 # All gates are live as of the first code PR (specs/development-plan.md,
-# Phase 0): secret scanning, ADR-index consistency, ruff lint+format,
-# pyright strict, the 3-OS × Python 3.14 test matrix with the log canary
-# scan, and pip-audit (PR step + daily schedule). Tool versions are pinned
-# in the `env` block below per testing-strategy.md "Workflow provenance";
+# Phase 0): secret scanning, docs consistency (the ADR-index check; the
+# spec-link check was added later by ADR-0061), ruff lint+format, pyright
+# strict, the 3-OS × Python 3.14 test matrix with the log canary scan, and
+# pip-audit (PR step + daily schedule). Tool versions are pinned in the
+# `env` block below per testing-strategy.md "Workflow provenance";
 # actions are SHA-pinned with version comments (Dependabot maintains those;
 # the env-block pins and the gitleaks binary pin are bumped by hand).
 #
@@ -71,7 +72,7 @@ jobs:
         run: ./gitleaks git --no-banner --redact .
 
   docs-consistency:
-    name: ADR index consistency
+    name: Docs consistency (ADR index + spec links)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -79,6 +80,9 @@ jobs:
 
       - name: Check ADR index against files and their Status fields
         run: python3 scripts/check_adr_index.py
+
+      - name: Check every relative markdown link under specs/ resolves
+        run: python3 scripts/check_spec_links.py
 
   lint:
     name: Lint and format (ruff)
