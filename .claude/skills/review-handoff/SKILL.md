@@ -14,9 +14,9 @@ implements the findings in a fresh session.
 
 ## 1. Run the review
 
-Invoke the built-in review via the Skill tool: `Skill(skill: "code-review", args: "high")`.
-If the user passed a different effort level as an argument to this command, pass that instead
-of `high`.
+Run the repo's code-review at high effort — the `/code-review high` command, which an agent
+invokes via the Skill tool: `Skill(skill: "code-review", args: "high")`. If the user passed a
+different effort level as an argument to `/review-handoff`, pass that through instead of `high`.
 
 - Do **not** pass `--comment` or `--fix`. This command is read-only: findings go to the report
   file, and acting on them is the receiving agent's job.
