@@ -6,6 +6,7 @@
 
 **What belongs in `specs/personal/`:**
 - Any document containing the database owner's actual health values, lab results, diagnoses, medications, or clinical history
+- The provenance or sequence of the owner's actual records — which lab, which panel, in what order — personal even with no values attached
 - Session-orientation files (e.g. `project-context-personal.md`)
 - Any notes that would identify the database owner as an individual
 
@@ -16,6 +17,8 @@
 - Anything safe to publish in a public repository
 
 When creating or editing any file, verify it contains no personal health data before placing it outside `specs/personal/`.
+
+**Working with real data:** analyze the owner's actual reports and exports in conversation or under `specs/personal/`; publish only the generic structure they reveal — value shapes, units, range dimensions, source-format quirks — never the values or their provenance.
 
 ## PowerShell file encoding
 
@@ -45,6 +48,8 @@ Before creating or modifying any file in `specs/adr/`:
 4. **Extend, don't modify** — if an accepted ADR needs additions (new fields, new policies that don't reverse the original decision), create a new ADR that extends it. Add an `Extended by ADR-XXXX` navigation link to the original's `## Links` section. Keep the original's status as `Accepted`.
 5. **Minor edits only for typos/links** — fixing a broken link or correcting a typo in an accepted ADR is acceptable without a new ADR. Anything that changes decision content is not.
 6. **Keep the index current** — after any ADR change (new file, status update, title change), update the `## Index` table in `specs/adr/README.md` to reflect it. The index must always match the actual files and their `## Status` fields. (Mechanized by CI's docs-consistency gate, `scripts/check_adr_index.py`.)
+
+Inline status annotations in prose — "(ADR-0055, Proposed)"-style — anywhere in `specs/` are point-in-time: they record the status when the sentence was written and are not kept in sync. The authoritative current status is always the ADR's `## Status` field and the `specs/adr/README.md` index. Do not edit historical annotations to chase status changes, and do not read them as current.
 
 ## Implementation decision capture
 
