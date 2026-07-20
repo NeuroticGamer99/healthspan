@@ -5,8 +5,9 @@ description: Read a code-review report produced by /review-handoff and implement
 
 # /apply-review — implement the findings from a review report
 
-The receiving half of `/review-handoff`. That command runs a review and writes a portable
-report; this one reads the report back and does the work. Assume the report was written by an
+The receiving half of the review-handoff flow: `/review-prep` pins the scope, the user runs
+`/code-review` themselves, and `/review-handoff` writes the findings into a portable report.
+This skill reads that report back and does the work. Assume the report was written by an
 agent that could not see this session, and that **its suggested fixes were never reviewed** —
 they are hints, not instructions. Your job is to re-confirm each finding against the live code,
 then fix what genuinely needs fixing.
