@@ -237,14 +237,24 @@ def adr_status_breakdown() -> dict[str, int]:
         name = path.name
         if name == ADR_TEMPLATE or not name[:4].isdigit():
             continue
-        status = _adr_status(path) or "Unknown"
+        try:
+            status = _adr_status(path) or "Unknown"
+        except UnicodeDecodeError:
+            # A non-UTF-8 ADR is skipped here (dropping its status bucket) rather
+            # than crashing the run -- the docstring promises "Exit 0 always". The
+            # same file is also read by classify() for the ADRs category count,
+            # which emits the "not valid UTF-8 (skipped)" warning, so the file is
+            # still reported; no need to thread warnings through this function.
+            continue
         head = status.split()[0] if status.split() else "Unknown"
         buckets[head] = buckets.get(head, 0) + 1
     return buckets
 
 
 def _adr_status(path: Path) -> str | None:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # utf-8-sig to match classify()'s BOM handling; raises UnicodeDecodeError on
+    # a genuinely non-UTF-8 file, which adr_status_breakdown catches.
+    lines = path.read_bytes().decode("utf-8-sig").splitlines()
     for i, line in enumerate(lines):
         if line.strip() == "## Status":
             for candidate in lines[i + 1 :]:

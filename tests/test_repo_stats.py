@@ -213,6 +213,23 @@ def test_build_report_warns_on_non_utf8_without_crashing(
     assert "not valid UTF-8" in report.warnings[0]
 
 
+def test_build_report_survives_non_utf8_adr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # adr_status_breakdown() reads every ADR for its status BEFORE the guarded
+    # classify loop; a non-UTF-8 ADR must not crash the run (docstring: "Exit 0
+    # always"). Its status bucket is dropped, but the same file's category read
+    # in classify still emits the not-valid-UTF-8 warning, so it is reported.
+    repo = _repo(tmp_path, monkeypatch)
+    (repo / "specs" / "adr" / "0001-good.md").write_text(
+        "## Status\n\nAccepted\n", encoding="utf-8"
+    )
+    (repo / "specs" / "adr" / "0002-bad.md").write_bytes(b"## Status\n\n\xff\xfe\n")
+    report = rs.build_report()  # must not raise
+    assert report.adr_status == {"Accepted": 1}  # bad ADR dropped, good one kept
+    assert any("0002-bad.md" in w and "not valid UTF-8" in w for w in report.warnings)
+
+
 def test_render_markdown_has_table_totals_ratios_and_footnote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
