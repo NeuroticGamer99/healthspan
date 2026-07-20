@@ -78,3 +78,6 @@ observation.
 
 If the user approves fixes: apply, re-run the gates, commit, push, then post the "fixed in `<sha>`"
 replies. Re-requesting a Copilot review after a push is a fresh `/copilot-review` run.
+
+When every review is clean or triaged and the user asks for the merge, finish the chain with
+**`/squash-merge`** — it composes a clean squash message and verifies the result on `origin/main`.
