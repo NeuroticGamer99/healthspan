@@ -16,3 +16,5 @@ living documents.
 | [architecture-review-2026-07-06-worklist.md](architecture-review-2026-07-06-worklist.md) | 2026-07-06 | Work plan for the 2026-07-06 review |
 | [architecture-review-2026-07-07.md](architecture-review-2026-07-07.md) | 2026-07-07 | Architecture & Security Review |
 | [adr-review-2026-07-17.md](adr-review-2026-07-17.md) | 2026-07-17 | ADR & spec consistency sweep |
+| [architecture-review-2026-07-19.md](architecture-review-2026-07-19.md) | 2026-07-19 | Architecture & Security Review (first against implemented code) |
+| [architecture-review-2026-07-19-worklist.md](architecture-review-2026-07-19-worklist.md) | 2026-07-19 | Work plan for the 2026-07-19 review, with PR mapping |
