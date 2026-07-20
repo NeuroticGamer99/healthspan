@@ -13,6 +13,11 @@ step that fails.
 
 - An open PR exists for the current branch: `gh pr view --json number,title,state,headRefName`.
   If not, stop and say so.
+- **Local state matches the remote PR**: `git fetch origin`, then confirm the working tree is
+  clean and `git rev-parse HEAD` equals the PR's `headRefOid` (`gh pr view <N> --json
+  headRefOid`). A mismatch means the message would be composed from commits the PR doesn't have
+  (or miss ones it does); stop and reconcile. The fetch also refreshes `origin/main`, which
+  step 2's `rev-list` depends on — a stale tracking ref mis-picks the first commit.
 - **All checks green**: `gh pr checks <N>` must exit 0. Exit code 8 means checks are still
   *pending* — that is not green; watch in the background (`gh pr checks <N> --watch`,
   `run_in_background: true`) and merge only when everything has passed. A red check stops the
@@ -51,17 +56,20 @@ gh pr merge <N> --squash --delete-branch --subject "<subject>" --body-file - <<'
 EOF
 ```
 
-**`--body-file -` is the only stdin form.** `--body -` is accepted without error and sets the
-literal one-character string `-` as the commit body — `gh` does not follow `git commit -F -`
-conventions. This exact mistake shipped PR #43's squash commit (`97e43ce`, 2026-07-20) with a
+**`--body-file -` is the only stdin form, and the heredoc delimiter must be quoted** (`<<'EOF'`
+— unquoted, the shell runs command substitution on backticks and expands `$` inside the
+message). `--body -` is accepted without error and sets the literal one-character string `-` as
+the commit body — `gh` does not follow `git commit -F -` conventions. This exact mistake shipped PR #43's squash commit (`97e43ce`, 2026-07-20) with a
 body of "`-`", and the same flag pair exists on `gh pr create` (see `/ship`, which carries the
 same rule for PR bodies).
 
 ## 4. Verify — mandatory
 
-A zero exit is not a clean merge; read the state back:
+A zero exit is not a clean merge; refresh the tracking ref (do not trust `gh pr merge` to have
+fast-forwarded it — that behavior is incidental, not guaranteed) and read the state back:
 
 ```bash
+git fetch origin main
 git log --format=%B -1 origin/main
 ```
 
