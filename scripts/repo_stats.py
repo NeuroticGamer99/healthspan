@@ -239,11 +239,11 @@ def adr_status_breakdown() -> dict[str, int]:
             continue
         try:
             status = _adr_status(path) or "Unknown"
-        except UnicodeDecodeError:
-            # A non-UTF-8 ADR is skipped here (dropping its status bucket) rather
-            # than crashing the run -- the docstring promises "Exit 0 always". The
-            # same file is also read by classify() for the ADRs category count,
-            # which emits the "not valid UTF-8 (skipped)" warning, so the file is
+        except UnicodeDecodeError, OSError:
+            # A non-UTF-8 or otherwise-unreadable ADR is skipped here (dropping
+            # its status bucket) rather than crashing the run -- the docstring
+            # promises "Exit 0 always". The same file is also read by classify()
+            # for the ADRs category count, which emits a warning, so the file is
             # still reported; no need to thread warnings through this function.
             continue
         head = status.split()[0] if status.split() else "Unknown"
@@ -280,6 +280,14 @@ def build_report() -> Report:
                 fc, warn = classify(path, lang)
             except UnicodeDecodeError:
                 report.warnings.append(f"{_rel(path)}: not valid UTF-8 (skipped)")
+                continue
+            except OSError as exc:
+                # PermissionError, a file removed mid-scan, a directory globbed as
+                # a file: skip with a warning rather than crash -- the docstring
+                # promises "Exit 0 always; any unreadable file is ... skipped".
+                report.warnings.append(
+                    f"{_rel(path)}: unreadable ({exc.strerror or exc}); skipped"
+                )
                 continue
             counts.add(fc)
             if warn:
@@ -406,7 +414,9 @@ def render_markdown(report: Report) -> str:
         for w in report.warnings:
             lines_out.append(f"- {w}")
 
-    return "\n".join(lines_out) + "\n"
+    # No trailing newline (symmetric with render_json); main()'s print adds the
+    # single terminating one -- returning "...\n" would double it under print.
+    return "\n".join(lines_out)
 
 
 def render_json(report: Report) -> str:

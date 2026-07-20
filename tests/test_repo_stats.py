@@ -230,6 +230,34 @@ def test_build_report_survives_non_utf8_adr(
     assert any("0002-bad.md" in w and "not valid UTF-8" in w for w in report.warnings)
 
 
+def test_build_report_skips_unreadable_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # classify() reads bytes, which can raise OSError (PermissionError, a file
+    # removed mid-scan). build_report must warn+skip, not crash -- the docstring
+    # promises "Exit 0 always". A directory whose name matches the *.py glob is
+    # a portable way to make read_bytes fail (IsADirectoryError/PermissionError,
+    # both OSError) without chmod games.
+    repo = _repo(tmp_path, monkeypatch)
+    (repo / "src" / "pkg" / "sub.py").mkdir()
+    report = rs.build_report()  # must not raise
+    assert report.per_category[rs.LABEL_IMPL].files == 0  # unreadable entry skipped
+    assert any("sub.py" in w and "unreadable" in w for w in report.warnings)
+
+
+def test_adr_status_breakdown_skips_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same OSError guard on the ADR-status read path: an unreadable ADR must not
+    # crash adr_status_breakdown, which runs before build_report's guarded loop.
+    adr = tmp_path / "adr"
+    adr.mkdir()
+    monkeypatch.setattr(rs, "ADR", adr)
+    (adr / "0001-a.md").write_text("## Status\n\nAccepted\n", encoding="utf-8")
+    (adr / "0002-dir.md").mkdir()  # a directory globbed as *.md; read_bytes fails
+    assert rs.adr_status_breakdown() == {"Accepted": 1}  # unreadable entry skipped
+
+
 def test_render_markdown_has_table_totals_ratios_and_footnote(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
