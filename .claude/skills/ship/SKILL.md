@@ -49,6 +49,9 @@ gate.
 - Otherwise `gh pr create --base main`, with a body carrying: what landed and why, the `Decisions:`
   section, and a test plan (the gates, plus what the new tests actually cover). End with the Claude
   Code attribution line.
+- Pass the body via **`--body-file -`** with a heredoc — `--body -` is accepted without error and
+  sets the literal string `-` as the description (it silently discarded PR #43's body, 2026-07-20).
+  Then read it back: `gh pr view --json body` must show the composed description, not `-`.
 - Report the PR URL.
 
 ## 4. Wait for CodeRabbit
