@@ -121,7 +121,7 @@ Mechanical, but deliberately scheduled: it needs a migration to ride, and Phase 
 
 ## Dependency summary
 
-```
+```text
 T2.1 (INV-7/8) ──→ T1.1 (merge ADR) ──→ Phase 3.5 merge/remove WI
 T2.4 (dev-plan pass: seed bullet) ──→ Phase 3.5 catalog WI
 T2.4 (dev-plan pass: 4a/4b) ──→ Phase 4 planning
