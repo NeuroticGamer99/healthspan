@@ -33,9 +33,12 @@ Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>
 ## 2. Build the worklist
 
 Enumerate the findings into a checklist (use TodoWrite). Carry each finding's **category** forward,
-and its **Verdict** if the report has one — but treat a verdict as the reviewer's *confidence*, not
-a machine guarantee (the `high` review runs no verify pass, so any verdicts are hand-added). It
-informs how hard you look in step 3; it never lets you skip step 3.
+and its **Verdict** if the report has one. Whether a verdict is a machine result or the reviewer's
+hand-added confidence depends on the effort that ran, and the report's **Verification** line states
+which: a verify-pass effort emits real CONFIRMED/PLAUSIBLE verdicts, while the `high` default runs
+no verify pass so any verdicts there are hand-added. Read that line and treat the verdicts
+accordingly. Either way a verdict only informs how hard you look in step 3; it never lets you skip
+step 3.
 Work findings in the report's order (most severe first). If one finding's fix would change the
 lines another finding cites, do the earlier one and re-read before the later.
 

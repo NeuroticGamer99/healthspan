@@ -28,33 +28,57 @@ Determine what the review should cover and state it as an exact command:
   different base, use that instead — and say which you chose and why.
 - Report the file count (`git diff --name-only <range> | wc -l`) so the scope is concrete.
 
-Confirm the scope with the user in one line before continuing. `/code-review` will pick its
-own default if run bare; pinning it here is the whole reason this step exists, so the report's
-`Diff scope` line reflects what was actually reviewed rather than a guessed range.
+Confirm the scope with the user in one line before continuing. Know the limit of what prep can
+do: `/code-review` chooses its own range and cannot be handed an arbitrary `git diff` range — its
+argument (phase 0) is a PR number, branch name, or file path, nothing finer. So a **non-default**
+pin (a custom base, or branch-diff-plus-working-tree) is a *recommendation* you pass to the user in
+step 3, not something prep can force. The authoritative record of what was reviewed is whatever
+`/code-review` states it looked at; prep's pin is the fallback the report uses only when the review
+says nothing about its range.
 
-## 2. Capture the metadata the report will need
+## 2. Capture the metadata to a scratchpad carrier
 
-`/code-review` is read-only and does not move HEAD, so this metadata stays valid through the
-review. Capture it now so `/review-handoff` can transcribe it verbatim:
+Write the pinned scope and git metadata to a small file under the session scratchpad directory
+listed in the system prompt. An on-disk carrier survives context compaction during a long review
+and gives `/review-handoff` a source of truth better than fallible conversation memory:
 
-- `git rev-parse --abbrev-ref HEAD` — branch name
-- `git rev-parse HEAD` — the **full** SHA (the `Branch / HEAD` line records this; `apply-review`
-  compares against it)
-- `git rev-parse --short HEAD` — short SHA for the report title
+```text
+<scratchpad>/review-prep-<branch>.md
+```
 
-Keep these in the conversation — `/review-handoff` reads them back from context in this same
-session. There is no on-disk carrier for them until the report is written.
+Sanitize `/` in the branch name to `-`; write it with the **Write tool** (never PowerShell
+redirection — encoding corruption). Record:
+
+- **Scope command and file count** — the exact diff command from step 1 and its `wc -l` count.
+  This is the one datum that must not be reconstructed later (a re-derived range can misrepresent
+  what was reviewed), so the on-disk copy matters most here.
+- **Branch** — `git rev-parse --abbrev-ref HEAD`.
+- **Full HEAD SHA** — `git rev-parse HEAD`. `/review-handoff` compares this against HEAD at
+  transcription time; a mismatch means you committed between the review and the handoff, and the
+  report must record *this* reviewed SHA, not the later one.
+- **Short SHA** — `git rev-parse --short HEAD`, for the report title.
+
+`/code-review` is read-only and does not move HEAD, so these values stay correct for the review as
+long as *you* do not commit before running `/review-handoff`.
 
 ## 3. Hand the command back to the user
 
-Final message, three lines:
+Final message:
 
-1. The confirmed scope: the exact diff command and file count.
-2. The command to run next, verbatim and copy-pasteable — `/code-review <effort>` (the effort
-   from the argument, default `high`).
-3. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff`
-   to capture its findings into the portable report. Note the same-session requirement plainly —
-   the handoff reads the review out of conversation context, so a new session would lose it.
+1. The confirmed scope: the exact diff command and file count, and the path of the carrier file
+   from step 2.
+2. The command to run next, verbatim and copy-pasteable — `/code-review <effort>` (the effort from
+   the argument, default `high`). Run it **bare**: do not add flags that make it act on findings
+   (e.g. `--comment`, `--fix`) — the review must stay read-only; acting on findings is the receiving
+   agent's job.
+3. **If the pinned scope is non-default** (a custom base, or branch-diff-plus-working-tree), say so
+   and tell the user to state that intended scope to `/code-review` — a bare command reviews its own
+   default range, which would then differ from the pin. If the pin is just the default branch diff,
+   the bare command already matches it and no extra instruction is needed.
+4. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
+   capture its findings. The carrier file preserves the scope and SHAs across compaction, but the
+   *findings themselves* live only in conversation context until the report is written — so a new
+   session would still lose them.
 
 Do **not** attempt to run `/code-review` yourself, and do not simulate its output. Stop after
 this message and let the user run it.
