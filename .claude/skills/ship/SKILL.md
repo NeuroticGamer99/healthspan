@@ -53,8 +53,10 @@ gate.
   runs command substitution on every backtick and expands `$` inside the body before `gh` sees
   it, and markdown bodies are full of backticks). `--body -` is accepted without error and sets
   the literal string `-` as the description (it silently discarded PR #43's body, 2026-07-20).
-  Then read it back: `gh pr view --json body` must match the composed description exactly — a
-  full comparison, not merely "isn't `-`", so expansion damage is caught too.
+  Then read it back: `gh pr view --json body --jq .body` (the `--jq` unwraps the JSON envelope
+  to raw markdown — without it the escaped `{"body":"..."}` form can never match) must match the
+  composed description — a full comparison, not merely "isn't `-`", so expansion damage is
+  caught too.
 - Report the PR URL.
 
 ## 4. Wait for CodeRabbit

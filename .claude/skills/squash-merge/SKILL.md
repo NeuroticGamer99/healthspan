@@ -73,11 +73,18 @@ git fetch origin main
 git log --format=%B -1 origin/main
 ```
 
-must print exactly the composed subject and body — this read-back is what caught `97e43ce`. Then
-confirm local `main` fast-forwarded to that commit and the branch is gone (`git branch
---show-current`, `git status`). If the message is wrong, stop and report what the body actually
-says — never force-push `main` to repair it; `main`'s history is append-only and the fix is the
-user's call.
+must show the composed subject and body — compare ignoring trailing whitespace (`%B` appends a
+trailing newline, and GitHub may normalize trailing blank lines), but every content line must
+match; this read-back is what caught `97e43ce`. `origin/main` is the authoritative check. Then
+sync local `main` explicitly rather than trusting gh's incidental fast-forward:
+
+```bash
+git checkout main && git merge --ff-only origin/main
+```
+
+(a no-op when gh already fast-forwarded it), and confirm the feature branch is gone. If the
+message is wrong, stop and report what the body actually says — never force-push `main` to
+repair it; `main`'s history is append-only and the fix is the user's call.
 
 ## 5. Report
 
