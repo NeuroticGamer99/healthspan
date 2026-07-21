@@ -47,7 +47,8 @@ A Python script (`healthspan start`) that:
 6. On SIGINT/SIGTERM, shuts all child processes down gracefully
 
 Individual processes can also be started directly for partial deployments:
-```
+
+```bash
 healthspan service start      # Core Service only
 healthspan mcp start          # MCP Server only
 healthspan gui                # GUI only

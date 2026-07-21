@@ -160,7 +160,7 @@ The thinking is already done in the review; these are careful transcription. Saf
 
 ## Dependency summary
 
-```
+```text
 T1.2 (concurrency) ──→ T1.3 (backup locus)
 T1.4 (startup flow) ──→ T3.2 observability fixes
 T1.1 (audit granularity) ──→ parked 3.F (CGM)

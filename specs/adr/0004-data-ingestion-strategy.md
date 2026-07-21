@@ -57,7 +57,7 @@ There is no implicit default that silently mutates data. Callers must be explici
 
 Each source importer is a module that conforms to a defined interface:
 
-```
+```text
 parse(raw_input) → List[ImportRecord]
 validate(records) → ValidationResult
 normalize(records) → List[NormalizedRecord]

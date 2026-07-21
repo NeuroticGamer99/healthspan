@@ -52,7 +52,7 @@ One CSV file per data type, with a manifest file listing the included files and 
 
 ## CLI Interface
 
-```
+```bash
 healthspan export                          # full export, platform-native JSON
 healthspan export --format csv             # full export, CSV per data type
 healthspan export --since 2024-01-01       # date-filtered

@@ -40,7 +40,7 @@ Each process has one job and communicates over a defined, versioned interface. N
 All four client processes connect independently to the Core Service via HTTP + bearer token.
 No client process routes through another.
 
-```
+```text
 ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
 │  GUI           │  │  MCP Server    │  │  Import        │  │  CLI           │
 │  (PySide6)     │  │  (fastmcp)     │  │  Pipeline      │  │  (typer)       │

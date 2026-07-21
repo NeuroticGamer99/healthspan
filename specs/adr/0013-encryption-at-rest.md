@@ -117,10 +117,9 @@ This asymmetry is a platform characteristic, not a `keyring` deficiency. There i
 
 ## Key Management: Two-Factor Hybrid with Recovery Kit (Recommended)
 
-
 Inspired by 1Password's Secret Key model, the recommended approach combines the OS keychain with a user passphrase to derive the encryption key from two independent components:
 
-```
+```text
 db_key = Argon2id(master_passphrase + secret_key)
 ```
 
@@ -128,7 +127,7 @@ The **secret key** is a randomly generated 32-byte value stored in the OS keycha
 
 ### First run
 
-```
+```bash
 healthspan init
 ```
 
@@ -155,7 +154,7 @@ The kit is useless without the passphrase. The passphrase alone is useless witho
 
 ### New machine setup
 
-```
+```bash
 healthspan init --restore
 ```
 
@@ -192,7 +191,7 @@ Neither option has a recovery path if all credentials are lost (forgotten passph
 
 For users who want full portability without any OS keychain dependency, the passphrase-only mode is available:
 
-```
+```bash
 healthspan init --key-from-passphrase
 ```
 

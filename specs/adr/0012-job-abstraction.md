@@ -38,7 +38,7 @@ Chosen option: **Hybrid — event-driven progress as primary, REST polling as fa
 
 ## Job Lifecycle
 
-```
+```text
 POST /v1/jobs  →  queued  →  running  →  progress (0–100%)  →  complete
                                                               →  failed
                                        ↑  cancelled (via DELETE /v1/jobs/{id})
@@ -48,7 +48,7 @@ A job's status is one of exactly four states — `queued`, `running`, `complete`
 
 ## REST API
 
-```
+```text
 POST   /v1/jobs                    Submit a job; returns job_id immediately
 GET    /v1/jobs/{id}               Current status, progress %, result or error
 GET    /v1/jobs?status=running     List jobs by status
@@ -56,6 +56,7 @@ DELETE /v1/jobs/{id}               Cancel a job (if cancellable)
 ```
 
 ### Job submission payload
+
 ```json
 {
   "type": "import.quest_labs",
@@ -67,6 +68,7 @@ DELETE /v1/jobs/{id}               Cancel a job (if cancellable)
 `file` is a **relative path resolved inside a configured import directory** — see File Path Validation below. Absolute paths and paths escaping the configured directories are rejected.
 
 ### Job status response
+
 ```json
 {
   "id": "uuid",

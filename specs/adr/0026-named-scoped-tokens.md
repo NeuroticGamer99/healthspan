@@ -152,7 +152,7 @@ The MCP Server has two credential relationships: its own token to Core (`mcp`, r
 
 ## Lifecycle Commands
 
-```
+```text
 healthspan token create <name> --scopes read,write   Mint a named token; print once
 healthspan token list                                Names, scopes, created, last-used, status — never values
 healthspan token revoke <name>                       Immediate revocation

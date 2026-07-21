@@ -46,7 +46,7 @@ Option 3 adds a stored non-secret salt even in two-factor mode for no gain: the 
 
 ## Key Derivation Construction
 
-```
+```text
 db_key = Argon2id(
     password  = UTF-8 encoding of the NFC-normalized master passphrase,
     salt      = the 32-byte secret key (raw bytes),
@@ -90,7 +90,7 @@ A missing sidecar fails with an error that says exactly how to recover (restore 
 
 Two commands, both new:
 
-```
+```text
 healthspan keys change-passphrase     New passphrase; secret key unchanged
 healthspan keys rotate-secret-key     New secret key; passphrase unchanged; new Recovery Kit
 ```
@@ -118,7 +118,7 @@ The commands above are written in two-factor terms; this section defines their b
 
 **Mode conversion** is supported in place:
 
-```
+```bash
 healthspan keys convert-mode --to two-factor
 healthspan keys convert-mode --to passphrase-only
 ```

@@ -38,7 +38,7 @@ The goal: a single longitudinal record of your health data, queryable by AI and 
 
 Healthspan is built as a set of independent processes with well-defined, versioned interfaces:
 
-```
+```text
 GUI (PySide6)           ─┐
 MCP Server (fastmcp)    ─┤→  Core Service (FastAPI, REST API v1)  →  SQLite (SQLCipher)
 Automation Host         ─┤       ↑ auth, validation, event bus

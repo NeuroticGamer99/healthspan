@@ -9,20 +9,26 @@ Standards for health endpoints, structured logging, and metrics across all platf
 Every HTTP process exposes an **unauthenticated liveness endpoint** — the platform's only unauthenticated route ([ADR-0040](adr/0040-health-endpoint-authentication.md)). The process launcher, Docker healthchecks, and systemd watchdogs poll it without a credential to verify that a process is ready before starting dependent processes.
 
 ### Core Service liveness
-```
+
+```text
 GET /v1/health            (unauthenticated — declared `public`)
 ```
-```
+
+```text
 200 {"status": "ok"}
 503 {"status": "unavailable"}
 ```
+
 `200` means ready to serve (database open and queryable), from a cached readiness flag — never a per-request database query. The body carries a status word and nothing else: no version, no `schema_version`, no uptime, no failure reason. There is no "migration pending" state: migrations run in the launcher before the Core Service starts, and a Core Service that finds an unexpected `schema_version` at startup logs `CRITICAL` and exits rather than serving ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)).
 
 ### Core Service health detail
-```
+
+```text
 GET /v1/health/detail     (requires: monitor scope)
 ```
+
 Response:
+
 ```json
 {
   "status": "healthy",
@@ -32,12 +38,15 @@ Response:
   "uptime_seconds": 3600
 }
 ```
+
 Version and `schema_version` are fingerprinting material and sit behind authentication ([ADR-0040](adr/0040-health-endpoint-authentication.md)).
 
 ### MCP Server
-```
+
+```text
 GET /health               (unauthenticated — liveness only)
 ```
+
 Returns `200 {"status": "ok"}` when ready to accept AI client connections, `503` otherwise. Status word only — same rules as the Core Service liveness endpoint.
 
 ### Automation Host, other processes
@@ -87,11 +96,12 @@ Default: structured JSON to stdout. Each process handles its own logging. The la
 
 Basic request metrics are exposed by the Core Service for debugging and monitoring. Detailed metrics infrastructure is a future concern; the following are available from day one at negligible cost via FastAPI middleware.
 
-```
+```text
 GET /v1/metrics           (requires: monitor scope)
 ```
 
 Returns:
+
 ```json
 {
   "requests_total": 1204,

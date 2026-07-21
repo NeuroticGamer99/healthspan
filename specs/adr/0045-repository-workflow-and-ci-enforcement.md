@@ -29,7 +29,7 @@ Two constraints shape the answer. The maintainer is solo, so any required-approv
 ### 1. Protection is defined now, activated at the first code PR
 The ruleset is checked in at [`.github/rulesets/main-protection.json`](../../.github/rulesets/main-protection.json) but **not applied**. Spec/ADR work continues direct-to-main until the first PR that introduces code or a runtime dependency; that PR both adds the code gates to `ci.yml` (per testing-strategy's ship-with-first-code rule) and applies the ruleset:
 
-```
+```bash
 gh api repos/{owner}/{repo}/rulesets -X POST --input .github/rulesets/main-protection.json
 ```
 
