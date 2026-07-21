@@ -121,28 +121,29 @@ is designed to travel between sessions.
 
 **Short alias copy.** The scratchpad path embeds the project slug and session GUID (~130 chars) —
 unusable to type or copy by hand. So after writing the canonical file, write the *same content* to a
-short fixed path in the temp dir: resolve `%TEMP%` (`$env:TEMP` in PowerShell) and write
-`<TEMP>\review-report.md`, overwriting any previous alias (Write tool, not redirection). This alias
-is **clobbered by the next review** — the timestamped scratchpad file stays canonical. Hand the
-alias out for convenience; give the timestamped path when a durable reference is needed.
+short fixed path in the OS temp dir: resolve the temp directory (`$env:TEMP` in PowerShell,
+`$TMPDIR` — falling back to `/tmp` — on macOS/Linux) and write `<temp-dir>/review-report.md`,
+overwriting any previous alias (Write tool, not redirection). This alias is **clobbered by the next
+review** — the timestamped scratchpad file stays canonical. Hand the alias out for convenience; give
+the timestamped path when a durable reference is needed.
 
 ## 3. Hand off
 
 Final message to the user:
 
 1. Both report paths: the canonical timestamped scratchpad file (the deliverable a later review
-   won't overwrite) and the short alias `<TEMP>\review-report.md` (convenient, but clobbered by the
-   next review).
+   won't overwrite) and the short alias at `<temp-dir>/review-report.md` (convenient, but clobbered
+   by the next review).
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
 3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
    prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
-   with the **resolved absolute** alias path (resolve `%TEMP%`; do not print the literal `%TEMP%`
-   token — the receiving agent would have to expand it), wrapped in **double quotes** so a path
-   containing spaces reaches `/apply-review` as a single argument:
+   with the **resolved absolute** alias path (resolve the temp dir; do not print an unexpanded
+   `$env:TEMP` / `$TMPDIR` token — the receiving agent would have to expand it), wrapped in **double
+   quotes** so a path containing spaces reaches `/apply-review` as a single argument:
 
    ```text
-   /apply-review "<TEMP>\review-report.md"
+   /apply-review "<temp-dir>/review-report.md"
    ```
 
    In the receiving session, running that reads the report back (or paste the path and tell the
