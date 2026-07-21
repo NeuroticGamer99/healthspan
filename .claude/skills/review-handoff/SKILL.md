@@ -48,8 +48,13 @@ it exists — `<scratchpad>/review-prep-<branch>.md` in this session's scratchpa
   `git rev-parse HEAD`. If they **match**, record that SHA. If they **differ**, you committed between
   the review and this handoff: record the carrier's (reviewed) SHA — not the current one — and flag
   the drift in the report, so `/apply-review`'s HEAD comparison is not silently satisfied by a SHA
-  the review never saw. Only with **no** carrier file, re-derive `git rev-parse --abbrev-ref HEAD` /
-  `HEAD` / `--short HEAD` (correct only if you did not commit since the review).
+  the review never saw. With **no** carrier file, do **not** substitute the current checkout: a fresh
+  `git rev-parse HEAD` identifies HEAD *now*, which cannot prove it is the commit `/code-review`
+  inspected — a mid-session commit would make it wrong and silently satisfy `/apply-review`'s check,
+  the exact failure the carrier exists to prevent. Use a reviewed SHA only if the review's own output
+  named one; otherwise record the SHA as `unknown — prep skipped`, say so in the digest, and
+  recommend rerunning via `/review-prep` for a drift-checkable report. The branch name is still safe
+  to re-derive (`git rev-parse --abbrev-ref HEAD`); it is the SHA that must not be fabricated.
 - **Areas reviewed clean** — take these from the review's own output *only if it enumerated them*.
   A bare findings list (inline JSON or `ReportFindings`) names findings, not clean areas; when the
   review did not state its clean coverage, write "not stated by the review" rather than inferring it
@@ -73,8 +78,8 @@ but has seen neither this conversation nor the review's own output. Structure:
 # Code review report — <branch> @ <short sha>
 
 - Generated: <UTC timestamp>
-- Branch / HEAD: <branch> / <full sha>
-- Diff scope: `<exact command, e.g. git diff origin/main...HEAD>` — <N> files changed (or `unknown — not pinned` when neither the review nor a prep carrier fixed the range)
+- Branch / HEAD: <branch> / <full sha, or `unknown — prep skipped` when no carrier and the review named no commit>
+- Diff scope: `<exact command, e.g. git diff origin/main...HEAD>` — <N> files changed (or `unknown — not pinned` when neither the review nor a prep carrier fixed the range). Give `<N>` only when the review stated it, or a carrier whose pinned range matches the reviewed range supplies it; otherwise write `file count not stated by the review` — never recompute it (that reconstructs scope), and never reuse a carrier count whose range disagrees with the reviewed range.
 - Effort: <the effort actually run — `high` unless the user chose otherwise>
 - Verification: <what actually ran — e.g. "high effort: finder angles + dedup, no verify pass; the Verdict lines below are the review's confidence, not machine-verified">
 
@@ -133,10 +138,11 @@ Final message to the user:
 3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
    prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
    with the **resolved absolute** alias path (resolve `%TEMP%`; do not print the literal `%TEMP%`
-   token — the receiving agent would have to expand it):
+   token — the receiving agent would have to expand it), wrapped in **double quotes** so a path
+   containing spaces reaches `/apply-review` as a single argument:
 
    ```text
-   /apply-review <TEMP>\review-report.md
+   /apply-review "<TEMP>\review-report.md"
    ```
 
    In the receiving session, running that reads the report back (or paste the path and tell the

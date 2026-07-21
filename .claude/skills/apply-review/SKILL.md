@@ -29,6 +29,9 @@ Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>
   reporting false drift. If HEAD has moved or the branch differs, warn the user:
   findings may reference lines that have since shifted. This does not abort the run — step 3
   re-verifies every finding anyway — but a large drift is worth flagging up front.
+  If the SHA reads `unknown` (the review's reviewed commit was never pinned — prep was skipped),
+  there is nothing to compare against: skip the drift check, note that the early-warning is
+  unavailable, and lean entirely on step 3's per-finding re-verification.
 
 ## 2. Build the worklist
 
