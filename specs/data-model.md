@@ -168,7 +168,7 @@ Discrete architectural decisions that emerge from this document should be captur
 ### Mobile Health Platform APIs
 **Apple HealthKit** (iOS) and **Google Health Connect** (Android) are valuable because they aggregate data from many health apps in one place — Levels, Dexcom, Fitbit, wearables, and more — providing a single integration point per platform. Both are **sandboxed to native mobile apps** and cannot be queried directly from a Python desktop application.
 
-**Apple HealthKit / Apple Health**
+**Apple HealthKit / Apple Health** (iOS)
 - **XML bulk export** — the iOS Health app can export all HealthKit data as a bulk XML file. Desktop-accessible without a native app. Comprehensive single-source import for iOS users; covers data from any HealthKit-connected app. Import adapter is viable near-term.
 - **Live HealthKit API** — sandboxed; requires a native iOS app. Future direction if a mobile companion app is built.
 

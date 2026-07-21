@@ -17,8 +17,8 @@ Yet the full schema is not designable well today, because "derived series" is se
 - Decisions should be principle-sized now, schema-sized when implementation reaches them
 
 ## Considered Options
-1. **Design the full first-class derived-series schema now**
-2. **Declare derived data out of scope**
+1. Design the full first-class derived-series schema now
+2. Declare derived data out of scope
 3. **Decide the principle now, defer the schema** (chosen)
 
 ## Decision Outcome

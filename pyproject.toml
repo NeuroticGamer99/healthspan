@@ -55,6 +55,21 @@ extraPaths = ["scripts", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+# Markdown style-lint gate (ADR-0062). Authoritative config for the PyMarkdown
+# (`uvx pymarkdownlnt`) gate on the docs-consistency CI job.
+#
+# ⚠️  KEEP IN SYNC WITH .markdownlint.yaml (repo root). Our CI gate reads THIS
+#     block; CodeRabbit reads that file. Any rule enable/disable/parameter change
+#     here MUST be mirrored there, and vice versa — the rule numbers are shared.
+#     (Exception: `extensions.front-matter` is a PyMarkdown concept only;
+#     markdownlint parses front matter natively, so it has no mirror line there.)
+[tool.pymarkdown]
+extensions.front-matter.enabled = true
+plugins.md013.enabled = false        # line-length — house style: long em-dash prose
+plugins.md022.enabled = false        # blanks-around-headings — house style: value tight under its `##`
+plugins.md032.enabled = false        # blanks-around-lists — same tight-heading convention
+plugins.md024.siblings_only = true   # `### Architecture` under different `##` parents is legitimate
+
 [dependency-groups]
 dev = [
     "hypothesis>=6.140",
