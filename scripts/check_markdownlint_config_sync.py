@@ -146,6 +146,26 @@ def _coerce(scalar: str) -> object:
     return scalar
 
 
+def _comment_start(line: str) -> int:
+    """Index where a trailing ``#`` comment begins, or -1 if none.
+
+    A ``#`` opens a comment only outside quotes and only at line start or after
+    whitespace -- so a ``#`` *inside* a quoted scalar (``"a # b"``) is not read as
+    a comment and stays in the value, where the caller's fail-loud guard rejects
+    it. Truncating it here instead would silently corrupt the value.
+    """
+    quote: str | None = None
+    for i, ch in enumerate(line):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return i
+    return -1
+
+
 def _tokenize_yaml(text: str) -> list[tuple[int, str, str]]:
     """(indent, key, value) for each non-blank, non-comment ``key: value`` line."""
     tokens: list[tuple[int, str, str]] = []
@@ -153,11 +173,7 @@ def _tokenize_yaml(text: str) -> list[tuple[int, str, str]]:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip(" "))
-        # Strip a trailing " #..." comment (space then hash). A '#' that survives
-        # in the value is a quoted-hash scalar (e.g. heading_style: '#') this
-        # parser does not support -- fail loud below rather than truncate it
-        # silently, consistent with the module's stance on other bad shapes.
-        comment = raw.find(" #")
+        comment = _comment_start(raw)
         content = (raw if comment == -1 else raw[:comment]).strip()
         if not content:
             continue
@@ -165,6 +181,9 @@ def _tokenize_yaml(text: str) -> list[tuple[int, str, str]]:
             raise ValueError(f"malformed .markdownlint.yaml line: {raw!r}")
         key, _, value = content.partition(":")
         key, value = key.strip(), value.strip()
+        # A '#' surviving in the value is a scalar this parser does not support
+        # (e.g. heading_style: '#', or a quoted value containing " # ") -- fail
+        # loud rather than mis-parse it, matching the module's stance elsewhere.
         if "#" in value:
             raise ValueError(f"unsupported '#' in .markdownlint.yaml value: {raw!r}")
         tokens.append((indent, key, value))
@@ -196,6 +215,14 @@ def parse_markdownlint(yaml_text: str) -> tuple[bool, dict[str, Decision]]:
             i += 1
             while i < len(tokens) and tokens[i][0] > indent:
                 _, pk, pv = tokens[i]
+                # A rule-looking key nested as a param is almost always a
+                # misindented rule line (e.g. one leading space); absorbing it as
+                # a parameter would silently drop that rule's real decision. Fail
+                # loud so an indentation slip cannot hide config drift.
+                if RULE_RE.match(pk.upper()):
+                    raise ValueError(
+                        f"rule-like key {pk!r} nested under {rule}; check indentation"
+                    )
                 params[pk] = _coerce(pv)
                 i += 1
             rules[rule] = {"enabled": True, "params": params}

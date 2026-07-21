@@ -128,6 +128,22 @@ def test_parse_markdownlint_rejects_hash_in_value() -> None:
         sync.parse_markdownlint("default: true\nMD013:\n  heading_style: '#'\n")
 
 
+def test_parse_markdownlint_rejects_hash_inside_quoted_value() -> None:
+    # A " #" inside a quoted scalar must not be stripped as a comment and
+    # silently truncate the value -- it stays in the value and fails loud.
+    with pytest.raises(ValueError, match="unsupported '#'"):
+        sync.parse_markdownlint('default: true\nMD013:\n  style: "a # b"\n')
+
+
+def test_parse_markdownlint_rejects_rule_key_nested_as_param() -> None:
+    # A misindented rule line under a rule block would otherwise be absorbed as a
+    # parameter, silently dropping that rule's real decision.
+    with pytest.raises(ValueError, match="check indentation"):
+        sync.parse_markdownlint(
+            "default: true\nMD024:\n  siblings_only: true\n MD013: false\n"
+        )
+
+
 # --- diff_configs ---------------------------------------------------------
 
 
