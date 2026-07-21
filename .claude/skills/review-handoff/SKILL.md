@@ -119,33 +119,27 @@ what the next agent needs in order to not redo the work.
 `specs/personal/`, reference the path and describe the issue without quoting values — this file
 is designed to travel between sessions.
 
-**Short alias copy.** The scratchpad path embeds the project slug and session GUID (~130 chars) —
-unusable to type or copy by hand. So after writing the canonical file, write the *same content* to a
-short fixed path in the OS temp dir: resolve the temp directory (`$env:TEMP` in PowerShell,
-`$TMPDIR` — falling back to `/tmp` — on macOS/Linux) and write `<temp-dir>/review-report.md`,
-overwriting any previous alias (Write tool, not redirection). This alias is **clobbered by the next
-review** — the timestamped scratchpad file stays canonical. Hand the alias out for convenience; give
-the timestamped path when a durable reference is needed.
+The timestamped scratchpad file is the single canonical report — do not copy it anywhere else. Its
+path is long (project slug + session GUID), but that is fine: the hand-off command below goes out in a
+fenced code block whose *copy* button transfers it in one click, so it never has to be typed by hand.
 
 ## 3. Hand off
 
 Final message to the user:
 
-1. Both report paths: the canonical timestamped scratchpad file (the deliverable a later review
-   won't overwrite) and the short alias at `<temp-dir>/review-report.md` (convenient, but clobbered
-   by the next review).
+1. The canonical timestamped scratchpad report path.
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
 3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
    prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
-   with the **resolved absolute** alias path (resolve the temp dir; do not print an unexpanded
-   `$env:TEMP` / `$TMPDIR` token — the receiving agent would have to expand it), wrapped in **double
-   quotes** so a path containing spaces reaches `/apply-review` as a single argument:
+   with the **resolved absolute** scratchpad path — substitute the real session scratchpad directory
+   and the actual branch/timestamp; do not emit the literal `<scratchpad>` (or `<branch>` /
+   `<timestamp>`) token, which the receiving agent cannot expand — wrapped in **double quotes** so a
+   path containing spaces reaches `/apply-review` as a single argument:
 
    ```text
-   /apply-review "<temp-dir>/review-report.md"
+   /apply-review "<scratchpad>/code-review-<branch>-<timestamp>.md"
    ```
 
    In the receiving session, running that reads the report back (or paste the path and tell the
-   agent to read the file before touching the diff). Give the canonical timestamped path alongside
-   for a reference the next review won't overwrite.
+   agent to read the file before touching the diff).
