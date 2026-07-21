@@ -43,6 +43,7 @@ File existence only, not anchor validity (option 2); the specs/ tree as the sour
 - A legitimate file rename still requires updating every referencing link for CI to pass — which is the point, but it is real work the gate now enforces rather than trusts to review.
 
 ## Links
+- Extended by: [ADR-0062](0062-markdown-style-lint-gate.md) — adds a style-lint facet (PyMarkdown) to the same docs-consistency job; this gate covers links, that one covers style
 - Extends: [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) §6 — the docs-consistency gate this joins; ADR-0045 gains an `Extended by: ADR-0061` navigation link, content otherwise untouched (Accepted, per governance)
 - Related: [testing-strategy.md](../testing-strategy.md) — CI Gates; the "mechanize review vigilance" mandate this gate satisfies
 - Related: [CLAUDE.md](../../CLAUDE.md) — ADR governance; rule 5 permits link fixes on Accepted ADRs, which this gate makes rarely necessary by catching dead links before merge

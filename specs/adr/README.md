@@ -114,3 +114,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0059](0059-cli-manual-entry-implementation-decisions.md) | CLI Manual-Entry Tooling Implementation Decisions (Phase 3 WI-4) | Accepted |
 | [ADR-0060](0060-cli-catalog-add-commands.md) | CLI Catalog-Add Commands (`biomarkers add`, `labs add`, `categories list`) | Proposed |
 | [ADR-0061](0061-markdown-link-check-gate.md) | Markdown Link-Check Gate for the Docs-Consistency Job (extends ADR-0045) | Proposed |
+| [ADR-0062](0062-markdown-style-lint-gate.md) | Markdown Style-Lint Gate (PyMarkdown), Tuned to the Corpus (extends ADR-0061) | Proposed |

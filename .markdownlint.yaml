@@ -1,0 +1,19 @@
+# Markdown style-lint config (ADR-0062) — read by CodeRabbit's markdownlint.
+#
+# ⚠️  KEEP IN SYNC WITH the [tool.pymarkdown] block in pyproject.toml. CodeRabbit
+#     reads THIS file; our CI gate (PyMarkdown) reads that block. Any rule
+#     enable/disable/parameter change here MUST be mirrored there, and vice
+#     versa — the rule numbers (MDxxx) are shared across both linters.
+#     (PyMarkdown additionally sets two of its own concepts that markdownlint
+#     has no equivalent for, so they have no line here: a front-matter extension
+#     — markdownlint parses front matter natively — and mode.strict-config.)
+
+# Start from the full rule set, then override the corpus-tuned exceptions.
+default: true
+
+MD013: false   # line-length — house style: long em-dash prose
+MD022: false   # blanks-around-headings — house style: value tight under its `##`
+MD032: false   # blanks-around-lists — same tight-heading convention
+
+MD024:
+  siblings_only: true   # `### Architecture` under different `##` parents is legitimate
