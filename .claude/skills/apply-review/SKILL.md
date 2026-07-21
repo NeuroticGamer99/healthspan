@@ -5,8 +5,9 @@ description: Read a code-review report produced by /review-handoff and implement
 
 # /apply-review — implement the findings from a review report
 
-The receiving half of `/review-handoff`. That command runs a review and writes a portable
-report; this one reads the report back and does the work. Assume the report was written by an
+The receiving half of the review-handoff flow: `/review-prep` pins the scope, the user runs
+`/code-review` themselves, and `/review-handoff` writes the findings into a portable report.
+This skill reads that report back and does the work. Assume the report was written by an
 agent that could not see this session, and that **its suggested fixes were never reviewed** —
 they are hints, not instructions. Your job is to re-confirm each finding against the live code,
 then fix what genuinely needs fixing.
@@ -28,13 +29,19 @@ Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>
   reporting false drift. If HEAD has moved or the branch differs, warn the user:
   findings may reference lines that have since shifted. This does not abort the run — step 3
   re-verifies every finding anyway — but a large drift is worth flagging up front.
+  If the SHA reads `unknown` (the review's reviewed commit was never pinned — prep was skipped),
+  there is nothing to compare against: skip the drift check, note that the early-warning is
+  unavailable, and lean entirely on step 3's per-finding re-verification.
 
 ## 2. Build the worklist
 
 Enumerate the findings into a checklist (use TodoWrite). Carry each finding's **category** forward,
-and its **Verdict** if the report has one — but treat a verdict as the reviewer's *confidence*, not
-a machine guarantee (the `high` review runs no verify pass, so any verdicts are hand-added). It
-informs how hard you look in step 3; it never lets you skip step 3.
+and its **Verdict** if the report has one. Whether a verdict is a machine result or the reviewer's
+hand-added confidence depends on the effort that ran, and the report's **Verification** line states
+which: a verify-pass effort emits real CONFIRMED/PLAUSIBLE verdicts, while the `high` default runs
+no verify pass so any verdicts there are hand-added. Read that line and treat the verdicts
+accordingly. Either way a verdict only informs how hard you look in step 3; it never lets you skip
+step 3.
 Work findings in the report's order (most severe first). If one finding's fix would change the
 lines another finding cites, do the earlier one and re-read before the later.
 

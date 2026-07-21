@@ -1,38 +1,64 @@
 ---
 name: review-handoff
-description: Run /code-review at high effort and save the full findings as a self-contained scratchpad report whose path can be handed to another agent (received with /apply-review). Use when review detail must outlive this session.
+description: Capture the findings from a /code-review the user just ran and save them as a self-contained scratchpad report whose path can be handed to another agent (received with /apply-review). Run in the same session, right after /code-review. Use when review detail must outlive this session.
 ---
 
-# /review-handoff — run a high-effort review and save a portable report
+# /review-handoff — capture a just-run review into a portable report
 
-Runs the built-in code-review skill, then captures everything it found in a standalone markdown
-file under the session scratchpad directory — written for a reader with none of this
-conversation's context, typically another agent session. Ends by printing the absolute path.
+The closing half of the review-handoff flow. `/review-prep` pins the scope and you run
+`/code-review <effort>` yourself — `/code-review` is a built-in command an agent cannot invoke,
+so the human runs the real review. This skill transcribes what that review just produced,
+in this conversation, into a standalone markdown file under the session scratchpad directory —
+written for a reader with none of this conversation's context, typically another agent session.
+It ends by printing the absolute path.
+
+Because it reads the review out of conversation context, **it must run in the same session
+where you ran `/code-review`.** There is no on-disk artifact to recover the findings from
+otherwise.
 
 The report this produces is the input to `/apply-review`, which reads the file back and
 implements the findings in a fresh session.
 
-## 1. Run the review
+## 1. Locate the review just run
 
-Run the repo's code-review at high effort — the `/code-review high` command, which an agent
-invokes via the Skill tool: `Skill(skill: "code-review", args: "high")`. If the user passed a
-different effort level as an argument to `/review-handoff`, pass that through instead of `high`.
+Find the `/code-review` output earlier in this conversation — the findings it produced, whether
+as a `ReportFindings` call (at efforts that run a verify pass) or as an inline JSON array / text
+list (the `high` default is inline-only: finder angles + dedup, **no verify pass**, so it emits
+findings and calls no `ReportFindings` — that is expected, not a gap).
 
-- Do **not** pass `--comment` or `--fix`. This command is read-only: findings go to the report
-  file, and acting on them is the receiving agent's job.
-- Follow the loaded code-review instructions fully, including any `ReportFindings` call it makes
-  at the chosen effort. Not every effort makes one: the `high` default is inline-only (finder
-  angles + dedup, **no verify pass**), so it emits findings as a JSON array and calls no
-  `ReportFindings` — that is expected. The report file is written from whatever the review
-  produced, not a replacement for it.
+- If no `/code-review` was run in this session, stop and tell the user: run `/review-prep`, then
+  `/code-review <effort>`, then this skill — all in one session. Do **not** review the diff
+  yourself to fill the gap; a simulated review is exactly what this flow exists to avoid.
+- Transcribe what the review actually found. Do not add, drop, or re-judge findings — your job
+  is faithful capture, not a second review.
 
-While reviewing, keep hold of what step 2 needs:
+Also recover the scope and metadata the report records. First read `/review-prep`'s carrier file if
+it exists — `<scratchpad>/review-prep-<branch>.md` in this session's scratchpad directory (branch
+`/` sanitized to `-`); it is the on-disk source of truth that survives compaction. Then:
 
-- the exact diff scope reviewed (base ref and the command that produced the diff)
-- branch and HEAD — both representations: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`
-  (the **full** SHA the `Branch / HEAD` line records — `apply-review` compares against it), and
-  `git rev-parse --short HEAD` for the report title
-- areas examined that produced **no** findings
+- **Diff scope** — prefer the range `/code-review` itself stated it reviewed; that is what was
+  actually inspected. Fall back to the carrier file's pinned scope only when the review said nothing
+  about its range. If both exist and **disagree**, record the review's stated range and note the
+  discrepancy in the report (the pin was a recommendation prep could not enforce — see `/review-prep`
+  step 1). Do **not** reconstruct the scope by re-running `git diff` — a re-derived range can
+  misrepresent what was reviewed. If neither source pins it (prep was skipped and the review stated
+  no range), record the scope as `unknown — not pinned`, say so in the digest, and recommend
+  rerunning via `/review-prep`.
+- **Branch and HEAD** — prefer the carrier file's captured SHA, then compare it against a fresh
+  `git rev-parse HEAD`. If they **match**, record that SHA. If they **differ**, you committed between
+  the review and this handoff: record the carrier's (reviewed) SHA — not the current one — and flag
+  the drift in the report, so `/apply-review`'s HEAD comparison is not silently satisfied by a SHA
+  the review never saw. With **no** carrier file, do **not** substitute the current checkout: a fresh
+  `git rev-parse HEAD` identifies HEAD *now*, which cannot prove it is the commit `/code-review`
+  inspected — a mid-session commit would make it wrong and silently satisfy `/apply-review`'s check,
+  the exact failure the carrier exists to prevent. Use a reviewed SHA only if the review's own output
+  named one; otherwise record the SHA as `unknown — prep skipped`, say so in the digest, and
+  recommend rerunning via `/review-prep` for a drift-checkable report. The branch name is still safe
+  to re-derive (`git rev-parse --abbrev-ref HEAD`); it is the SHA that must not be fabricated.
+- **Areas reviewed clean** — take these from the review's own output *only if it enumerated them*.
+  A bare findings list (inline JSON or `ReportFindings`) names findings, not clean areas; when the
+  review did not state its clean coverage, write "not stated by the review" rather than inferring it
+  from the changed-file list. Do not manufacture a coverage guarantee the review did not make.
 
 ## 2. Write the report
 
@@ -52,37 +78,39 @@ but has seen neither this conversation nor the review's own output. Structure:
 # Code review report — <branch> @ <short sha>
 
 - Generated: <UTC timestamp>
-- Branch / HEAD: <branch> / <full sha>
-- Diff scope: `<exact command, e.g. git diff origin/main...HEAD>` — <N> files changed
-- Effort: <the effort actually run — `high` unless the user asked otherwise>
-- Verification: <what actually ran — e.g. "high effort: 8 finder angles + dedup, no verify pass; the Verdict lines below are reviewer confidence, not machine-verified">
+- Branch / HEAD: <branch> / <full sha, or `unknown — prep skipped` when no carrier and the review named no commit>
+- Diff scope: `<exact command, e.g. git diff origin/main...HEAD>` — <N> files changed (or `unknown — not pinned` when neither the review nor a prep carrier fixed the range). Give `<N>` only when the review stated it, or a carrier whose pinned range matches the reviewed range supplies it; otherwise write `file count not stated by the review` — never recompute it (that reconstructs scope), and never reuse a carrier count whose range disagrees with the reviewed range.
+- Effort: <the effort actually run — `high` unless the user chose otherwise>
+- Verification: <what actually ran — e.g. "high effort: finder angles + dedup, no verify pass; the Verdict lines below are the review's confidence, not machine-verified">
 
 ## Findings (most severe first)
 
 ### 1. <one-line summary>
 - Where: `path/to/file.py:123`
 - Category: correctness | simplification | efficiency | test-coverage | …
-- Verdict: <reviewer's confidence — CONFIRMED / PLAUSIBLE — or omit if no verify pass ran; never assert a verified verdict the review did not produce>
+- Verdict: <the review's own verdict if it ran a verify pass — CONFIRMED / PLAUSIBLE — or omit if none ran; never assert a verified verdict the review did not produce>
 - Failure scenario: <concrete inputs/state → wrong output or crash>
 - Evidence: <the relevant lines, quoted in a code block>
-- Suggested fix: <sketch — note that the suggestion itself has NOT been reviewed>
+- Suggested fix: <sketch — note that the suggestion itself has NOT been separately reviewed>
 
 ## Reviewed clean
 
-<files/areas examined that produced no findings — so the reader knows silence is
-coverage, not omission>
+<files/areas the review stated it examined with no findings — so the reader knows silence is
+coverage, not omission. If the review did not enumerate clean areas, write "not stated by the
+review" here; do not infer coverage from the changed-file list.>
 
 ## Not covered
 
 <anything the review skipped or could not reach, or "none">
 ```
 
-**Verdicts are the reviewer's confidence, not machine output.** The `high` review runs no verify
-pass, so it produces no CONFIRMED/PLAUSIBLE verdicts of its own. If you add a `Verdict` per finding
-it is *your* confidence as the reviewing agent — label it (`CONFIRMED (reviewer confidence)`) and
-make the top-level `Verification` line state exactly what ran. Never claim an adversarial-verify
-pass that did not happen; the receiving `/apply-review` re-verifies every finding regardless, so
-honesty here costs nothing. (A higher effort that does verify emits real verdicts — then say so.)
+**Transcribe the review's verdicts; don't invent them.** Efforts that run a verify pass emit
+real CONFIRMED/PLAUSIBLE verdicts — carry those through and say so in the `Verification` line.
+The `high` default runs no verify pass, so it produces no verdicts; in that case omit the
+`Verdict` field (or, if you add your own reading, label it `reviewer confidence` and state in
+`Verification` that no machine verify ran). Never claim an adversarial-verify pass that did not
+happen — the receiving `/apply-review` re-verifies every finding regardless, so honesty here
+costs nothing.
 
 Zero findings still gets a report — the metadata plus "Reviewed clean" sections are exactly
 what the next agent needs in order to not redo the work.
@@ -91,11 +119,33 @@ what the next agent needs in order to not redo the work.
 `specs/personal/`, reference the path and describe the issue without quoting values — this file
 is designed to travel between sessions.
 
+**Short alias copy.** The scratchpad path embeds the project slug and session GUID (~130 chars) —
+unusable to type or copy by hand. So after writing the canonical file, write the *same content* to a
+short fixed path in the OS temp dir: resolve the temp directory (`$env:TEMP` in PowerShell,
+`$TMPDIR` — falling back to `/tmp` — on macOS/Linux) and write `<temp-dir>/review-report.md`,
+overwriting any previous alias (Write tool, not redirection). This alias is **clobbered by the next
+review** — the timestamped scratchpad file stays canonical. Hand the alias out for convenience; give
+the timestamped path when a durable reference is needed.
+
 ## 3. Hand off
 
 Final message to the user:
 
-1. The absolute report path on its own line (it is the deliverable).
-2. A 2–3 sentence digest: finding count, severity spread, and — if you assigned confidence verdicts — the CONFIRMED vs PLAUSIBLE split.
-3. The hand-off phrasing: in the receiving session, run `/apply-review <report-path>` (or paste
-   the path and tell the agent to read that file before touching the diff).
+1. Both report paths: the canonical timestamped scratchpad file (the deliverable a later review
+   won't overwrite) and the short alias at `<temp-dir>/review-report.md` (convenient, but clobbered
+   by the next review).
+2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
+   the CONFIRMED vs PLAUSIBLE split.
+3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
+   prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
+   with the **resolved absolute** alias path (resolve the temp dir; do not print an unexpanded
+   `$env:TEMP` / `$TMPDIR` token — the receiving agent would have to expand it), wrapped in **double
+   quotes** so a path containing spaces reaches `/apply-review` as a single argument:
+
+   ```text
+   /apply-review "<temp-dir>/review-report.md"
+   ```
+
+   In the receiving session, running that reads the report back (or paste the path and tell the
+   agent to read the file before touching the diff). Give the canonical timestamped path alongside
+   for a reference the next review won't overwrite.
