@@ -51,6 +51,18 @@ def test_parse_pymarkdown_rejects_non_table_rule_settings() -> None:
         sync.parse_pymarkdown('[tool.pymarkdown]\nplugins.md013 = "false"\n')
 
 
+def test_parse_pymarkdown_rejects_non_boolean_enabled_string() -> None:
+    # bool("false") is True -- a coerced string would silently flip the decision.
+    with pytest.raises(ValueError, match="enabled must be a boolean"):
+        sync.parse_pymarkdown('[tool.pymarkdown]\nplugins.md013.enabled = "false"\n')
+
+
+def test_parse_pymarkdown_rejects_non_boolean_enabled_int() -> None:
+    # bool(0) is False -- a coerced number would silently flip the decision.
+    with pytest.raises(ValueError, match="enabled must be a boolean"):
+        sync.parse_pymarkdown("[tool.pymarkdown]\nplugins.md013.enabled = 0\n")
+
+
 # --- parse_markdownlint ---------------------------------------------------
 
 

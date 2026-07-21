@@ -124,7 +124,12 @@ def parse_pymarkdown(pyproject_toml: str) -> dict[str, Decision]:
             if not isinstance(settings, dict):
                 raise ValueError(f"plugins.{raw_rule} must be a table")
             rule_settings = cast("dict[str, object]", settings)
-            enabled = bool(rule_settings.get("enabled", True))
+            enabled = rule_settings.get("enabled", True)
+            # Require a real boolean: bool("false") is True and bool(0) is False,
+            # so coercing would let a malformed value flip a rule's decision
+            # silently -- fail loud instead, as elsewhere in this parser.
+            if not isinstance(enabled, bool):
+                raise ValueError(f"plugins.{raw_rule}.enabled must be a boolean")
             params = {k: v for k, v in rule_settings.items() if k != "enabled"}
             rules[rule] = {"enabled": enabled, "params": params}
     return rules
