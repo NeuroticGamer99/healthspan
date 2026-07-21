@@ -38,7 +38,7 @@ The Core Service hosts an internal asyncio-based event bus. Transport adapters b
 
 ## Architecture
 
-```
+```text
 External MQTT device  → MQTT inbound adapter  ─┐
 Webhook / HTTP POST   → HTTP inbound adapter   ─┤
                                                  ├→ Internal Event Bus

@@ -43,7 +43,7 @@ Option 3 fails the same drivers from the other side: Docker and orchestrator con
 
 `GET /v1/health` (Core Service) and `GET /health` (MCP Server, Automation Host, and any future HTTP process) are **the platform's only unauthenticated endpoints**. The response is a status word and nothing else:
 
-```
+```text
 200 {"status": "ok"}
 503 {"status": "unavailable"}
 ```
@@ -57,7 +57,7 @@ Option 3 fails the same drivers from the other side: Docker and orchestrator con
 
 The rich health response previously specified in observability.md moves to:
 
-```
+```text
 GET /v1/health/detail        (requires: monitor)
 ```
 

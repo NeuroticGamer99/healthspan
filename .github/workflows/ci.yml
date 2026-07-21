@@ -5,7 +5,8 @@ name: CI
 #
 # All gates are live as of the first code PR (specs/development-plan.md,
 # Phase 0): secret scanning, docs consistency (the ADR-index check; the
-# spec-link check was added later by ADR-0061), ruff lint+format, pyright
+# spec-link check was added later by ADR-0061, the markdown style-lint check
+# and its config drift-check by ADR-0062), ruff lint+format, pyright
 # strict, the 3-OS × Python 3.14 test matrix with the log canary scan, and
 # pip-audit (PR step + daily schedule). Tool versions are pinned in the
 # `env` block below per testing-strategy.md "Workflow provenance";
@@ -49,6 +50,7 @@ env:
   PYRIGHT_VERSION: "1.1.411"
   PYTEST_VERSION: "9.1.1"
   PIP_AUDIT_VERSION: "2.10.1"
+  PYMARKDOWN_VERSION: "0.9.39"
   UV_VERSION: "0.11.28"
 
 jobs:
@@ -72,17 +74,36 @@ jobs:
         run: ./gitleaks git --no-banner --redact .
 
   docs-consistency:
-    name: Docs consistency (ADR index + spec links)
+    name: Docs consistency (ADR index + spec links + markdown style)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
 
       - name: Check ADR index against files and their Status fields
         run: python3 scripts/check_adr_index.py
 
       - name: Check every relative markdown link under specs/ resolves
         run: python3 scripts/check_spec_links.py
+
+      - name: Check the two markdown-lint configs stay in sync (ADR-0062)
+        run: python3 scripts/check_markdownlint_config_sync.py
+
+      - name: Markdown style lint (PyMarkdown, ADR-0062)
+        # Scope (ADR-0062 §4): tracked *.md under specs/ plus root README.md and
+        # CLAUDE.md; specs/personal/ is gitignored so git ls-files never lists it
+        # (the :(exclude) pathspec guards a hypothetical future tracked file).
+        # -z / -0 are null-delimited so a path with spaces stays one argument;
+        # xargs -r makes an empty list a clean no-op rather than a zero-path run.
+        # Config is the [tool.pymarkdown] block in pyproject.toml, mirrored in
+        # .markdownlint.yaml.
+        run: |
+          git ls-files -z 'specs/*.md' ':(exclude)specs/personal/**' README.md CLAUDE.md \
+            | xargs -0 -r uvx "pymarkdownlnt@${PYMARKDOWN_VERSION}" --config pyproject.toml scan
 
   lint:
     name: Lint and format (ruff)

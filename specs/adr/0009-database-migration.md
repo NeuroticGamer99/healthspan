@@ -39,7 +39,7 @@ The logic required is straightforward and well-understood. A custom runner is fu
 
 Files live in `sql/migrations/` and are named with a zero-padded sequence number and a descriptive slug:
 
-```
+```text
 sql/migrations/
   0001_initial_schema.sql
   0002_add_biomarker_aliases.sql

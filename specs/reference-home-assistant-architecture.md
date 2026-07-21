@@ -71,7 +71,7 @@ HA provides both sync (`hass.bus.fire()`) and async (`hass.bus.async_fire()`) in
 
 Each integration lives in `homeassistant/components/{domain}/` and contains:
 
-```
+```text
 manifest.json        # Metadata, dependencies, requirements
 __init__.py          # Setup functions (async_setup, async_setup_entry)
 config_flow.py       # UI configuration wizard (optional)
@@ -143,7 +143,7 @@ The automation system is implemented as a **core integration** (`homeassistant/c
 
 ### Structure: Trigger -> Condition -> Action
 
-```
+```text
 Trigger (OR logic)  -->  Condition (AND logic)  -->  Action (sequence)
      "when"                  "only if"                 "then do"
 ```

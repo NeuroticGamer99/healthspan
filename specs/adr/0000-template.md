@@ -12,7 +12,6 @@ Proposed
 <!-- Bullet list of the forces at play — requirements, constraints, preferences, risks. -->
 -
 -
-
 ## Considered Options
 <!-- List the options evaluated. Each gets a section below. -->
 - Option A
