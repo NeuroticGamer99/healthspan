@@ -130,16 +130,12 @@ Final message to the user:
 1. The canonical timestamped scratchpad report path.
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
-3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
-   prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
-   with the **resolved absolute** scratchpad path — substitute the real session scratchpad directory
-   and the actual branch/timestamp; do not emit the literal `<scratchpad>` (or `<branch>` /
-   `<timestamp>`) token, which the receiving agent cannot expand — wrapped in **double quotes** so a
-   path containing spaces reaches `/apply-review` as a single argument:
-
-   ```text
-   /apply-review "<scratchpad>/code-review-<branch>-<timestamp>.md"
-   ```
-
-   In the receiving session, running that reads the report back (or paste the path and tell the
-   agent to read the file before touching the diff).
+3. The hand-off command, emitted **inside a fenced `text` code block** — the VS Code chat webview
+   renders assistant prose as unselectable text, but a code fence gets a hover *copy* button. The
+   block must contain exactly `/apply-review` followed by the **resolved absolute** path to the
+   report you wrote in step 2, in **double quotes** so a path containing spaces reaches
+   `/apply-review` as a single argument — nothing else. Resolve every part of the path first: the
+   fenced block is the user's copy target, so it must be a runnable command, never a template — if
+   any `<scratchpad>`, `<branch>`, or `<timestamp>` placeholder survives into it, the receiving
+   session gets an unreadable path. In the receiving session, running that command reads the report
+   back (or the user pastes the path and tells the agent to read the file before touching the diff).
