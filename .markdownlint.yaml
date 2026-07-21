@@ -4,8 +4,9 @@
 #     reads THIS file; our CI gate (PyMarkdown) reads that block. Any rule
 #     enable/disable/parameter change here MUST be mirrored there, and vice
 #     versa — the rule numbers (MDxxx) are shared across both linters.
-#     (PyMarkdown additionally enables a front-matter extension; markdownlint
-#     parses front matter natively, so that decision has no line here.)
+#     (PyMarkdown additionally sets two of its own concepts that markdownlint
+#     has no equivalent for, so they have no line here: a front-matter extension
+#     — markdownlint parses front matter natively — and mode.strict-config.)
 
 # Start from the full rule set, then override the corpus-tuned exceptions.
 default: true

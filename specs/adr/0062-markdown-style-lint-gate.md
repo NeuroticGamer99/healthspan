@@ -50,9 +50,9 @@ Both are defensible. [ADR-0061](0061-markdown-link-check-gate.md) itself extends
 **Chosen: extends [ADR-0061](0061-markdown-link-check-gate.md)** (and, through it, [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) §6). The two are the same move — "add a doc-linter to the docs-consistency job that mechanizes review vigilance" — applied to two facets (links, then style). Grouping style under the link-check ADR keeps that pair legible as one build-out of the docs gate, rather than scattering three parallel extensions across 0045 §6. [ADR-0061](0061-markdown-link-check-gate.md) is still Proposed, so this extension link is added to it without governance ceremony; if 0061 is later Accepted, the extension stands.
 
 ### C. The house-style rules: disable, or enforce with a one-time normalization?
-MD013 (4,291), MD022 (614), and MD032 (441) are the three high-volume rules, and all three encode intentional conventions: long-line prose, and content (a value or a list) placed tight under its `##` heading — the latter used uniformly across ~50 ADRs.
+MD013 (4,291), MD022 (620), and MD032 (441) are the three high-volume rules, and all three encode intentional conventions: long-line prose, and content (a value or a list) placed tight under its `##` heading — the latter used uniformly across ~50 ADRs.
 
-- **Enforce** would mean a one-time normalization of ~1,055 MD022/MD032 sites plus every long line. Crucially, PyMarkdown *cannot auto-fix* MD022/MD032, so this is ~1,055 hand-edits, the bulk of them **inside Accepted ADRs** — a governance cost under [CLAUDE.md](../../CLAUDE.md) rule 5 for zero rendering change (GitHub renders tight and spaced headings identically).
+- **Enforce** would mean a one-time normalization of ~1,061 MD022/MD032 sites plus every long line. Crucially, PyMarkdown *cannot auto-fix* MD022/MD032, so this is ~1,061 hand-edits, the bulk of them **inside Accepted ADRs** — a governance cost under [CLAUDE.md](../../CLAUDE.md) rule 5 for zero rendering change (GitHub renders tight and spaced headings identically).
 - **Disable** preserves the conventions, costs nothing, and leaves a residual gate of ~50 genuine findings.
 
 **Chosen: disable MD013, MD022, MD032.** They are consistent house conventions, not defects; enforcing them would churn the corpus (and the immutable ADRs) to satisfy a linter's default aesthetic.
@@ -70,7 +70,7 @@ Option D leaves two files that must agree; this is how the agreement is kept. A 
 ## Decision Outcome
 
 ### 1. Tool and provisioning
-PyMarkdown (`pymarkdownlnt`), run via `uvx pymarkdownlnt@<version>` with the version pinned in [`ci.yml`](../../.github/workflows/ci.yml)'s `env` block alongside the other gate tools, per [testing-strategy.md](../testing-strategy.md) "Workflow provenance". The front-matter extension is enabled so YAML front matter is parsed as front matter, not misread as Setext headings.
+PyMarkdown (`pymarkdownlnt`), run via `uvx pymarkdownlnt@<version>` with the version pinned in [`ci.yml`](../../.github/workflows/ci.yml)'s `env` block alongside the other gate tools, per [testing-strategy.md](../testing-strategy.md) "Workflow provenance". The front-matter extension is enabled so YAML front matter is parsed as front matter, not misread as Setext headings. `mode.strict-config` is enabled so a malformed or unsupported setting in the config fails the run rather than being silently ignored and replaced with a default — a config that is the source of truth must fail closed, not quietly stop enforcing a rule it appears to set. (Both are PyMarkdown-only concepts with no markdownlint mirror; see §3.)
 
 ### 2. Rule configuration (the tuned corpus profile)
 Authoritative in `pyproject.toml` `[tool.pymarkdown]`, mirrored in [`.markdownlint.yaml`](../../.markdownlint.yaml):
@@ -80,7 +80,7 @@ Authoritative in `pyproject.toml` `[tool.pymarkdown]`, mirrored in [`.markdownli
 - **All other rules: default-enabled**, including `MD040` (fenced-code-language), `MD031` (blanks-around-fences), `MD012` (no-multiple-blanks), and `MD036` (emphasis-as-heading).
 
 ### 3. Config-sync discipline
-The two config files are a manual mirror. Each carries a header comment stating that any rule enable/disable/parameter change in one **must** be mirrored in the other, because our CI gate reads `pyproject.toml` and CodeRabbit reads `.markdownlint.yaml`. (The lone asymmetry: the front-matter extension is a PyMarkdown concept; markdownlint handles front matter natively, so it has no mirror line — noted in-file so the absence does not read as drift.)
+The two config files are a manual mirror. Each carries a header comment stating that any rule enable/disable/parameter change in one **must** be mirrored in the other, because our CI gate reads `pyproject.toml` and CodeRabbit reads `.markdownlint.yaml`. (Two asymmetries are PyMarkdown-only and so have no mirror line: the front-matter extension — markdownlint handles front matter natively — and `mode.strict-config`, which governs how PyMarkdown reacts to a bad *own* config, not any shared rule decision. Both are noted in-file so their absence on the markdownlint side does not read as drift.)
 
 ### 4. Scope boundary
 Same as [ADR-0061](0061-markdown-link-check-gate.md): tracked `*.md` under `specs/` plus root `README.md` and `CLAUDE.md`; `specs/personal/` is neither scanned (gitignored, absent in CI) nor otherwise touched. Tooling docs under `.claude/` are out of scope for now; widening is a config change if a need appears.
