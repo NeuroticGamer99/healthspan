@@ -140,3 +140,8 @@ Final message to the user:
    any `<scratchpad>`, `<branch>`, or `<timestamp>` placeholder survives into it, the receiving
    session gets an unreadable path. In the receiving session, running that command reads the report
    back (or the user pastes the path and tells the agent to read the file before touching the diff).
+
+Item 1 and item 3 carry the same path on purpose: item 1 states it as the human-readable reference,
+and item 3 is the copyable command that embeds it — the fenced block is the only copy affordance, so
+a user who just wants to open the file copies the command and strips the `/apply-review "…"` wrapper.
+Keep both; the repetition is deliberate, not redundancy to collapse.
