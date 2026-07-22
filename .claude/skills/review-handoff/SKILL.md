@@ -127,7 +127,8 @@ fenced code block whose *copy* button transfers it in one click, so it never has
 
 Final message to the user:
 
-1. The canonical timestamped scratchpad report path.
+1. The canonical timestamped scratchpad report path — resolved and absolute, with no
+   `<scratchpad>` / `<branch>` / `<timestamp>` placeholders left in it.
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
 3. The hand-off command, emitted **inside a fenced `text` code block** — the VS Code chat webview
