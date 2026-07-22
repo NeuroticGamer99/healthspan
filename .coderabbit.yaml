@@ -1,0 +1,96 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for the healthspan project.
+# Teaches the reviewer this project's non-obvious conventions (see CLAUDE.md)
+# and stands its built-in linters down where CI already gates them.
+
+language: en-US
+
+reviews:
+  # Solo, spec-heavy project — surface more, including design nits.
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  collapse_walkthrough: false
+  changed_files_summary: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Keep summaries focused on reviewable source; generated/vendored/data
+  # artifacts are already gitignored but exclude defensively.
+  path_filters:
+    - "!**/*.db"
+    - "!**/*.sqlite*"
+    - "!exports/**"
+    - "!export/**"
+    - "!data/**"
+    - "!**/__pycache__/**"
+    - "!.venv/**"
+    - "!pytest-output.log"
+
+  path_instructions:
+    - path: "specs/adr/**"
+      instructions: >-
+        ADR governance (CLAUDE.md): Accepted ADRs are immutable historical
+        records. The only permitted in-place edits to an Accepted ADR are
+        correcting its Status field to "Superseded by ADR-XXXX" and adding a
+        navigation link in Links. A decision change must be a NEW ADR that
+        supersedes the old one; an addition must be a NEW ADR that extends it.
+        Flag any content change to an Accepted ADR. Any ADR add/status/title
+        change must also update the Index table in specs/adr/README.md — flag
+        if it does not.
+
+    - path: "specs/**"
+      instructions: >-
+        Personal-data containment (CLAUDE.md): specs/personal/ is the ONLY
+        location for personal health values, lab results, diagnoses,
+        medications, clinical history, or the provenance/sequence of the
+        owner's actual records. Flag any such content appearing elsewhere in
+        specs/. Also flag inline ADR status annotations in prose being edited
+        to "chase" a status change — those are point-in-time by design.
+
+    - path: "**/*.{py,md}"
+      instructions: >-
+        Decision-capture routing (CLAUDE.md): design decisions surfaced during
+        implementation must be recorded in the owning doc layer in the same
+        change — architectural -> new Proposed ADR; API surface ->
+        specs/api-reference.md; schema shapes -> specs/data-model.md; config
+        knobs/defaults -> owning ADR; deferred questions ->
+        specs/open-questions.md. A decision that exists only in code is a spec
+        bug. Flag new endpoints, response/error shapes, schema columns, or
+        config defaults that have no matching spec/ADR update.
+
+    - path: "**/*.py"
+      instructions: >-
+        Security invariants: flag changes that could touch INV-1..6 in
+        specs/security.md (key handling, encryption-at-rest, auth/scopes,
+        backup-guard, orphan-sweep, non-loopback exposure) without a
+        corresponding ADR or spec note. Never suggest writing personal health
+        values to any path outside specs/personal/. Do NOT write PEP 758
+        bare-comma "except A, B:" — always parenthesize exception tuples.
+
+    - path: "**/*.ps1"
+      instructions: >-
+        PowerShell files must read/write project files with explicit UTF-8
+        (UTF8Encoding without BOM, or -Encoding UTF8). The repo contains
+        multibyte Unicode (em dashes, box-drawing, arrows) that the default
+        Windows-1252 encoding corrupts silently. Flag Get-Content -Raw or
+        Set-Content without -Encoding UTF8 on project files.
+
+  # CI already gates these (ruff, PyMarkdown/markdownlint per ADR-0062,
+  # ADR-index check). Suppress CodeRabbit's duplicate linters so its comments
+  # stay on logic and design. github-checks stays on to surface CI results.
+  tools:
+    ruff:
+      enabled: false
+    markdownlint:
+      enabled: false
+    github-checks:
+      enabled: true
+
+chat:
+  auto_reply: true
