@@ -70,6 +70,11 @@ def main(argv: list[str]) -> int:
         print("usage: scan_log_canary.py LOG_FILE [LOG_FILE ...]", file=sys.stderr)
         return 2
     log_paths = [Path(a) for a in argv]
+    # Load-bearing for the parallel leg's fail-closed property (ADR-0063): the
+    # Windows canary step passes `canary-logs/*.log`, which stays a literal
+    # unmatched glob when a dead sink produced no files, landing here as exit 2.
+    # Do not soften this to warn-and-skip — that would turn a broken capture into
+    # a green gate.
     missing = [p for p in log_paths if not p.is_file()]
     if missing:
         print(f"log files not found: {missing}", file=sys.stderr)

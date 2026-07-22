@@ -31,6 +31,8 @@ reviews:
     - "!**/__pycache__/**"
     - "!.venv/**"
     - "!pytest-output.log"
+    - "!parallel-output.log"
+    - "!canary-logs/**"
 
   path_instructions:
     - path: "specs/adr/**"
