@@ -133,7 +133,7 @@ Final message to the user:
 3. The hand-off command, emitted **inside a fenced `text` code block** — the VS Code chat webview
    renders assistant prose as unselectable text, but a code fence gets a hover *copy* button. The
    block must contain exactly `/apply-review` followed by the **resolved absolute** path to the
-   report you wrote in step 2, in **double quotes** so a path containing spaces reaches
+   canonical report (item 1 above), in **double quotes** so a path containing spaces reaches
    `/apply-review` as a single argument — nothing else. Resolve every part of the path first: the
    fenced block is the user's copy target, so it must be a runnable command, never a template — if
    any `<scratchpad>`, `<branch>`, or `<timestamp>` placeholder survives into it, the receiving
