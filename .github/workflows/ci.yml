@@ -49,6 +49,7 @@ env:
   RUFF_VERSION: "0.15.21"
   PYRIGHT_VERSION: "1.1.411"
   PYTEST_VERSION: "9.1.1"
+  PYTEST_XDIST_VERSION: "3.8.0"  # windows-latest parallel test leg (ADR-0063)
   PIP_AUDIT_VERSION: "2.10.1"
   PYMARKDOWN_VERSION: "0.9.39"
   UV_VERSION: "0.11.28"
@@ -158,8 +159,20 @@ jobs:
       - name: Install project (locked)
         run: uv sync --locked
 
-      - name: Run tests, capturing all output for the canary scan
-        id: pytest
+      # Test execution differs by platform (ADR-0063). ubuntu/macos keep the
+      # serial run that streams one tee'd stdout/stderr into a single file for
+      # the log-canary scan — the proven gate, untouched. windows-latest, the
+      # ~3x subprocess-spawn outlier, runs under `pytest -n auto`; the controller
+      # stream is tee'd as on the serial legs, and conftest.py's per-worker sink
+      # (CANARY_CAPTURE_DIR) adds the captured per-test output xdist suppresses on
+      # the controller — together they scan a superset of a serial leg's *captured*
+      # stream (out-of-window worker writes are the one exception; ADR-0063). The
+      # log-canary rule (no health values in logs) is platform-independent, so
+      # the two serial legs remain a full backstop.
+
+      - name: Run tests serially, capturing all output for the canary scan
+        id: pytest_serial
+        if: matrix.os != 'windows-latest'
         # --capture=tee-sys passes captured test stdout/stderr through to the
         # real streams (pytest's default capture would hide passing tests'
         # output from tee); --log-cli-level surfaces logging-module records.
@@ -168,11 +181,41 @@ jobs:
           uv run --with "pytest==${PYTEST_VERSION}" pytest -v --capture=tee-sys --log-cli-level=DEBUG 2>&1 \
             | tee pytest-output.log
 
-      - name: Log canary scan (testing-strategy.md CI Gates)
+      - name: Log canary scan — serial legs (testing-strategy.md CI Gates)
         # Must run on test FAILURE too — a failing test's traceback is the
         # likeliest place for a leaked value ("scans everything captured").
-        if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.pytest_serial.outcome != 'skipped' }}
         run: uv run python scripts/scan_log_canary.py pytest-output.log
+
+      - name: Run tests in parallel, capturing all output for the canary scan
+        id: pytest_parallel
+        if: matrix.os == 'windows-latest'
+        # -n auto (pytest-xdist) parallelizes across the runner's cores. fd-level
+        # capture (pytest's default — no --capture override) records spawned
+        # subprocess output, which tee-sys drops once a worker's stdout is the
+        # xdist channel. Two sources feed the scan below: the controller's own
+        # stdout/stderr, tee'd here like the serial legs (node-id lines, the
+        # failures/errors summary with tracebacks, warnings, xdist crash relays);
+        # and conftest.py's per-worker sink under CANARY_CAPTURE_DIR, which
+        # recovers each passing test's captured output the controller drops.
+        # --log-level=DEBUG keeps caplog at the sensitivity the serial legs get
+        # from --log-cli-level=DEBUG (live-CLI logging is unsupported under xdist).
+        # `shell: bash` (workflow default) runs with pipefail, so a pytest failure
+        # still fails the step through the tee.
+        env:
+          CANARY_CAPTURE_DIR: canary-logs
+        run: |
+          rm -rf canary-logs   # sweep any stale per-worker files (a differently
+                               # sized prior run leaves orphans the scan would read)
+          uv run --with "pytest==${PYTEST_VERSION}" --with "pytest-xdist==${PYTEST_XDIST_VERSION}" \
+            pytest -v -n auto --log-level=DEBUG 2>&1 | tee parallel-output.log
+
+      - name: Log canary scan — parallel leg (testing-strategy.md CI Gates)
+        # Scans the controller stream and every worker capture file. The sink
+        # creates worker files lazily, so if capture produced nothing the glob
+        # stays literal and scan_log_canary.py exits non-zero — fail-closed.
+        if: ${{ !cancelled() && steps.pytest_parallel.outcome != 'skipped' }}
+        run: uv run python scripts/scan_log_canary.py parallel-output.log canary-logs/*.log
 
   pip-audit:
     name: Dependency vulnerability audit (pip-audit)

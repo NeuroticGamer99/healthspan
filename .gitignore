@@ -21,5 +21,10 @@ __pycache__/
 *.py[cod]
 .claude/settings.json
 
-# Local pytest capture for the log-canary scan (CI regenerates it)
+# Local pytest capture for the log-canary scan (CI regenerates it). The parallel
+# (windows-latest) leg's artifacts (ADR-0063) join it: the tee'd controller
+# stream and the per-worker capture dir, both hundreds of KB of captured test
+# output that must never land in the repo.
 pytest-output.log
+parallel-output.log
+canary-logs/
