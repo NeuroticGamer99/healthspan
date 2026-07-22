@@ -119,33 +119,29 @@ what the next agent needs in order to not redo the work.
 `specs/personal/`, reference the path and describe the issue without quoting values — this file
 is designed to travel between sessions.
 
-**Short alias copy.** The scratchpad path embeds the project slug and session GUID (~130 chars) —
-unusable to type or copy by hand. So after writing the canonical file, write the *same content* to a
-short fixed path in the OS temp dir: resolve the temp directory (`$env:TEMP` in PowerShell,
-`$TMPDIR` — falling back to `/tmp` — on macOS/Linux) and write `<temp-dir>/review-report.md`,
-overwriting any previous alias (Write tool, not redirection). This alias is **clobbered by the next
-review** — the timestamped scratchpad file stays canonical. Hand the alias out for convenience; give
-the timestamped path when a durable reference is needed.
+The timestamped scratchpad file is the single canonical report — do not copy it anywhere else. Its
+path is long (project slug + session GUID), but that is fine: the hand-off command below goes out in a
+fenced code block whose *copy* button transfers it in one click, so it never has to be typed by hand.
 
 ## 3. Hand off
 
 Final message to the user:
 
-1. Both report paths: the canonical timestamped scratchpad file (the deliverable a later review
-   won't overwrite) and the short alias at `<temp-dir>/review-report.md` (convenient, but clobbered
-   by the next review).
+1. The canonical timestamped scratchpad report path — resolved and absolute, with no
+   `<scratchpad>` / `<branch>` / `<timestamp>` placeholders left in it.
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
-3. The hand-off command in a **fenced code block** — the VS Code chat webview renders assistant
-   prose as unselectable text, but a code fence gets a hover *copy* button. Print the full command
-   with the **resolved absolute** alias path (resolve the temp dir; do not print an unexpanded
-   `$env:TEMP` / `$TMPDIR` token — the receiving agent would have to expand it), wrapped in **double
-   quotes** so a path containing spaces reaches `/apply-review` as a single argument:
+3. The hand-off command, emitted **inside a fenced `text` code block** — the VS Code chat webview
+   renders assistant prose as unselectable text, but a code fence gets a hover *copy* button. The
+   block must contain exactly `/apply-review` followed by the **resolved absolute** path to the
+   canonical report (item 1 above), in **double quotes** so a path containing spaces reaches
+   `/apply-review` as a single argument — nothing else. Resolve every part of the path first: the
+   fenced block is the user's copy target, so it must be a runnable command, never a template — if
+   any `<scratchpad>`, `<branch>`, or `<timestamp>` placeholder survives into it, the receiving
+   session gets an unreadable path. In the receiving session, running that command reads the report
+   back (or the user pastes the path and tells the agent to read the file before touching the diff).
 
-   ```text
-   /apply-review "<temp-dir>/review-report.md"
-   ```
-
-   In the receiving session, running that reads the report back (or paste the path and tell the
-   agent to read the file before touching the diff). Give the canonical timestamped path alongside
-   for a reference the next review won't overwrite.
+Item 1 and item 3 carry the same path on purpose: item 1 states it as the human-readable reference,
+and item 3 is the copyable command that embeds it — the fenced block is the only copy affordance, so
+a user who just wants to open the file copies the command and strips the `/apply-review "…"` wrapper.
+Keep both; the repetition is deliberate, not redundancy to collapse.
