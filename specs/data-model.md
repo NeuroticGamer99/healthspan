@@ -272,7 +272,7 @@ The data types above are realized as concrete tables by **migration 0001**, the 
 - Columns: `occurred_utc`, `token_name` (advisory name, or the literal `invalid` for unrecognized credentials), `source_addr`, `endpoint`, `method`, `outcome` — CHECK-constrained to ADR-0026's five outcomes (`ok`, `denied:scope`, `denied:invalid`, `denied:revoked`, `rate-limited`). Never token values, request bodies, or health data.
 - **Append-only via `BEFORE UPDATE`/`BEFORE DELETE` `RAISE(ABORT)` triggers** — the `audit_log` pattern. Deliberately a separate table from `audit_log`: that one records data mutations ([ADR-0027](adr/0027-audit-trail-and-corrections.md)); this one records control-plane access, with different columns, retention, and query patterns.
 - Timestamps are UTC-only system event times — the four-column local-time quadruple is for clinically meaningful times, which these are not.
-- Retention/pruning is deferred to the jobs-table pruning pattern ([ADR-0012](adr/0012-job-abstraction.md), Phase 4).
+- Retention/pruning is deferred to the jobs-table pruning pattern ([ADR-0012](adr/0012-job-abstraction.md), Phase 4). The unconditional `BEFORE DELETE` trigger above must be reconciled with that mechanism first — see [open-questions.md](open-questions.md), "`auth_audit` retention pruning vs. the shipped append-only trigger".
 
 ## Migration 0003 — Import conflict keys
 

@@ -87,9 +87,10 @@ reviews:
 
     - path: "**/*.py"
       instructions: >-
-        Security invariants: flag changes that could touch INV-1..6 in
-        specs/security.md (key handling, encryption-at-rest, auth/scopes,
-        backup-guard, orphan-sweep, non-loopback exposure) without a
+        Security invariants: flag changes that could touch the invariants
+        table in specs/security.md (key handling, encryption-at-rest,
+        auth/scopes, audit append-only, credential hashing, backup-guard,
+        orphan-sweep, non-loopback exposure) without a
         corresponding ADR or spec note. Never suggest writing personal health
         values to any path outside specs/personal/. Do NOT write PEP 758
         bare-comma "except A, B:" — always parenthesize exception tuples.

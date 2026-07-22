@@ -40,7 +40,7 @@ security.md requires a startup warning when the config file (line 82) or the dat
 
 ### 2.2 Table the two invariants Phase 3.5's merge/delete will press on — INV-7 (append-only audit) and INV-8 (no server-side credential plaintext)
 
-- [ ] Add INV-7 and INV-8 to security.md's invariant table **before** the Phase 3.5 catalog-correction ADR is written.
+- [x] Add INV-7 and INV-8 to security.md's invariant table **before** the Phase 3.5 catalog-correction ADR is written.
 
 INV-1…6 cover key custody, plugin isolation, credential discipline, and provenance — but two properties the code now enforces exist only in prose and ADRs, so no future ADR is *forced* to cite them before weakening them: (a) `audit_log` and `auth_audit` are append-only ([ADR-0027](../adr/0027-audit-trail-and-corrections.md); ADR-0050 §6), enforced by `RAISE(ABORT)` triggers; (b) the server stores only credential hashes — plaintexts exist at issuance and in holder-local storage only ([ADR-0026](../adr/0026-named-scoped-tokens.md), implemented in `tokens.py`). security.md's own rule is that breaking an invariant "must be a visible, deliberate decision" — a mechanism that only protects properties in the table. Phase 3.5's merge/delete is the platform's first row-destroying feature; a merge design that "cleans up" audit rows referencing a merged-away entity would pass every existing INV citation check while destroying the evidentiary record ADR-0027 calls the recovery story. Both properties are already decided in Accepted ADRs, so this is a direct edit to security.md (standing-requirements doc) with established-by citations — no new ADR. Sequencing is the point: land it first, so the 3.A ADR must cite INV-7.
 

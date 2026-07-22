@@ -1,6 +1,6 @@
 ---
 name: spec-reviewer
-description: Reviews a diff for fidelity to the specs — owning-ADR conformance, ADR governance, security invariants (INV-1…6), decision-capture routing, and personal-data containment. Use after implementing a change and before proposing its commit. Read-only; reports findings, never edits.
+description: Reviews a diff for fidelity to the specs — owning-ADR conformance, ADR governance, security invariants, decision-capture routing, and personal-data containment. Use after implementing a change and before proposing its commit. Read-only; reports findings, never edits.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -18,7 +18,7 @@ Determine the diff under review:
 ## Reference documents
 
 - `specs/adr/README.md` — the ADR index; maps decisions to owning ADRs and gives each ADR's status.
-- `specs/security.md` — the security invariants table (INV-1…INV-6) and threat model.
+- `specs/security.md` — the security invariants table and threat model.
 - `specs/data-model.md`, `specs/api-reference.md` — owning documents for schema shapes and API surface.
 - `specs/open-questions.md` — deliberately deferred decisions and their resolution triggers.
 - `CLAUDE.md` — the decision-capture routing rules (rules 1–6) and the personal-data containment policy.
@@ -29,7 +29,7 @@ Determine the diff under review:
 
 **2. ADR governance.** If the diff touches `specs/adr/`: no edit may alter an Accepted ADR's decision content (permitted in-place edits: status-field correction to `Superseded by ADR-XXXX`, navigation links in `## Links`, typo/link fixes). New or status-changed ADRs must be reflected in the `## Index` table of `specs/adr/README.md`.
 
-**3. Security invariants.** If the change touches process boundaries, credentials, plugin loading, the database/key path, or logging, check it against INV-1…INV-6 in `specs/security.md` and the logging prohibitions there. Any weakening is a critical finding.
+**3. Security invariants.** If the change touches process boundaries, credentials, plugin loading, the database/key path, audit tables, or logging, check it against the invariants table in `specs/security.md` and the logging prohibitions there. Any weakening is a critical finding.
 
 **4. Decision capture.** Look for design decisions the change embodies that the specs left open — new dependencies, new endpoints or request/response shapes, new columns/constraints/indexes, new config knobs or defaults, newly deferred questions. Each must be routed per CLAUDE.md rules 1–6 *in this same change*, and the commit/PR `Decisions:` section must link the records (or state "none" truthfully). A decision that exists only in code is a spec bug — report it with the routing rule it should follow.
 

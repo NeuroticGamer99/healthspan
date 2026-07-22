@@ -43,7 +43,7 @@ Real design content, but the review already narrowed the option space. Each is a
 
 ### T2.1 — INV-7 and INV-8 in security.md's invariant table (review 2.2)
 
-- [ ] Add INV-7 (audit surfaces are append-only: `audit_log`, `auth_audit`; corrections supersede, never rewrite; no platform operation deletes or mutates an audit row) and INV-8 (no server-side credential plaintext; plaintexts exist only at issuance and in holder-local storage), with established-by citations to ADR-0027/0050 and ADR-0026.
+- [x] Add INV-7 (audit surfaces are append-only: `audit_log`, `auth_audit`; corrections supersede, never rewrite; no platform operation deletes or mutates an audit row) and INV-8 (no server-side credential plaintext; plaintexts exist only at issuance and in holder-local storage), with established-by citations to ADR-0027/0050 and ADR-0026.
 
 Small in lines but load-bearing in wording — invariant text is what every future ADR must argue against, so the phrasing pass deserves care (e.g. INV-7 must not accidentally forbid ADR-0038's backup pruning or legitimate supersession chains). Both properties are already decided in Accepted ADRs: direct edit to security.md, no new ADR. **Do this first — it gates T1.1.**
 

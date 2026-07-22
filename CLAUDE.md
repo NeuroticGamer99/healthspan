@@ -59,7 +59,7 @@ Implementing to the specs will surface decisions the specs deliberately leave op
 
 **Routing rules — where each kind of decision is recorded:**
 
-1. **Architectural** — a new dependency; a new process, component, scope, or table; anything touching a security invariant (INV-1…6 in `specs/security.md`); anything extending or contradicting an Accepted ADR; anything that constrains future decisions → a **new Proposed ADR**, landed with or before the implementing change. ADR governance above applies unchanged.
+1. **Architectural** — a new dependency; a new process, component, scope, or table; anything touching a security invariant (the invariants table in `specs/security.md`); anything extending or contradicting an Accepted ADR; anything that constrains future decisions → a **new Proposed ADR**, landed with or before the implementing change. ADR governance above applies unchanged.
 2. **API surface** — endpoint paths, request/response shapes, error formats, status codes, per-route scope declarations, MCP tool signatures → **`specs/api-reference.md`**, updated in the same PR. Its "*Endpoints TBD during implementation*" markers are replaced as part of implementation, never retroactively.
 3. **Schema shapes** — columns, constraints, indexes not already fixed by an ADR → **`specs/data-model.md`** (or the owning ADR if it is still Proposed).
 4. **Config knobs and defaults** → the **owning ADR** (the ADR-0035/0037/0038 pattern). If the owning ADR is Accepted, that costs an extension ADR — an accepted consequence of acceptance; batching several accumulated defaults into one extension ADR is fine.
