@@ -64,6 +64,19 @@ reviews:
         bug. Flag new endpoints, response/error shapes, schema columns, or
         config defaults that have no matching spec/ADR update.
 
+    # Hidden config: the glob above uses dot:false semantics, so `*` does not
+    # match dotfiles and `**` does not descend into dot-directories. These
+    # literal/explicit-dot entries cover the hidden config that carries
+    # decisions today — CI pinned tool versions + gates under .github/, the
+    # ADR-0062 markdownlint config, and this reviewer config.
+    - path: "{.coderabbit.yaml,.markdownlint.yaml,.github/**}"
+      instructions: >-
+        Decision-capture routing (CLAUDE.md) for hidden config files: config
+        knobs/defaults route to the owning ADR (the ADR-0035/0037/0038 pattern
+        for pinned versions and defaults). Flag changed CI tool-version pins,
+        new or altered workflow gates, lint-config changes, or other config
+        defaults that have no matching spec/ADR update.
+
     - path: "**/*.py"
       instructions: >-
         Security invariants: flag changes that could touch INV-1..6 in
