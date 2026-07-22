@@ -53,7 +53,7 @@ reviews:
         specs/. Also flag inline ADR status annotations in prose being edited
         to "chase" a status change — those are point-in-time by design.
 
-    - path: "**/*.{py,md}"
+    - path: "**/*.{py,md,yaml,yml,toml,json}"
       instructions: >-
         Decision-capture routing (CLAUDE.md): design decisions surfaced during
         implementation must be recorded in the owning doc layer in the same
@@ -75,11 +75,14 @@ reviews:
 
     - path: "**/*.ps1"
       instructions: >-
-        PowerShell files must read/write project files with explicit UTF-8
-        (UTF8Encoding without BOM, or -Encoding UTF8). The repo contains
-        multibyte Unicode (em dashes, box-drawing, arrows) that the default
-        Windows-1252 encoding corrupts silently. Flag Get-Content -Raw or
-        Set-Content without -Encoding UTF8 on project files.
+        PowerShell files must read/write project files with explicit UTF-8.
+        For writes, use the BOM-free .NET pattern UTF8Encoding($false) /
+        [System.IO.File]::WriteAllText — note "-Encoding UTF8" is NOT BOM-free
+        on Windows PowerShell 5.1 (it is on PowerShell 7+). For reads,
+        Get-Content -Encoding UTF8 -Raw is fine. The repo contains multibyte
+        Unicode (em dashes, box-drawing, arrows) that the default Windows-1252
+        encoding corrupts silently. Flag Get-Content -Raw or Set-Content
+        without -Encoding UTF8 on project files.
 
   # CI already gates these (ruff, PyMarkdown/markdownlint per ADR-0062,
   # ADR-index check). Suppress CodeRabbit's duplicate linters so its comments
