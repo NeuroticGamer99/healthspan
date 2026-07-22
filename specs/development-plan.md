@@ -106,7 +106,7 @@ Explicitly **out of scope** (owned elsewhere, must not be pulled forward, or Pha
 - The **launcher** ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md), [ADR-0008](adr/0008-process-lifecycle.md)): the second process (the MCP Server) is the first thing worth orchestrating, so the launcher lands here — it owns migration execution, hands the passphrase to Core Service over stdin, and starts the stack in health-gated dependency order ([observability.md](observability.md)). Phase 2 shipped direct-start (`healthspan service start`) instead; full supervision (restart-with-backoff, circuit breaker) and full-auto-unlock are deferred to Phase 6 ([ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md), [ADR-0049](adr/0049-core-service-skeleton-implementation-decisions.md)).
 - Event bus and SSE stream ([ADR-0011](adr/0011-event-bus.md)).
 - Job abstraction ([ADR-0012](adr/0012-job-abstraction.md)); imports become jobs ([ADR-0025](adr/0025-plugin-host-process-matrix.md)).
-- MCP server: fastmcp, Streamable HTTP ([ADR-0007](adr/0007-mcp-transport.md), [ADR-0029](adr/0029-mcp-streamable-http.md)), implementing the full **tool output contract** already specified in [api-reference.md](api-reference.md) — censoring fidelity, structured output, pagination caps, instruction-shielded free text.
+- MCP server: fastmcp, Streamable HTTP ([ADR-0007](adr/0007-mcp-transport.md), [ADR-0029](adr/0029-mcp-streamable-http.md)), implementing the full **tool output contract** already specified in [api-reference.md](api-reference.md) — censoring fidelity, structured output, pagination caps, instruction-shielded free text. Tool outputs follow the locale-invariance convention ([api-reference.md](api-reference.md) Conventions; [open-questions.md](open-questions.md), Product Scope): machine-readable codes are the contract, English free text is presentation only.
 - Export endpoints ([ADR-0015](adr/0015-data-export.md)).
 - **Disposition of [ADR-0014](adr/0014-websocket.md)** (WebSocket — Proposed, never on a flip list): the SSE implementation work makes it naturally resolvable; expected outcome is supersession/subsumption by [ADR-0011](adr/0011-event-bus.md). Mechanics decided 2026-07-17: since ADR-0011 is Accepted and immutable (it cannot absorb the rationale itself), the disposition is recorded as a **small new ADR that supersedes ADR-0014** — the new ADR carries the one-line rationale, 0014's status flips to `Superseded by ADR-XXXX`, and 0011 gains a navigation link.
 
@@ -125,7 +125,7 @@ With analyses live and `result_data` attachments accumulating, the [ADR-0044](ad
 ## Phase 6 — GUI and launcher
 
 - Full launcher: process supervision, restart policy, process reports ([ADR-0008](adr/0008-process-lifecycle.md), [ADR-0042](adr/0042-process-supervision-and-single-instance-locking.md)), completing the passphrase handoff chain ([ADR-0039](adr/0039-startup-sequence-and-passphrase-handoff.md)).
-- PySide6 GUI shell calling the same REST API as every other client ([ADR-0006](adr/0006-application-architecture.md)).
+- PySide6 GUI shell calling the same REST API as every other client ([ADR-0006](adr/0006-application-architecture.md)). At phase start, decide the GUI's string hygiene (`tr()`-wrapping from the first widget, or explicitly never) and its display-locale policy — Qt defaults to system-locale number/date formatting, which can diverge from the platform's canonical dot-decimal/ISO-8601 forms ([open-questions.md](open-questions.md), Product Scope).
 
 CI runs Qt tests headless (`QT_QPA_PLATFORM=offscreen` per [ADR-0045](adr/0045-repository-workflow-and-ci-enforcement.md)); visual verification is local and manual. Ordered after the MCP phase deliberately: for a single power user the AI surface delivers more value sooner, and the GUI benefits from an API stabilized by two client implementations (CLI, MCP) before it.
 
@@ -140,6 +140,8 @@ Then per-source adapters, **each gated only on its own investigation** ([open-qu
 - Levels watch-folder import (gated on inspecting a real export of each of the four types).
 - Dexcom Developer API (gated on the API investigation).
 - Apple Health XML; Fitbit Takeout; Samsung Health export; InBody body-composition exports — each gated on its own format investigation.
+
+Every format investigation also records the export's **locale behavior** — unit system (conventional vs SI), number/date formats, localized vs stable field identifiers — per the i18n entry in [open-questions.md](open-questions.md) (Product Scope).
 
 The CGM importer wakes two deferred questions when it lands: CGM indexing strategy and time-series aggregates ([ADR-0021](adr/0021-time-series-aggregation.md); 2026-07-06 review item 3.F).
 

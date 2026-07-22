@@ -16,6 +16,8 @@ This document is also the **ledger for API-surface decisions made during impleme
 
 **Error responses:** Errors return a JSON body with a structured error object. Error responses must not echo back sensitive input values. See [security.md](security.md).
 
+**Locale invariance:** The wire format is locale-invariant regardless of client or system locale: timestamps are ISO-8601 UTC, numbers use `.` as the decimal separator, units are UCUM strings ([ADR-0031](adr/0031-units-and-ucum.md)). Machine-readable fields — HTTP status codes, enum values (`in_range`, `healthy`), and structured fields where an endpoint defines them (e.g. the `422` import error's `table`/`row_index`) — are the contract; English free text (`detail` messages, the range-comparison `reason` string) is presentation only, and a client must never key behavior on its wording. Which side a field falls on is fixed by its endpoint's specification, not by its name — the job-failure `reason` ([ADR-0012](adr/0012-job-abstraction.md)) is a coded value clients branch on, unlike the free-text range-comparison `reason`. This applies to every future endpoint and MCP tool output. See the i18n entry in [open-questions.md](open-questions.md) (Product Scope).
+
 **Authentication errors (implemented, Phase 2 WI-2):**
 
 - **`401`** — every authentication failure (missing `Authorization` header, malformed value, unknown token, revoked token) answers identically: body `{"detail": "authentication failed"}` and header `WWW-Authenticate: Bearer` (the bare scheme, no realm, no OAuth metadata). Which failure it was is recorded in the append-only `auth_audit` table ([data-model.md](data-model.md), migration 0002), never disclosed to the caller ([ADR-0026](adr/0026-named-scoped-tokens.md) uniform-denial rule).
