@@ -1,0 +1,63 @@
+# Gemini Code Assist configuration for the healthspan project.
+#
+# Companion to .gemini/styleguide.md, which teaches this repo's conventions.
+# Posture and conventions mirror .coderabbit.yaml (both derive from CLAUDE.md),
+# though the two intentionally differ where noted — Gemini reviews manually,
+# CodeRabbit still auto-reviews until its follow-up flip. Gemini is the third
+# model-family seat (Google) alongside CodeRabbit (OpenAI-model harness) and the
+# Claude-based /code-review. Schema: the .gemini/config.yaml reference in the
+# Gemini Code Assist "Customize behavior in GitHub" docs. See CLAUDE.md for the
+# conventions themselves.
+
+have_fun: false              # no poems in summaries (CodeRabbit: poem: false)
+
+memory_config:
+  disabled: false            # keep per-repo learnings on (CodeRabbit-style memory)
+
+code_review:
+  disable: false
+  # Gemini is the diversity / second-opinion seat, not the primary. CodeRabbit
+  # already runs `profile: assertive` for design nits, so hold Gemini at the
+  # MEDIUM default — substantive issues over the same nits reported three times.
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1    # unlimited
+
+  # Opt-in model (target end-state): each PR we choose one reviewer chain to spend
+  # (Gemini, CodeRabbit, or Copilot) for deliberate model diversity without three
+  # bots dogpiling every PR — the driver being triage attention rather than rate
+  # limits. Gemini is manual now; CodeRabbit still auto-reviews every non-draft PR
+  # until its manual flip lands in the follow-up orchestration PR, after which
+  # nothing fires automatically on PR open. Trigger a Gemini review on demand by
+  # commenting `/gemini review` on the PR.
+  pull_request_opened:
+    help: false
+    summary: false           # quiet by default; auto-summary is free to re-enable
+    code_review: false       # manual only — invoke with `/gemini review`
+    include_drafts: false
+
+# Exclude generated / data / secret-bearing artifacts from review. All are
+# gitignored, so they normally never reach a diff — but on this PUBLIC repo the
+# exclusion also stops the reviewer from quoting a *force-added* secret or personal
+# record into a public PR comment (CI's gitleaks + log-canary gates are the primary
+# leak guard; this is defense in depth). Globs are any-depth to match how
+# .gitignore ignores these names.
+#
+# specs/personal/ excludes the personal dir *itself*; it does not weaken the
+# styleguide's rule to FLAG personal data that appears ANYWHERE ELSE (outside
+# specs/personal/), which is the case a reviewer can actually act on.
+ignore_patterns:
+  - "**/*.db"              # SQLite DB and its sidecars (encrypted real data)
+  - "**/*.db-shm"
+  - "**/*.db-wal"
+  - "**/*.db.lock"
+  - "**/*.sqlite*"
+  - "**/*recovery-kit*"    # recovery kits carry the secret key (ADR-0033)
+  - "**/exports/**"        # plaintext health-data exports (ADR-0015)
+  - "**/export/**"
+  - "**/data/**"
+  - "**/__pycache__/**"
+  - ".venv/**"
+  - "pytest-output.log"
+  - "parallel-output.log"
+  - "canary-logs/**"
+  - "specs/personal/**"

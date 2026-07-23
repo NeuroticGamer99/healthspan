@@ -1,0 +1,122 @@
+# Gemini Code Assist — Review Style Guide (healthspan)
+
+This file teaches Gemini Code Assist the non-obvious conventions of the
+healthspan project. It is the Gemini analog of the `path_instructions` in
+`.coderabbit.yaml`; both derive from `CLAUDE.md`, which is the source of truth.
+When this guide and `CLAUDE.md` disagree, `CLAUDE.md` wins — flag the drift.
+
+Gemini is the third model-family reviewer on this repo (Google), alongside
+CodeRabbit (OpenAI models) and the Claude-based `/code-review`. Focus on
+substantive correctness, security, and spec-fidelity issues; CodeRabbit already
+covers style nits under an assertive profile.
+
+## ADR governance
+
+ADRs live in `specs/adr/`. An Accepted ADR is an immutable historical record.
+
+- The only permitted in-place edits to an Accepted ADR are correcting its
+  `## Status` field to `Superseded by ADR-XXXX` and adding a navigation link in
+  its `## Links` section.
+- A decision change must be a **new** ADR that supersedes the old one; an
+  addition must be a **new** ADR that extends it.
+- Flag any content change to the body of an Accepted ADR — except a pure typo or
+  broken-link fix, which `CLAUDE.md` ADR-governance rule 5 permits without a new
+  ADR.
+- Any ADR add, status change, or title change must also update the `## Index`
+  table in `specs/adr/README.md`. Flag a change that does not.
+- Inline ADR status annotations in prose (for example "(ADR-0055, Proposed)")
+  are point-in-time by design. Do not flag them as stale, and do flag edits that
+  "chase" a status change in historical prose.
+
+## Personal-data containment
+
+`specs/personal/` is the only location where personal health data or personally
+identifying information may live. It must never be committed — but do not treat
+`.gitignore` as the guarantee; flag such content wherever it appears.
+
+- Personal data means the database owner's actual health values, lab results,
+  diagnoses, medications, or clinical history — and the provenance or sequence
+  of their actual records (which lab, which panel, in what order), even with no
+  values attached.
+- It also means any personally identifying information — notes or details that
+  would identify the database owner as an individual — even with no health
+  values attached.
+- Flag any such content appearing anywhere outside `specs/personal/` — including
+  a tracked or force-added file that slipped past `.gitignore` — but report only
+  the path and the data category; never quote, copy, or echo the actual values,
+  provenance, or identifying details into a review comment.
+- Never suggest writing personal health values or identifying information to any
+  path outside `specs/personal/`.
+
+## Decision-capture routing
+
+A design decision surfaced during implementation must be recorded in the owning
+doc layer in the same change. A decision that exists only in code is a spec bug.
+These mirror `CLAUDE.md`'s "Implementation decision capture" section, which is
+authoritative — defer to it if this summary drifts.
+
+- Architectural (a new dependency, process, component, scope, or table; anything
+  touching a security invariant; anything extending or contradicting an Accepted
+  ADR; anything constraining future decisions) routes to a new Proposed ADR.
+- API surface (endpoint paths, request or response shapes, error formats, status
+  codes, per-route scopes, MCP tool signatures) routes to `specs/api-reference.md`.
+- Schema shapes (columns, constraints, indexes) route to `specs/data-model.md`.
+- Config knobs and defaults route to the owning ADR.
+- Deferred questions route to `specs/open-questions.md`.
+- Flag anything from the categories above that lands without its owning record:
+  a new dependency, process, table, or security-invariant change with no Proposed
+  or extension ADR; a new endpoint, response or error shape, schema column, or
+  config default with no matching spec or ADR update.
+
+## Security invariants
+
+`specs/security.md` holds a numbered table of testable invariants, INV-1 through
+INV-8: in-memory-only encryption key (INV-1), the Core Service never executing
+plugin code (INV-2), the plugin credential-tier bound (INV-3), plugins altering
+behavior only via the validated REST API (INV-4), named/scoped/revocable tokens
+(INV-5), interpretation and derivation kept out of source-data tables (INV-6),
+append-only audit surfaces (INV-7), and hash-only credential storage (INV-8).
+That table is authoritative — defer to it, not to this summary, if they diverge.
+
+- A change touching any invariant requires a Proposed (or extension) ADR, per
+  the decision-capture routing above and `CLAUDE.md` — a standalone spec note is
+  not sufficient. Flag any such change that lacks the required ADR.
+
+## Python conventions
+
+- Never write PEP 758 bare-comma `except A, B:` — always parenthesize the
+  exception tuple as `except (A, B):`. In 3.14 the bare form is valid shorthand
+  for the tuple `(A, B)` (the set of types to catch), not the removed Python-2
+  "bind to B" aliasing it resembles; that visual collision is exactly why it
+  trips reviewers and tools, so keep the parenthesized form.
+- The project is locale-invariant where it matters; do not introduce
+  locale-dependent parsing or formatting without a note.
+
+## PowerShell conventions
+
+PowerShell files must read and write project files with explicit UTF-8. The repo
+contains multibyte Unicode (em dashes, box-drawing, arrows) that the default
+Windows-1252 encoding corrupts silently.
+
+- For writes, use the BOM-free .NET pattern
+  `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))`.
+- `-Encoding UTF8` is not BOM-free on Windows PowerShell 5.1 (it is on
+  PowerShell 7+). For reads, `Get-Content -Encoding UTF8 -Raw` is fine.
+- Flag `Get-Content -Raw` or `Set-Content` without `-Encoding UTF8` on project
+  files.
+
+## What not to flag
+
+Per the `CLAUDE.md` decision-capture discriminator, dev-tooling and reviewer
+configuration with no product, API, schema, or security contract and no blocking
+CI gate route to "rule 6": code and config are their own record, and the
+change's `Decisions:` section reads "none". Do not ask for an ADR or spec update
+for such changes — this includes the `.gemini/` files themselves,
+`.coderabbit.yaml`, `.editorconfig`, and similar tooling configuration.
+
+Do still flag the config that *does* carry a contract or a gate, even under a
+dot-directory: a changed CI tool-version pin, a new or weakened blocking workflow
+gate under `.github/`, or a default tied to an owning ADR (the ADR-0035/0037/0038
+pinned-version pattern, or ADR-0062 for the markdownlint gate) that has no
+matching spec or ADR update. Rule 6 is the no-contract, no-gate case — not
+everything that happens to live in a dotfile.
