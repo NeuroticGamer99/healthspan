@@ -87,8 +87,9 @@ anything declined, and flag where the bot was wrong in an interesting way (it ca
 to trust the next one).
 
 **Do not change code without the user's explicit go.** Verification and replies are automatic;
-fixes are not. When the go comes, fix, re-run the gates, push, and only then post the "fixed in
-`<sha>`" replies.
+fixes are not. When the go comes, fix, re-run the gates (the full `/land`/`/ship` set — including
+`uv run python scripts/check_spec_links.py`, since Markdown edits outside `specs/` can break
+spec-link targets), push, and only then post the "fixed in `<sha>`" replies.
 
 ## 4. After the fixes land
 

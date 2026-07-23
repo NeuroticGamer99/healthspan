@@ -35,7 +35,7 @@ code_review:
   pull_request_opened:
     help: false
     summary: false           # quiet by default; auto-summary is free to re-enable
-    code_review: false       # manual only — invoke with `/gemini review`
+    code_review: false       # inert — the consumer app is sunset (see header)
     include_drafts: false
 
 # Exclude generated / data / secret-bearing artifacts from review. All are
