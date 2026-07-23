@@ -64,8 +64,10 @@ uv run python scripts/bot_review.py fetch --bot copilot --pr <N> --since <the fl
 Prints the review and only that review's comments, with the `id` to reply to, plus a `NOTE:` when
 the body's stated count disagrees with what was fetched.
 
-Then follow **`.claude/bot-review-triage.md`**: verify each finding against the real code, reply per
-finding, report the verdict table, and **stop for the user's go before changing any code**.
+Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
+against the real code, reply per finding, report the verdict table, **stop for the user's go
+before changing any code**, and close out per its §4 — re-requesting Copilot after the fix
+commit is a fresh `/copilot-review` run.
 
 Copilot's findings skew toward performance and internal-consistency observations. Both of the ones
 it raised on PR #27's predecessor were instructive rather than simply right or wrong — a true
@@ -73,11 +75,3 @@ complexity observation whose suggested fix would have defeated a fail-loud safet
 inverted diagnosis where the code was right and the comment was the bug. The lesson is not that
 Copilot is unreliable; it is that the suggested remedy needs its own review, separately from the
 observation.
-
-## 5. After the fixes land
-
-If the user approves fixes: apply, re-run the gates, commit, push, then post the "fixed in `<sha>`"
-replies. Re-requesting a Copilot review after a push is a fresh `/copilot-review` run.
-
-When every review is clean or triaged and the user asks for the merge, finish the chain with
-**`/squash-merge`** — it composes a clean squash message and verifies the result on `origin/main`.

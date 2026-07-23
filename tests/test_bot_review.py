@@ -234,9 +234,9 @@ def test_copilot_has_no_clean_comment_mode() -> None:
 
 
 def test_comment_floor_uses_the_edit_time_not_the_creation_time() -> None:
-    # CodeRabbit edits its one walkthrough comment in place on every push, so
-    # on any PR past its first review created_at predates every floor. Keying
-    # on created_at would make a fresh clean run invisible — the same
+    # CodeRabbit edits its one walkthrough comment in place on every review
+    # run, so on any PR past its first review created_at predates every floor.
+    # Keying on created_at would make a fresh clean run invisible — the same
     # silent-failure family as the string-compared timestamps.
     edited = _comment(
         1, "coderabbitai[bot]", "2026-07-15T09:00:00Z", "2026-07-17T19:35:53Z"
@@ -301,8 +301,157 @@ def test_copilot_is_requestable_under_one_login_and_displayed_under_another() ->
     assert COPILOT.request_login == "copilot-pull-request-reviewer[bot]"
     assert COPILOT.requested_display == "Copilot"
     assert COPILOT.review_login == "copilot-pull-request-reviewer[bot]"
-    assert CODERABBIT.request_login is None  # reviews every push on its own
+    assert CODERABBIT.request_login is None  # not requestable via reviewers
     assert CODERABBIT.requested_display is None
+
+
+# --------------------------------------------------------------------------
+# Asking: CodeRabbit is commanded in-thread, Copilot through reviewers
+# --------------------------------------------------------------------------
+
+
+def test_coderabbit_is_asked_by_trigger_comment_and_copilot_is_not() -> None:
+    # With auto_review.enabled: false, nothing reviews a push on its own; the
+    # only ask channel CodeRabbit honors is its command comment. Copilot keeps
+    # the real request channel and must never fall into the trigger path.
+    assert CODERABBIT.trigger_body == "@coderabbitai review"
+    assert COPILOT.trigger_body is None
+
+
+def test_trigger_request_posts_the_comment_and_prints_the_floor_first(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import bot_review
+
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def fake_gh(path: str, *args: str) -> Any:
+        calls.append((path, args))
+        return {"id": 5058928383, "body": "@coderabbitai review"}
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    assert bot_review.cmd_request("o/r", 54, CODERABBIT) == 0
+    assert calls == [
+        ("repos/o/r/issues/54/comments", ("-f", "body=@coderabbitai review"))
+    ]
+    out = capsys.readouterr().out
+    assert "triggered coderabbit via comment 5058928383" in out
+    assert "since: " in out
+    assert "--bot coderabbit --pr 54" in out
+
+
+def test_a_mangled_trigger_comment_fails_loudly_rather_than_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The trigger body starts with `@`, which `gh api` field flags can treat as
+    # a read-from-file directive; GitHub renders whatever it received. A comment
+    # that does not read exactly as the command never summons the bot, and
+    # waiting on it buys the full poll timeout for a review nobody asked for.
+    import bot_review
+
+    def mangling_gh(path: str, *args: str) -> Any:
+        return {"id": 1, "body": "review"}
+
+    monkeypatch.setattr(bot_review, "gh", mangling_gh)
+    with pytest.raises(BotReviewError, match="Do not wait"):
+        bot_review.cmd_request("o/r", 54, CODERABBIT)
+
+
+def test_reviewer_request_verifies_the_ask_took_and_prints_the_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The Copilot branch, previously untested: POST to requested_reviewers,
+    # then read the PR back to prove GitHub actually added someone — under the
+    # *display* login, not the one that was posted.
+    import bot_review
+
+    calls: list[str] = []
+
+    def fake_gh(path: str, *args: str) -> Any:
+        calls.append(path)
+        if path.endswith("/requested_reviewers"):
+            return None
+        return {"requested_reviewers": [{"login": "Copilot"}]}
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    assert calls == ["repos/o/r/pulls/54/requested_reviewers", "repos/o/r/pulls/54"]
+    out = capsys.readouterr().out
+    assert "requested copilot; requested_reviewers now: Copilot" in out
+    assert "since: " in out
+    assert "--bot copilot --pr 54" in out
+
+
+def test_a_request_accepted_and_dropped_fails_loudly_rather_than_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GitHub answers HTTP 200 to a login it does not recognize and silently
+    # adds no one; only the read-back exposes it. Waiting after that buys the
+    # full poll timeout for a review nobody managed to request.
+    import bot_review
+
+    def fake_gh(path: str, *args: str) -> Any:
+        return (
+            None
+            if path.endswith("/requested_reviewers")
+            else {"requested_reviewers": []}
+        )
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    with pytest.raises(BotReviewError, match="Do not wait"):
+        bot_review.cmd_request("o/r", 54, COPILOT)
+
+
+def test_a_spec_with_both_ask_channels_cannot_be_built() -> None:
+    # cmd_request dispatches on trigger_body first, so a spec setting both
+    # would carry request fields that read as active config but never run.
+    # The dataclass refuses the combination at construction.
+    import bot_review
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        bot_review.BotSpec(
+            key="greedy",
+            review_login="greedy[bot]",
+            request_login="greedy[bot]",
+            requested_display="Greedy",
+            count=CODERABBIT.count,
+            clean_marker=None,
+            trigger_body="@greedy review",
+        )
+
+
+def test_a_spec_with_half_a_request_channel_cannot_be_built() -> None:
+    # request_login is what gets POSTed; requested_display is what the
+    # read-back verifies. Half a pair would otherwise fail later in
+    # cmd_request with the misleading "has neither ask channel" message.
+    import bot_review
+
+    with pytest.raises(ValueError, match="pair"):
+        bot_review.BotSpec(
+            key="half",
+            review_login="half[bot]",
+            request_login="half[bot]",
+            requested_display=None,
+            count=CODERABBIT.count,
+            clean_marker=None,
+            trigger_body=None,
+        )
+
+
+def test_a_spec_with_no_ask_channel_is_refused() -> None:
+    import bot_review
+
+    mute = bot_review.BotSpec(
+        key="mute",
+        review_login="mute[bot]",
+        request_login=None,
+        requested_display=None,
+        count=CODERABBIT.count,
+        clean_marker=None,
+        trigger_body=None,
+    )
+    with pytest.raises(BotReviewError, match="cannot be asked"):
+        bot_review.cmd_request("o/r", 54, mute)
 
 
 @pytest.mark.parametrize(
