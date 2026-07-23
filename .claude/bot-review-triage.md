@@ -1,7 +1,8 @@
 # Bot-review triage
 
-The shared procedure for handling an automated PR review. Used by `/ship` (CodeRabbit) and
-`/copilot-review` (GitHub Copilot). Both bots are useful; neither is trusted.
+The shared procedure for handling an automated PR review. Used by `/coderabbit-review`
+(CodeRabbit — directly or via `/ship coderabbit`) and `/copilot-review` (GitHub Copilot). Both
+bots are useful; neither is trusted.
 
 **Governing principle: a bot finding is a hypothesis, not a defect.** Verify every one against the
 actual code before acting on it or replying to it. The record from PR #26 (seven findings across
@@ -88,3 +89,11 @@ to trust the next one).
 **Do not change code without the user's explicit go.** Verification and replies are automatic;
 fixes are not. When the go comes, fix, re-run the gates, push, and only then post the "fixed in
 `<sha>`" replies.
+
+## 4. After the fixes land
+
+Nothing re-reviews a push on its own — re-reviewing the new commit is a fresh run of the bot's
+own skill (`/coderabbit-review` or `/copilot-review`), spent deliberately. When every spent
+review is clean or triaged and the user asks for the merge, finish the chain with
+**`/squash-merge`** — it composes a clean squash message and verifies the result on
+`origin/main`.

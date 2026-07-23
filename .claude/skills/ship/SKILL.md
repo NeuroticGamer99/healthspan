@@ -1,12 +1,24 @@
 ---
 name: ship
-description: Commit the change /land proposed, push, open or update the PR, wait for CodeRabbit's review, verify each finding against the code, and reply. Use in place of typing "commit" after /land.
+description: Commit the change /land proposed, push, and open or update the PR. With a reviewer argument (/ship coderabbit) also trigger that bot's review chain; bare /ship ships only. Use in place of typing "commit" after /land.
 ---
 
-# /ship — commit, PR, and CodeRabbit triage
+# /ship — commit, PR, and (optionally) a chosen reviewer
 
 Runs after `/land` has surveyed the change, run the gates, and proposed a commit message.
 **Invoking `/ship` is the user's approval of that message** — do not re-litigate or rewrite it.
+
+Takes an optional reviewer argument choosing which bot chain to spend on this PR — reviews are
+opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every PR:
+
+- **`/ship`** — ship only. Nothing reviews automatically (`auto_review.enabled: false`); after
+  reporting the PR URL, remind the user of the reviewer chains they can spend: `/coderabbit-review`,
+  `/copilot-review`, or a local `/code-review`.
+- **`/ship coderabbit`** — ship, then run the **`/coderabbit-review`** chain (step 4).
+- **`/ship copilot`** — ship, then tell the user Copilot is by preference not chained from
+  `/ship`: it runs as its own explicit `/copilot-review` step, which you should offer to run now.
+- Any other argument (e.g. `gemini` — Gemini Code Assist's consumer GitHub app was sunset
+  2026-07-17 and is not a reviewer here): stop and say it is not a known reviewer.
 
 `/land` proposes; `/ship` disposes. Stop and report at any step that fails; never push past a red
 gate.
@@ -59,49 +71,16 @@ gate.
   caught too.
 - Report the PR URL.
 
-## 4. Wait for CodeRabbit
+## 4. The chosen reviewer chain
 
-`scripts/bot_review.py` owns the waiting. Run it in the background so the wait costs nothing —
-one notification arrives when the review lands:
+Bare `/ship` ends at step 3: report the PR URL and the reviewer chains available. **Do not wait
+for a review** — since `auto_review.enabled: false`, no review is coming unasked, and waiting for
+one polls a silent PR to a 30-minute timeout.
 
-```bash
-uv run python scripts/bot_review.py wait --bot coderabbit --pr <N> --since-commit HEAD
-```
-
-Use `run_in_background: true`; do not poll in the foreground. Exit 0 means a findings review is
-ready; exit 1 means it timed out (default 30 min, `--timeout`); exit 2 means the run was **clean**
-— CodeRabbit posted its "No actionable comments were generated" summary and no review object
-exists (a clean run posts none, PR #29), so skip steps 5–6: there is nothing to fetch or triage.
-Report the clean verdict and go straight to `/copilot-review`. **A timeout is not a clean review**
-— report it and stop rather than concluding "no findings".
-
-`--since-commit HEAD` derives the floor from the commit you just pushed, in UTC. Prefer it to a
-hand-written `--since`: the script converts correctly, whereas a hand-rolled `git log --format=%cI`
-yields a *local* offset that string-compares as newer than stale reviews and admits all of them.
-
-## 5. Triage and reply
-
-```bash
-uv run python scripts/bot_review.py fetch --bot coderabbit --pr <N> --since-commit HEAD
-```
-
-That prints the review body and only *that review's* comments, each with the `id` you reply to. It
-also cross-checks the body's `Actionable comments posted: N` against what it fetched and prints a
-`NOTE:` on a mismatch — which means *investigate*, not that either side is definitively wrong (the
-bot has been seen claiming 2 while posting 1).
-
-Everything the fetch protects against is documented, and tested, in `scripts/bot_review.py` and
-`tests/test_bot_review.py`: it reads one review by id (the pull-level endpoints return every past
-run's findings plus the bots' own replies), skips reply-reviews (a bot's "agreed, this is fixed" is
-itself a review, with an empty body), pages explicitly, and compares instants rather than strings.
-
-Then follow **`.claude/bot-review-triage.md`**: verify every finding against the real code, reply
-per finding, report the verdict table, and **stop for the user's go before changing any code**.
-
-## 6. After the fixes land
-
-If the user approves fixes: apply them, re-run the gates, commit, push (the PR updates itself), and
-only then post the "fixed in `<sha>`" replies so the SHA is real. CodeRabbit will re-review the new
-commit — triage that pass the same way if it raises anything new.
-
-Then `/copilot-review` for the second opinion.
+`/ship coderabbit`: continue with the **`/coderabbit-review`** skill from its step 2 — it posts
+the `@coderabbitai review` trigger through `scripts/bot_review.py request` (which stamps and
+prints the floor), waits in the background, fetches exactly that review, and triages per
+`.claude/bot-review-triage.md`, stopping for the user's go before changing any code. Everything
+the wait/fetch protects against — reply-reviews with empty bodies, per-page `jq` aggregation,
+string-compared timestamps, the clean run that posts no review object at all — is documented and
+tested in `scripts/bot_review.py`; do not re-derive it here.

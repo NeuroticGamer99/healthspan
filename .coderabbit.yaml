@@ -16,23 +16,40 @@ reviews:
   collapse_walkthrough: false
   changed_files_summary: true
 
+  # Manual/opt-in: each PR spends one deliberately chosen reviewer chain
+  # (/coderabbit-review, /copilot-review, or a local /code-review) instead of
+  # every bot reviewing every PR. Trigger with an `@coderabbitai review`
+  # comment — mechanized as `scripts/bot_review.py request --bot coderabbit`.
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
 
-  # Keep summaries focused on reviewable source; generated/vendored/data
-  # artifacts are already gitignored but exclude defensively.
+  # Exclude generated / data / secret-bearing artifacts from review. All are
+  # gitignored, so they normally never reach a diff — but on this PUBLIC repo
+  # the exclusion also stops the reviewer from quoting a *force-added* secret
+  # or personal record into a public PR comment (CI's gitleaks + log-canary
+  # gates are the primary leak guard; this is defense in depth). Globs are
+  # any-depth to match how .gitignore ignores these names.
+  #
+  # specs/personal/ excludes the personal dir *itself*; it does not weaken the
+  # path_instructions rule to FLAG personal data that appears ANYWHERE ELSE
+  # (outside specs/personal/), which is the case a reviewer can act on.
   path_filters:
     - "!**/*.db"
+    - "!**/*.db-shm"
+    - "!**/*.db-wal"
+    - "!**/*.db.lock"
     - "!**/*.sqlite*"
-    - "!exports/**"
-    - "!export/**"
-    - "!data/**"
+    - "!**/*recovery-kit*"
+    - "!**/exports/**"
+    - "!**/export/**"
+    - "!**/data/**"
     - "!**/__pycache__/**"
     - "!.venv/**"
     - "!pytest-output.log"
     - "!parallel-output.log"
     - "!canary-logs/**"
+    - "!specs/personal/**"
 
   path_instructions:
     - path: "specs/adr/**"
@@ -42,9 +59,11 @@ reviews:
         correcting its Status field to "Superseded by ADR-XXXX" and adding a
         navigation link in Links. A decision change must be a NEW ADR that
         supersedes the old one; an addition must be a NEW ADR that extends it.
-        Flag any content change to an Accepted ADR. Any ADR add/status/title
-        change must also update the Index table in specs/adr/README.md — flag
-        if it does not.
+        Flag any content change to an Accepted ADR. Exception (CLAUDE.md rule
+        5): fixing a typo or a broken link in an Accepted ADR is permitted
+        in place without a new ADR — do not flag those. Any ADR
+        add/status/title change must also update the Index table in
+        specs/adr/README.md — flag if it does not.
 
     - path: "specs/**"
       instructions: >-
@@ -88,9 +107,11 @@ reviews:
     - path: "**/*.py"
       instructions: >-
         Security invariants: flag changes that could touch the invariants
-        table in specs/security.md (key handling, encryption-at-rest,
-        auth/scopes, audit append-only, credential hashing, backup-guard,
-        orphan-sweep, non-loopback exposure) without a
+        table in specs/security.md — INV-1 key confinement, INV-2 no plugin
+        code in the Core Service, INV-3 plugin-tier credentials, INV-4
+        data-only plugin influence, INV-5 named/scoped/revocable credentials,
+        INV-6 source-data purity, INV-7 append-only audit surfaces, INV-8
+        hash-only credential storage — without a
         corresponding ADR or spec note. Never suggest writing personal health
         values to any path outside specs/personal/. Do NOT write PEP 758
         bare-comma "except A, B:" — always parenthesize exception tuples.

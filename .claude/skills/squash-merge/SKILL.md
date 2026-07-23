@@ -5,8 +5,9 @@ description: Squash-merge the current branch's PR with a clean composed commit m
 
 # /squash-merge — merge the PR with a clean squash message
 
-The last step of the chain: `/land` → `/ship` → `/copilot-review` → `/squash-merge`. Invoking it
-is the user's approval to merge — but never past a red or pending gate. Stop and report at any
+The last step of the chain: `/land` → `/ship` → the review chains the user chose to spend
+(`/coderabbit-review`, `/copilot-review` — reviews are opt-in per PR) → `/squash-merge`. Invoking
+it is the user's approval to merge — but never past a red or pending gate. Stop and report at any
 step that fails.
 
 ## 1. Preconditions
@@ -22,9 +23,12 @@ step that fails.
   *pending* — that is not green; watch in the background (`gh pr checks <N> --watch`,
   `run_in_background: true`) and merge only when everything has passed. A red check stops the
   merge outright.
-- **Bot reviews complete and triaged**: every CodeRabbit/Copilot finding has a threaded reply per
-  `.claude/bot-review-triage.md`, and the latest pushed commit has a clean or fully triaged
-  review. An unanswered finding stops the merge.
+- **Spent bot reviews complete and triaged**: every finding from a review chain that *was* run
+  has a threaded reply per `.claude/bot-review-triage.md`, and each spent chain's latest run is
+  clean or fully triaged against the latest pushed commit. An unanswered finding — or a review
+  that was requested/triggered and has not answered yet — stops the merge. A PR whose review
+  chains were deliberately not spent (reviews are opt-in per PR) has nothing to wait for: state
+  plainly that no bot reviewed it and merge on the user's explicit say-so.
 - The user has asked for the merge in this session. `/ship` and `/copilot-review` never merge;
   neither does this skill uninvited.
 

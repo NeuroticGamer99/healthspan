@@ -1,13 +1,15 @@
 # Gemini Code Assist configuration for the healthspan project.
 #
 # Companion to .gemini/styleguide.md, which teaches this repo's conventions.
-# Posture and conventions mirror .coderabbit.yaml (both derive from CLAUDE.md),
-# though the two intentionally differ where noted — Gemini reviews manually,
-# CodeRabbit still auto-reviews until its follow-up flip. Gemini is the third
-# model-family seat (Google) alongside CodeRabbit (OpenAI-model harness) and the
-# Claude-based /code-review. Schema: the .gemini/config.yaml reference in the
-# Gemini Code Assist "Customize behavior in GitHub" docs. See CLAUDE.md for the
-# conventions themselves.
+# Posture and conventions mirror .coderabbit.yaml (both derive from CLAUDE.md).
+# Gemini was wired as the third model-family seat (Google) alongside CodeRabbit
+# (OpenAI-model harness) and the Claude-based /code-review — but Google sunset
+# the consumer Gemini Code Assist GitHub app on 2026-07-17 (installs blocked
+# 2026-06-18; all review activity ceased) before it was ever activated here, so
+# this config is inert. Whether to remove or keep it (the enterprise version
+# survives, behind a Google Cloud subscription) is an open decision. Schema:
+# the .gemini/config.yaml reference in the Gemini Code Assist "Customize
+# behavior in GitHub" docs. See CLAUDE.md for the conventions themselves.
 
 have_fun: false              # no poems in summaries (CodeRabbit: poem: false)
 
@@ -22,13 +24,14 @@ code_review:
   comment_severity_threshold: MEDIUM
   max_review_comments: -1    # unlimited
 
-  # Opt-in model (target end-state): each PR we choose one reviewer chain to spend
-  # (Gemini, CodeRabbit, or Copilot) for deliberate model diversity without three
+  # Opt-in model: each PR we choose one reviewer chain to spend (CodeRabbit or
+  # Copilot; Gemini before its sunset) for deliberate model diversity without
   # bots dogpiling every PR — the driver being triage attention rather than rate
-  # limits. Gemini is manual now; CodeRabbit still auto-reviews every non-draft PR
-  # until its manual flip lands in the follow-up orchestration PR, after which
-  # nothing fires automatically on PR open. Trigger a Gemini review on demand by
-  # commenting `/gemini review` on the PR.
+  # limits. Nothing fires automatically on PR open: CodeRabbit's manual flip
+  # (auto_review.enabled: false in .coderabbit.yaml) landed in the reviewer-
+  # orchestration PR, and its chain is spent via /coderabbit-review or
+  # /ship coderabbit. The `/gemini review` trigger documented here stopped
+  # working with the app's sunset.
   pull_request_opened:
     help: false
     summary: false           # quiet by default; auto-summary is free to re-enable

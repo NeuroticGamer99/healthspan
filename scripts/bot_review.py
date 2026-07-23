@@ -33,7 +33,11 @@ this can:
 Commands (exit 0 = findings review ready, 1 = failure or timeout,
 2 = clean review — the bot reported no findings; nothing to triage):
 
-* ``request --bot copilot --pr N`` — request a review, then verify it took.
+* ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
+  took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
+  since ``auto_review.enabled: false`` — is asked by posting its
+  ``@coderabbitai review`` trigger comment. Both paths stamp and print the
+  floor *before* asking, so the caller never mints one.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
   clean-run summary lands.
 * ``fetch --bot B --pr N --since T`` — print that review and its own comments.
@@ -84,10 +88,15 @@ class BotSpec:
     # satisfy the requested-reviewer check that exists to prove a request took.
     review_login: str
     # What to POST to requested_reviewers, and the login GitHub displays there
-    # afterwards. They differ for Copilot. Both None for a bot that reviews on
-    # its own (CodeRabbit reviews every push; it is not requestable this way).
+    # afterwards. They differ for Copilot. Both None for a bot that is not
+    # requestable through requested_reviewers (CodeRabbit ignores it; its ask
+    # is the trigger comment below).
     request_login: str | None
     requested_display: str | None
+    # The issue-comment body that asks this bot to review, for a bot commanded
+    # in-thread rather than through requested_reviewers (CodeRabbit, with
+    # auto_review disabled). None for a bot with a real request channel.
+    trigger_body: str | None
     # Captures the number of findings the review body claims.
     count: re.Pattern[str]
     # Recognizes the bot's clean-run summary in an *issue comment* body, for a
@@ -95,6 +104,18 @@ class BotSpec:
     # a bot whose clean run is still a review (Copilot states "generated 0
     # comments" in a review body, which select_review already finds).
     clean_marker: re.Pattern[str] | None
+
+    def __post_init__(self) -> None:
+        # One ask channel per bot. cmd_request dispatches on trigger_body
+        # first, so a spec setting both would carry request fields that read
+        # as active config but never execute — refused here rather than
+        # silently half-honored. (ValueError, not BotReviewError: a mis-built
+        # spec is a programming error, caught at import when BOTS is built.)
+        if self.trigger_body is not None and self.request_login is not None:
+            raise ValueError(
+                f"{self.key}: trigger_body and request_login are mutually "
+                "exclusive ask channels — set exactly one"
+            )
 
 
 # There is deliberately no *comment* author here. Comments are fetched through
@@ -106,6 +127,7 @@ BOTS: dict[str, BotSpec] = {
         review_login="coderabbitai[bot]",
         request_login=None,
         requested_display=None,
+        trigger_body="@coderabbitai review",
         count=re.compile(r"Actionable comments posted:\s*\**\s*(\d+)"),
         # Both halves are required: the HTML marker proves the comment is the
         # bot's own auto-generated summary (not the phrase quoted in prose —
@@ -124,6 +146,7 @@ BOTS: dict[str, BotSpec] = {
         review_login="copilot-pull-request-reviewer[bot]",
         request_login="copilot-pull-request-reviewer[bot]",
         requested_display="Copilot",
+        trigger_body=None,
         count=re.compile(r"generated (\d+) comment"),
         clean_marker=None,
     ),
@@ -224,9 +247,9 @@ def comment_ts(comment: Comment) -> datetime:
     """When an issue comment last changed, as an instant.
 
     ``updated_at`` rather than ``created_at``: CodeRabbit *edits* its one
-    walkthrough comment in place on every push, so on any PR past its first
-    review the creation time predates every floor and a fresh clean run would
-    be invisible. Falls back to ``created_at`` only if ``updated_at`` is
+    walkthrough comment in place on every review run, so on any PR past its
+    first review the creation time predates every floor and a fresh clean run
+    would be invisible. Falls back to ``created_at`` only if ``updated_at`` is
     absent.
     """
     raw = comment.get("updated_at") or comment.get("created_at") or ""
@@ -426,16 +449,24 @@ def issue_comments(repo: str, pr: int) -> list[Comment]:
 # --------------------------------------------------------------------------
 
 
+def _print_floor(spec: BotSpec, pr: int, floor: str) -> None:
+    print(f"since: {floor}")
+    print(f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} --since {floor}")
+
+
 def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
-    if spec.request_login is None or spec.requested_display is None:
-        raise BotReviewError(
-            f"{spec.key} cannot be requested — it reviews automatically on push"
-        )
-    # Stamp the floor *before* the request, and print it, so the caller has no
-    # reason to improvise one afterwards. A floor taken after the request can
+    # Stamp the floor *before* the ask, and print it, so the caller has no
+    # reason to improvise one afterwards. A floor taken after the ask can
     # exclude the very review it triggered; leaving the caller to mint their own
     # is how that bug arrives, and it is not theirs to get right.
     floor = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if spec.trigger_body is not None:
+        return _request_by_trigger(repo, pr, spec, floor)
+    if spec.request_login is None or spec.requested_display is None:
+        raise BotReviewError(
+            f"{spec.key} has neither a request login nor a trigger comment — "
+            "it cannot be asked for a review from here"
+        )
     gh(
         f"repos/{repo}/pulls/{pr}/requested_reviewers",
         "-f",
@@ -457,8 +488,37 @@ def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
             f"{logins!r} — the request was accepted and dropped. Do not wait."
         )
     print(f"requested {spec.key}; requested_reviewers now: {', '.join(logins)}")
-    print(f"since: {floor}")
-    print(f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} --since {floor}")
+    _print_floor(spec, pr, floor)
+    return 0
+
+
+def _request_by_trigger(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
+    """Ask an in-thread-commanded bot for a review by posting its trigger.
+
+    The read-back check is not paranoia: ``gh api`` gives ``@``-prefixed field
+    values a special meaning in some flag modes (read the value from a file),
+    and every trigger body here starts with ``@``. GitHub then also renders the
+    body it *received*, not the one intended. Comparing the created comment's
+    body against the spec catches either mangling loudly, instead of buying a
+    full poll for a review nobody managed to ask for.
+    """
+    created = cast(
+        "dict[str, Any] | None",
+        gh(
+            f"repos/{repo}/issues/{pr}/comments",
+            "-f",
+            f"body={spec.trigger_body}",
+        ),
+    )
+    posted = str(created.get("body", "")) if created else ""
+    if created is None or posted != spec.trigger_body:
+        raise BotReviewError(
+            f"posted the {spec.key} trigger but the created comment body is "
+            f"{posted!r}, expected {spec.trigger_body!r} — the ask did not "
+            "reach the bot as written. Do not wait."
+        )
+    print(f"triggered {spec.key} via comment {created.get('id')}")
+    _print_floor(spec, pr, floor)
     return 0
 
 
