@@ -52,11 +52,14 @@ identifying information may live. It must never be committed — but do not trea
 
 A design decision surfaced during implementation must be recorded in the owning
 doc layer in the same change. A decision that exists only in code is a spec bug.
+These mirror `CLAUDE.md`'s "Implementation decision capture" section, which is
+authoritative — defer to it if this summary drifts.
 
-- Architectural (new dependency, process, table, or anything touching a security
-  invariant) routes to a new Proposed ADR.
-- API surface (endpoints, request or response shapes, error formats, status
-  codes, scopes) routes to `specs/api-reference.md`.
+- Architectural (a new dependency, process, component, scope, or table; anything
+  touching a security invariant; anything extending or contradicting an Accepted
+  ADR; anything constraining future decisions) routes to a new Proposed ADR.
+- API surface (endpoint paths, request or response shapes, error formats, status
+  codes, per-route scopes, MCP tool signatures) routes to `specs/api-reference.md`.
 - Schema shapes (columns, constraints, indexes) route to `specs/data-model.md`.
 - Config knobs and defaults route to the owning ADR.
 - Deferred questions route to `specs/open-questions.md`.
@@ -82,8 +85,10 @@ That table is authoritative — defer to it, not to this summary, if they diverg
 ## Python conventions
 
 - Never write PEP 758 bare-comma `except A, B:` — always parenthesize the
-  exception tuple as `except (A, B):`. The bare-comma form is valid 3.14 syntax
-  but aliases the removed Python-2 footgun and trips reviewers and tools.
+  exception tuple as `except (A, B):`. In 3.14 the bare form is valid shorthand
+  for the tuple `(A, B)` (the set of types to catch), not the removed Python-2
+  "bind to B" aliasing it resembles; that visual collision is exactly why it
+  trips reviewers and tools, so keep the parenthesized form.
 - The project is locale-invariant where it matters; do not introduce
   locale-dependent parsing or formatting without a note.
 
