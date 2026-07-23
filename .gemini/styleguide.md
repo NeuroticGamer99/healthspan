@@ -41,8 +41,10 @@ identifying information may live. It must never be committed — but do not trea
 - It also means any personally identifying information — notes or details that
   would identify the database owner as an individual — even with no health
   values attached.
-- Flag any such content appearing anywhere outside `specs/personal/`, including
-  a tracked or force-added file that slipped past `.gitignore`.
+- Flag any such content appearing anywhere outside `specs/personal/` — including
+  a tracked or force-added file that slipped past `.gitignore` — but report only
+  the path and the data category; never quote, copy, or echo the actual values,
+  provenance, or identifying details into a review comment.
 - Never suggest writing personal health values or identifying information to any
   path outside `specs/personal/`.
 
@@ -58,8 +60,10 @@ doc layer in the same change. A decision that exists only in code is a spec bug.
 - Schema shapes (columns, constraints, indexes) route to `specs/data-model.md`.
 - Config knobs and defaults route to the owning ADR.
 - Deferred questions route to `specs/open-questions.md`.
-- Flag new endpoints, response or error shapes, schema columns, or config
-  defaults that have no matching spec or ADR update.
+- Flag anything from the categories above that lands without its owning record:
+  a new dependency, process, table, or security-invariant change with no Proposed
+  or extension ADR; a new endpoint, response or error shape, schema column, or
+  config default with no matching spec or ADR update.
 
 ## Security invariants
 
