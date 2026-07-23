@@ -19,7 +19,9 @@ ADRs live in `specs/adr/`. An Accepted ADR is an immutable historical record.
   its `## Links` section.
 - A decision change must be a **new** ADR that supersedes the old one; an
   addition must be a **new** ADR that extends it.
-- Flag any content change to the body of an Accepted ADR.
+- Flag any content change to the body of an Accepted ADR — except a pure typo or
+  broken-link fix, which `CLAUDE.md` ADR-governance rule 5 permits without a new
+  ADR.
 - Any ADR add, status change, or title change must also update the `## Index`
   table in `specs/adr/README.md`. Flag a change that does not.
 - Inline ADR status annotations in prose (for example "(ADR-0055, Proposed)")
@@ -61,9 +63,13 @@ doc layer in the same change. A decision that exists only in code is a spec bug.
 
 ## Security invariants
 
-`specs/security.md` holds an invariants table (key handling, encryption-at-rest,
-auth and scopes, append-only audit, credential hashing, backup-guard,
-orphan-sweep, non-loopback exposure).
+`specs/security.md` holds a numbered table of testable invariants, INV-1 through
+INV-8: in-memory-only encryption key (INV-1), the Core Service never executing
+plugin code (INV-2), the plugin credential-tier bound (INV-3), plugins altering
+behavior only via the validated REST API (INV-4), named/scoped/revocable tokens
+(INV-5), interpretation and derivation kept out of source-data tables (INV-6),
+append-only audit surfaces (INV-7), and hash-only credential storage (INV-8).
+That table is authoritative — defer to it, not to this summary, if they diverge.
 
 - A change touching any invariant requires a Proposed (or extension) ADR, per
   the decision-capture routing above and `CLAUDE.md` — a standalone spec note is
@@ -98,3 +104,10 @@ CI gate route to "rule 6": code and config are their own record, and the
 change's `Decisions:` section reads "none". Do not ask for an ADR or spec update
 for such changes — this includes the `.gemini/` files themselves,
 `.coderabbit.yaml`, `.editorconfig`, and similar tooling configuration.
+
+Do still flag the config that *does* carry a contract or a gate, even under a
+dot-directory: a changed CI tool-version pin, a new or weakened blocking workflow
+gate under `.github/`, or a default tied to an owning ADR (the ADR-0035/0037/0038
+pinned-version pattern, or ADR-0062 for the markdownlint gate) that has no
+matching spec or ADR update. Rule 6 is the no-contract, no-gate case — not
+everything that happens to live in a dotfile.
