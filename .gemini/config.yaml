@@ -22,8 +22,8 @@ code_review:
 
   # Opt-in model: nothing fires automatically on PR open. Each PR we choose one
   # reviewer chain to spend (Gemini, CodeRabbit, or Copilot) for deliberate model
-  # diversity without three bots dogpiling every PR — the cost being triage
-  # attention, not quota (public OSS repos are not rate-limited). Trigger a Gemini
+  # diversity without three bots dogpiling every PR — the driver being triage
+  # attention rather than rate limits. Trigger a Gemini
   # review on demand by commenting `/gemini review` on the PR.
   pull_request_opened:
     help: false

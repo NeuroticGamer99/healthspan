@@ -28,16 +28,21 @@ ADRs live in `specs/adr/`. An Accepted ADR is an immutable historical record.
 
 ## Personal-data containment
 
-`specs/personal/` is the only location where personal health data may live, and
-it is gitignored — never committed, so it is not part of the tree you review.
+`specs/personal/` is the only location where personal health data or personally
+identifying information may live. It must never be committed — but do not treat
+`.gitignore` as the guarantee; flag such content wherever it appears.
 
 - Personal data means the database owner's actual health values, lab results,
   diagnoses, medications, or clinical history — and the provenance or sequence
   of their actual records (which lab, which panel, in what order), even with no
   values attached.
-- Flag any such content appearing anywhere outside `specs/personal/`.
-- Never suggest writing personal health values to any path outside
-  `specs/personal/`.
+- It also means any personally identifying information — notes or details that
+  would identify the database owner as an individual — even with no health
+  values attached.
+- Flag any such content appearing anywhere outside `specs/personal/`, including
+  a tracked or force-added file that slipped past `.gitignore`.
+- Never suggest writing personal health values or identifying information to any
+  path outside `specs/personal/`.
 
 ## Decision-capture routing
 
@@ -60,8 +65,9 @@ doc layer in the same change. A decision that exists only in code is a spec bug.
 auth and scopes, append-only audit, credential hashing, backup-guard,
 orphan-sweep, non-loopback exposure).
 
-- Flag changes that could touch any invariant without a corresponding ADR or
-  spec note.
+- A change touching any invariant requires a Proposed (or extension) ADR, per
+  the decision-capture routing above and `CLAUDE.md` — a standalone spec note is
+  not sufficient. Flag any such change that lacks the required ADR.
 
 ## Python conventions
 
