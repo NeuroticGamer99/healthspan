@@ -13,12 +13,13 @@ opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every
 
 - **`/ship`** — ship only. Nothing reviews automatically (`auto_review.enabled: false`); after
   reporting the PR URL, remind the user of the reviewer chains they can spend: `/coderabbit-review`,
-  `/copilot-review`, or a local `/code-review`.
+  `/gemini-review`, `/copilot-review`, or a local `/code-review`.
 - **`/ship coderabbit`** — ship, then run the **`/coderabbit-review`** chain (step 4).
+- **`/ship gemini`** — ship, then run the **`/gemini-review`** chain (step 4). Not the sunset
+  Gemini Code Assist app: this is the repo-owned Antigravity SDK workflow.
 - **`/ship copilot`** — ship, then tell the user Copilot is by preference not chained from
   `/ship`: it runs as its own explicit `/copilot-review` step, which you should offer to run now.
-- Any other argument (e.g. `gemini` — Gemini Code Assist's consumer GitHub app was sunset
-  2026-07-17 and is not a reviewer here): stop and say it is not a known reviewer.
+- Any other argument: stop and say it is not a known reviewer.
 
 `/land` proposes; `/ship` disposes. Stop and report at any step that fails; never push past a red
 gate.
@@ -84,3 +85,9 @@ prints the floor), waits in the background, fetches exactly that review, and tri
 the wait/fetch protects against — reply-reviews with empty bodies, per-page `jq` aggregation,
 string-compared timestamps, the clean run that posts no review object at all — is documented and
 tested in `scripts/bot_review.py`; do not re-derive it here.
+
+`/ship gemini`: continue with the **`/gemini-review`** skill from its step 2 — the same
+request/wait/fetch/triage shape, with the ask being a workflow dispatch of
+`.github/workflows/gemini-review.yml` (verified to have actually started a run). Note its
+resolves-on-`main` caveat: a PR that introduces or modifies that workflow cannot be reviewed by
+its own version of it.

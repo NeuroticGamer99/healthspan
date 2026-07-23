@@ -288,6 +288,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-xdist" },
 ]
@@ -311,6 +312,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.140" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-xdist", specifier = ">=3.6" },
 ]

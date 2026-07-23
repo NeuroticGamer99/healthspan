@@ -3,6 +3,10 @@
 # CodeRabbit configuration for the healthspan project.
 # Teaches the reviewer this project's non-obvious conventions (see CLAUDE.md)
 # and stands its built-in linters down where CI already gates them.
+#
+# Sibling reviewer config: .gemini/styleguide.md teaches the same conventions
+# to the Antigravity SDK (Gemini) reviewer — a convention added or changed
+# here must be mirrored there, and vice versa.
 
 language: en-US
 
@@ -71,8 +75,11 @@ reviews:
         location for personal health values, lab results, diagnoses,
         medications, clinical history, or the provenance/sequence of the
         owner's actual records. Flag any such content appearing elsewhere in
-        specs/. Also flag inline ADR status annotations in prose being edited
-        to "chase" a status change — those are point-in-time by design.
+        specs/ — but report only the path and the data category; never quote,
+        copy, or echo the actual values, provenance, or identifying details
+        into a review comment (reviews are public). Also flag inline ADR
+        status annotations in prose being edited to "chase" a status change —
+        those are point-in-time by design.
 
     - path: "**/*.{py,md,yaml,yml,toml,json}"
       instructions: >-
@@ -88,10 +95,11 @@ reviews:
     # Hidden config: the glob above uses dot:false semantics, so `*` does not
     # match dotfiles and `**` does not descend into dot-directories. These
     # literal/explicit-dot entries cover the hidden config that carries
-    # decisions today — CI pinned tool versions + gates under .github/, and the
-    # ADR-0062 markdownlint config. This reviewer config (.coderabbit.yaml) is
-    # included only so its OWN carve-out below is applied to it.
-    - path: "{.coderabbit.yaml,.markdownlint.yaml,.github/**}"
+    # decisions today — CI pinned tool versions + gates under .github/, the
+    # ADR-0062 markdownlint config, and the Gemini reviewer's styleguide under
+    # .gemini/. The reviewer configs (.coderabbit.yaml, .gemini/**) are
+    # included only so their OWN carve-out below is applied to them.
+    - path: "{.coderabbit.yaml,.markdownlint.yaml,.gemini/**,.github/**}"
       instructions: >-
         Decision-capture routing (CLAUDE.md) for hidden config that has an
         owning ADR or is a CI gate: application config knobs/defaults route to

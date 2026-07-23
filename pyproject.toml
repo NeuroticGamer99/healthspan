@@ -75,6 +75,11 @@ plugins.md024.siblings_only = true   # `### Architecture` under different `##` p
 [dependency-groups]
 dev = [
     "hypothesis>=6.140",
+    # scripts/gemini_review_logic.py (the tested half of the CI-only Gemini
+    # review agent) imports it directly; without this line it resolves only
+    # transitively through fastapi, and a fastapi change would break test
+    # collection blaming the wrong PR.
+    "pydantic>=2",
     # For the editor (Pylance) and ad-hoc local runs; the CI gates still run
     # the version pinned in ci.yml via `uv run --with "pytest==..."`.
     "pytest>=9.1.1",

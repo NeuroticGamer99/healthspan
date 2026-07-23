@@ -1,4 +1,4 @@
-"""Request, await, and fetch automated PR reviews (CodeRabbit, Copilot).
+"""Request, await, and fetch automated PR reviews (CodeRabbit, Copilot, Gemini).
 
 The glue the `/ship` and `/copilot-review` skills used to carry as shell
 one-liners. It lives here because every rule it encodes is a fact about a live
@@ -36,11 +36,16 @@ Commands (exit 0 = findings review ready, 1 = failure or timeout,
 * ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
   took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
   since ``auto_review.enabled: false`` — is asked by posting its
-  ``@coderabbitai review`` trigger comment. Both paths stamp the floor
+  ``@coderabbitai review`` trigger comment; Gemini (the Antigravity SDK
+  workflow, ``.github/workflows/gemini-review.yml``) is asked by dispatching
+  that workflow and confirming a run actually started — the dispatch endpoint
+  answers 204 whether or not a run will ever exist. All paths stamp the floor
   *before* asking and print it on success, so the caller never mints one; a
   failed ask prints no floor, because there is nothing to wait on.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
-  clean-run summary lands.
+  clean-run summary lands. For a dispatch bot, ``--run ID`` (the id request
+  printed) makes a failed workflow run end the wait immediately — that run
+  was the only thing that could have posted the review.
 * ``fetch --bot B --pr N --since T`` — print that review and its own comments.
 
 ``--since`` takes an ISO-8601 timestamp; ``--since-commit SHA`` derives the
@@ -75,6 +80,11 @@ COMMAND_TIMEOUT = 120
 # 0 so a caller never runs a findings triage against a review that does not
 # exist, and from 1 so a clean run is never reported as a failure.
 EXIT_CLEAN = 2
+# Confirming a workflow dispatch: run creation is asynchronous (the POST
+# answers 204 before any run exists), so the read-back polls — briefly, since
+# a run that has not appeared within this window is not coming.
+DISPATCH_POLL_SECONDS = 5
+DISPATCH_CONFIRM_TIMEOUT = 120
 
 
 @dataclass(frozen=True)
@@ -105,6 +115,12 @@ class BotSpec:
     # a bot whose clean run is still a review (Copilot states "generated 0
     # comments" in a review body, which select_review already finds).
     clean_marker: re.Pattern[str] | None
+    # The workflow file to dispatch, for a bot that is a repo-owned GitHub
+    # Actions workflow rather than a GitHub App (Gemini/Antigravity). Its
+    # reviews are authored by github-actions[bot]. A third ask channel,
+    # mutually exclusive with the other two. Defaulted (unlike every field
+    # above) so the specs and tests that predate it stay valid as written.
+    dispatch_workflow: str | None = None
 
     def __post_init__(self) -> None:
         # One ask channel per bot. cmd_request dispatches on trigger_body
@@ -124,6 +140,17 @@ class BotSpec:
             raise ValueError(
                 f"{self.key}: request_login and requested_display come as a "
                 "pair — set both or neither"
+            )
+        # Same one-channel rule for the dispatch path: cmd_request tries
+        # trigger_body, then dispatch_workflow, then requested_reviewers, so a
+        # spec combining dispatch with either would carry config that reads as
+        # active but never executes.
+        if self.dispatch_workflow is not None and (
+            self.trigger_body is not None or self.request_login is not None
+        ):
+            raise ValueError(
+                f"{self.key}: dispatch_workflow is mutually exclusive with the "
+                "other ask channels — set exactly one"
             )
 
 
@@ -158,6 +185,22 @@ BOTS: dict[str, BotSpec] = {
         trigger_body=None,
         count=re.compile(r"generated (\d+) comment"),
         clean_marker=None,
+    ),
+    # The Antigravity SDK (Gemini) reviewer is not a GitHub App but a repo
+    # workflow, so its ask channel is a workflow dispatch and its reviews are
+    # authored by github-actions[bot]. Its clean run is still a review stating
+    # 0 findings (like Copilot), so no clean-comment scanning is needed. The
+    # count marker is the "posted N inline finding(s)" line the agent script
+    # (.github/scripts/gemini_review_agent.py) writes into every review body.
+    "gemini": BotSpec(
+        key="gemini",
+        review_login="github-actions[bot]",
+        request_login=None,
+        requested_display=None,
+        trigger_body=None,
+        count=re.compile(r"posted (\d+) inline finding"),
+        clean_marker=None,
+        dispatch_workflow="gemini-review.yml",
     ),
 }
 
@@ -300,6 +343,83 @@ def select_clean_comment(
     return max(candidates, key=comment_ts)
 
 
+Run = dict[str, Any]
+
+
+def run_ts(run: Run) -> datetime:
+    return parse_ts(str(run.get("created_at", "")))
+
+
+def run_id_of(run: Run) -> int:
+    return int(str(run.get("id", 0)))
+
+
+def run_is_for_pr(run: Run, pr: int) -> bool:
+    """Whether a dispatch run belongs to this PR, read from the run title.
+
+    workflow_dispatch inputs appear in *no* runs payload, so the workflow
+    stamps the PR number into its ``run-name`` ("Gemini review: PR N") and
+    this reads it back from ``display_title``. Without the check, one PR's
+    run answers for another's ask: a concurrent dispatch cross-confirms, and
+    a neighbouring PR's quota failure aborts this PR's wait. Suffix-matched
+    whole-token — "PR 5" does not match "...PR 56".
+    """
+    return str(run.get("display_title", "")).endswith(f"PR {pr}")
+
+
+def run_has_failed(run: Run) -> bool:
+    """Whether a run has completed without success.
+
+    Only ``completed`` runs count — an in-progress run has no verdict yet —
+    and ``success`` is excluded because a successful run's review is found by
+    the caller's own review check.
+    """
+    return (
+        str(run.get("status")) == "completed"
+        and str(run.get("conclusion")) != "success"
+    )
+
+
+def select_failed_run(runs: list[Run], since: datetime, pr: int) -> Run | None:
+    """This PR's newest dispatch run after ``since`` that ended unsuccessfully.
+
+    Exists so ``wait`` on a workflow-based bot can fail fast: when the run that
+    was supposed to post the review has itself failed (SDK error, exhausted
+    Gemini quota), no review is ever coming, and polling the reviews endpoint
+    for it would ride the full 30-minute timeout to say less than the run's
+    conclusion already says. The PR filter keeps a *neighbouring* PR's failure
+    from aborting this wait. This is the recovery path (floor minted from
+    ``--since-commit``); a caller holding the run id from ``request`` passes
+    ``--run`` instead, which needs neither the timestamp nor the title.
+    """
+    candidates = [
+        run
+        for run in runs
+        if run_is_for_pr(run, pr) and run_has_failed(run) and run_ts(run) > since
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=run_ts)
+
+
+def select_confirmed_run(runs: list[Run], pr: int, before: int | None) -> Run | None:
+    """The run proving *this PR's* dispatch took: title-matched, newer id.
+
+    Id-newer alone is not proof — two sessions dispatching different PRs
+    within seconds would cross-confirm, handing one of them a floor for a run
+    that was never created. The title match ties the confirmation to the PR
+    that was actually asked for.
+    """
+    candidates = [
+        run
+        for run in runs
+        if run_is_for_pr(run, pr) and (before is None or run_id_of(run) > before)
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=run_id_of)
+
+
 def stated_count(body: str, spec: BotSpec) -> int | None:
     """The finding count the review body claims, if it states one."""
     found = spec.count.search(body)
@@ -350,6 +470,10 @@ def as_page(raw: Any, path: str) -> list[Any]:
 
 
 def run_cmd(argv: list[str], env: dict[str, str] | None = None) -> str:
+    # `.github/scripts/gemini_review_agent.py` keeps a deliberate near-twin of
+    # this (it takes `stdin` instead of `env` and raises RuntimeError, staying
+    # independent of this installable module); keep the hardening below in sync.
+    #
     # encoding="utf-8" is load-bearing, not decoration: `text=True` alone decodes
     # with the *locale* codec, which is cp1252 on Windows, and both bots' bodies
     # are full of emoji (🐇 ✅ 📐). Without it this dies with a UnicodeDecodeError
@@ -453,14 +577,58 @@ def issue_comments(repo: str, pr: int) -> list[Comment]:
     return [cast("Comment", c) for c in raw if isinstance(c, dict)]
 
 
+def workflow_runs(repo: str, workflow: str) -> list[Run]:
+    """The workflow's dispatch runs, newest first (one page).
+
+    Unlike the review/comment endpoints, the runs endpoint wraps its list in an
+    envelope object, so :func:`gh_all`/:func:`as_page` do not apply — the
+    envelope is unwrapped here, with the same refusal to degrade an unexpected
+    shape into "no runs". One page suffices: every caller wants only the runs
+    since a floor stamped minutes ago, and the endpoint sorts newest first.
+    """
+    path = (
+        f"repos/{repo}/actions/workflows/{workflow}/runs"
+        f"?event=workflow_dispatch&per_page={PAGE_SIZE}"
+    )
+    raw = gh(path)
+    envelope = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+    runs = envelope.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise BotReviewError(
+            f"gh api {path} returned no workflow_runs list — refusing to "
+            "report an unexpected payload as an empty result"
+        )
+    return [cast("Run", r) for r in cast("list[Any]", runs) if isinstance(r, dict)]
+
+
+def newest_run_id(repo: str, workflow: str) -> int | None:
+    runs = workflow_runs(repo, workflow)
+    return run_id_of(runs[0]) if runs else None
+
+
+def workflow_run(repo: str, run_id: int) -> Run:
+    """One workflow run by id — the ``--run`` fail-fast path in ``wait``."""
+    path = f"repos/{repo}/actions/runs/{run_id}"
+    raw = gh(path)
+    if not isinstance(raw, dict):
+        raise BotReviewError(
+            f"gh api {path} returned {type(raw).__name__}, expected a run object"
+        )
+    return cast("Run", raw)
+
+
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
 
 
-def _print_floor(spec: BotSpec, pr: int, floor: str) -> None:
+def _print_floor(spec: BotSpec, pr: int, floor: str, run_id: int | None = None) -> None:
     print(f"since: {floor}")
-    print(f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} --since {floor}")
+    run_arg = f" --run {run_id}" if run_id is not None else ""
+    print(
+        f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} "
+        f"--since {floor}{run_arg}"
+    )
 
 
 def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
@@ -471,6 +639,8 @@ def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
     floor = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     if spec.trigger_body is not None:
         return _request_by_trigger(repo, pr, spec, floor)
+    if spec.dispatch_workflow is not None:
+        return _request_by_dispatch(repo, pr, spec, floor)
     if spec.request_login is None or spec.requested_display is None:
         raise BotReviewError(
             f"{spec.key} has neither a request login nor a trigger comment — "
@@ -531,6 +701,57 @@ def _request_by_trigger(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
     return 0
 
 
+def _request_by_dispatch(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
+    """Ask a workflow-based bot for a review by dispatching its workflow.
+
+    The dispatches endpoint answers 204 *before* any run exists — and answers
+    204 for asks that will never produce one (e.g. a disabled workflow) — so
+    the read-back polls for a run id newer than the newest pre-dispatch run.
+    Run ids, not timestamps: the floor comes from this machine's clock and run
+    creation from GitHub's, and a small skew could exclude the very run the
+    dispatch created — the same clock trap :func:`parse_ts` documents, dodged
+    rather than re-fought.
+
+    The dispatched ref is the repository's default branch, because that is
+    where workflow_dispatch resolves the workflow file — which also means a PR
+    that *modifies* the workflow is reviewed by the merged version, not its
+    own.
+
+    The confirmed run must be title-matched to this PR (see
+    :func:`select_confirmed_run`), and its id is printed and threaded into
+    ``wait --run`` so the fail-fast there polls exactly this run.
+    """
+    workflow = cast("str", spec.dispatch_workflow)
+    repo_info = cast("dict[str, Any] | None", gh(f"repos/{repo}"))
+    default_branch = str((repo_info or {}).get("default_branch") or "")
+    if not default_branch:
+        raise BotReviewError(f"could not resolve the default branch of {repo}")
+    before = newest_run_id(repo, workflow)
+    gh(
+        f"repos/{repo}/actions/workflows/{workflow}/dispatches",
+        "-f",
+        f"ref={default_branch}",
+        "-f",
+        f"inputs[pr]={pr}",
+    )
+    deadline = time.monotonic() + DISPATCH_CONFIRM_TIMEOUT
+    while True:
+        confirmed = select_confirmed_run(workflow_runs(repo, workflow), pr, before)
+        if confirmed is not None:
+            run_id = run_id_of(confirmed)
+            print(f"dispatched {workflow} run {run_id} for PR {pr}")
+            _print_floor(spec, pr, floor, run_id=run_id)
+            return 0
+        if time.monotonic() >= deadline:
+            raise BotReviewError(
+                f"dispatched {workflow} but no new run for PR {pr} appeared "
+                f"within {DISPATCH_CONFIRM_TIMEOUT}s — the dispatch was "
+                "accepted and dropped (a workflow_dispatch workflow must "
+                f"exist on {default_branch} to be runnable). Do not wait."
+            )
+        time.sleep(DISPATCH_POLL_SECONDS)
+
+
 def _clean_verdict(spec: BotSpec, comment: Comment) -> str:
     return (
         f"CLEAN: {spec.key} reported no findings (summary comment "
@@ -539,7 +760,14 @@ def _clean_verdict(spec: BotSpec, comment: Comment) -> str:
     )
 
 
-def cmd_wait(repo: str, pr: int, spec: BotSpec, since: datetime, timeout: int) -> int:
+def cmd_wait(
+    repo: str,
+    pr: int,
+    spec: BotSpec,
+    since: datetime,
+    timeout: int,
+    run_id: int | None = None,
+) -> int:
     deadline = time.monotonic() + timeout
     while True:
         # Findings first, every iteration: a review after the floor always
@@ -557,6 +785,29 @@ def cmd_wait(repo: str, pr: int, spec: BotSpec, since: datetime, timeout: int) -
             if comment is not None:
                 print(_clean_verdict(spec, comment))
                 return EXIT_CLEAN
+        # A workflow-based bot can fail without posting anything; its run's
+        # conclusion says so long before the poll times out. Checked after the
+        # review lookups so a posted review always outranks a red run. With
+        # --run (the id request confirmed and printed), exactly that run is
+        # polled — no timestamps to skew, no neighbouring PR's run to match;
+        # without it (a recovered floor), fall back to the PR-title-filtered
+        # scan of the runs list.
+        if spec.dispatch_workflow is not None:
+            if run_id is not None:
+                run = workflow_run(repo, run_id)
+                failed = run if run_has_failed(run) else None
+            else:
+                runs = workflow_runs(repo, spec.dispatch_workflow)
+                failed = select_failed_run(runs, since, pr)
+            if failed is not None:
+                print(
+                    f"FAILED: {spec.dispatch_workflow} run {failed.get('id')} "
+                    f"concluded {str(failed.get('conclusion'))!r} without "
+                    "posting a review — check the run's logs. Silence is not "
+                    "a clean review.",
+                    file=sys.stderr,
+                )
+                return 1
         if time.monotonic() >= deadline:
             print(
                 f"TIMEOUT: no {spec.key} findings review after {timeout}s. "
@@ -615,6 +866,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--since-commit", default=None, help="derive the floor from a commit, in UTC"
     )
+    parser.add_argument(
+        "--run",
+        type=int,
+        default=None,
+        help=(
+            "the dispatched workflow run id printed by request (dispatch bots "
+            "only); lets wait fail fast on exactly that run"
+        ),
+    )
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     return parser
 
@@ -659,7 +919,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_request(repo, pr, spec)
         since = resolve_since(args)
         if args.command == "wait":
-            return cmd_wait(repo, pr, spec, since, int(cast("int", args.timeout)))
+            run_id = cast("int | None", args.run)
+            return cmd_wait(
+                repo, pr, spec, since, int(cast("int", args.timeout)), run_id
+            )
         return cmd_fetch(repo, pr, spec, since)
     except BotReviewError as exc:
         print(f"error: {exc}", file=sys.stderr)
