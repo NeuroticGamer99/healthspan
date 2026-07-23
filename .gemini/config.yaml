@@ -1,0 +1,48 @@
+# Gemini Code Assist configuration for the healthspan project.
+#
+# Companion to .gemini/styleguide.md, which teaches this repo's conventions.
+# Posture mirrors .coderabbit.yaml so the two reviewers stay in sync. Gemini is
+# the third model-family seat (Google) alongside CodeRabbit (OpenAI models) and
+# the Claude-based /code-review. Schema: the .gemini/config.yaml reference in the
+# Gemini Code Assist "Customize behavior in GitHub" docs. See CLAUDE.md for the
+# conventions themselves.
+
+have_fun: false              # no poems in summaries (CodeRabbit: poem: false)
+
+memory_config:
+  disabled: false            # keep per-repo learnings on (CodeRabbit-style memory)
+
+code_review:
+  disable: false
+  # Gemini is the diversity / second-opinion seat, not the primary. CodeRabbit
+  # already runs `profile: assertive` for design nits, so hold Gemini at the
+  # MEDIUM default — substantive issues over the same nits reported three times.
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1    # unlimited
+
+  # Opt-in model: nothing fires automatically on PR open. Each PR we choose one
+  # reviewer chain to spend (Gemini, CodeRabbit, or Copilot) for deliberate model
+  # diversity without three bots dogpiling every PR — the cost being triage
+  # attention, not quota (public OSS repos are not rate-limited). Trigger a Gemini
+  # review on demand by commenting `/gemini review` on the PR.
+  pull_request_opened:
+    help: false
+    summary: false           # quiet by default; auto-summary is free to re-enable
+    code_review: false       # manual only — invoke with `/gemini review`
+    include_drafts: false
+
+# Keep review focused on reviewable source; generated / vendored / data artifacts
+# are gitignored but excluded defensively, mirroring .coderabbit.yaml path_filters.
+# specs/personal/ is gitignored (never committed) — listed as belt-and-suspenders.
+ignore_patterns:
+  - "**/*.db"
+  - "**/*.sqlite*"
+  - "exports/**"
+  - "export/**"
+  - "data/**"
+  - "**/__pycache__/**"
+  - ".venv/**"
+  - "pytest-output.log"
+  - "parallel-output.log"
+  - "canary-logs/**"
+  - "specs/personal/**"
