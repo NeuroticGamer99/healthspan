@@ -36,8 +36,9 @@ Commands (exit 0 = findings review ready, 1 = failure or timeout,
 * ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
   took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
   since ``auto_review.enabled: false`` — is asked by posting its
-  ``@coderabbitai review`` trigger comment. Both paths stamp and print the
-  floor *before* asking, so the caller never mints one.
+  ``@coderabbitai review`` trigger comment. Both paths stamp the floor
+  *before* asking and print it on success, so the caller never mints one; a
+  failed ask prints no floor, because there is nothing to wait on.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
   clean-run summary lands.
 * ``fetch --bot B --pr N --since T`` — print that review and its own comments.
@@ -115,6 +116,14 @@ class BotSpec:
             raise ValueError(
                 f"{self.key}: trigger_body and request_login are mutually "
                 "exclusive ask channels — set exactly one"
+            )
+        # The request fields come as a pair: one is POSTed, the other is what
+        # the read-back verifies. Half a pair would otherwise surface later in
+        # cmd_request as the misleading "has neither ask channel" error.
+        if (self.request_login is None) != (self.requested_display is None):
+            raise ValueError(
+                f"{self.key}: request_login and requested_display come as a "
+                "pair — set both or neither"
             )
 
 

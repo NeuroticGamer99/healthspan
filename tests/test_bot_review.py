@@ -420,6 +420,24 @@ def test_a_spec_with_both_ask_channels_cannot_be_built() -> None:
         )
 
 
+def test_a_spec_with_half_a_request_channel_cannot_be_built() -> None:
+    # request_login is what gets POSTed; requested_display is what the
+    # read-back verifies. Half a pair would otherwise fail later in
+    # cmd_request with the misleading "has neither ask channel" message.
+    import bot_review
+
+    with pytest.raises(ValueError, match="pair"):
+        bot_review.BotSpec(
+            key="half",
+            review_login="half[bot]",
+            request_login="half[bot]",
+            requested_display=None,
+            count=CODERABBIT.count,
+            clean_marker=None,
+            trigger_body=None,
+        )
+
+
 def test_a_spec_with_no_ask_channel_is_refused() -> None:
     import bot_review
 
