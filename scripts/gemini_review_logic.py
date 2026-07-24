@@ -122,7 +122,7 @@ def verify_diff_base(default_branch: str) -> None:
 
 
 def unfiltered_diff_argv(head_sha: str) -> list[str]:
-    """The git argv for one PR's UNFILTERED range diff — no path exclusions.
+    """The git argv for one PR's UNFILTERED range — existence-only, no content.
 
     Used only when :func:`diff_argv`'s filtered diff comes back empty, to tell
     apart the two ways that happens: the range itself carries no changes (a
@@ -132,13 +132,17 @@ def unfiltered_diff_argv(head_sha: str) -> list[str]:
     ``origin/main...head_sha`` still lands on the PR's original diff rather
     than an empty range — verified live against PR #60 while building this
     check) versus every changed path being swallowed by
-    :data:`EXCLUDED_GLOBS`. Its output is never posted or shown to the model
-    — existence-only, discarded once the cause is known. Same ``head_sha``
+    :data:`EXCLUDED_GLOBS`. Only whether the range is empty is ever asked, so
+    this is ``--name-only``, not a full unfiltered patch: when the cause is
+    "every path excluded", the excluded paths are exactly the sensitive ones
+    (``specs/personal/*``, ``*.db``, ...), and materializing their full
+    content in this process's memory — even transiently, even if never
+    logged — is exposure this check has no reason to risk. Same ``head_sha``
     validation as :func:`diff_argv`; no exclusion pathspecs.
     """
     if not COMMIT_SHA.fullmatch(head_sha):
         raise ValueError(f"head_sha must be a commit SHA, got: {head_sha!r}")
-    return ["git", "diff", f"{DIFF_BASE}...{head_sha}", "--", "."]
+    return ["git", "diff", "--name-only", f"{DIFF_BASE}...{head_sha}", "--", "."]
 
 
 def diff_argv(head_sha: str) -> list[str]:
@@ -307,8 +311,13 @@ def review_body(
     from both a findings review and a genuinely clean one. Always pair it with
     a ``note`` (:data:`NOTE_NO_CHANGES_VS_MAIN` or
     :data:`NOTE_ALL_PATHS_EXCLUDED`); the marker alone does not say which
-    empty-range cause applied.
+    empty-range cause applied, and this is enforced rather than merely
+    documented — a marked-but-unexplained empty-range review would be exactly
+    the "unexplained empty result" bot_review.py's own count_note warns
+    against reporting as clean.
     """
+    if empty_range and not note:
+        raise ValueError("empty_range=True requires a note naming the cause")
     lines = [
         "## Antigravity Gemini review",
         "",

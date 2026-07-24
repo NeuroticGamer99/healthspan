@@ -354,9 +354,44 @@ def test_a_sha256_object_name_is_accepted() -> None:
 
 def test_unfiltered_diff_argv_targets_the_same_range_with_no_pathspecs() -> None:
     argv = unfiltered_diff_argv(HEAD_SHA)
-    assert argv == ["git", "diff", f"origin/main...{HEAD_SHA}", "--", "."]
+    assert argv == [
+        "git",
+        "diff",
+        "--name-only",
+        f"origin/main...{HEAD_SHA}",
+        "--",
+        ".",
+    ]
     # No exclusion pathspecs — the whole point is to see past them.
     assert not any("exclude" in part for part in argv)
+
+
+def test_unfiltered_diff_argv_never_materializes_patch_content(tmp_path: Path) -> None:
+    # Copilot's finding on the introducing PR (#62): the excluded paths this
+    # check exists to look past are exactly the sensitive ones
+    # (specs/personal/*, *.db, ...), so this must stay existence-only —
+    # --name-only, never a full patch — to avoid materializing their content
+    # in this process's memory even transiently.
+    repo = _init_repo(tmp_path)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    base_sha = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+
+    secret = repo / "specs" / "personal" / "notes.md"
+    secret.parent.mkdir(parents=True)
+    secret.write_text(
+        "a value that must never be materialized here\n", encoding="utf-8"
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "add a sensitive file")
+    head_sha = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "checkout", "-q", "--detach", base_sha)
+
+    out = _git(repo, *unfiltered_diff_argv(head_sha)[1:])
+    assert "specs/personal/notes.md" in out  # existence is still visible...
+    assert "must never be materialized here" not in out  # ...content is not
 
 
 def test_unfiltered_diff_argv_rejects_a_non_sha_the_same_way_diff_argv_does() -> None:
@@ -631,6 +666,16 @@ def test_a_genuinely_clean_review_never_carries_the_empty_range_marker() -> None
     # what it always was, not accidentally pick up the new marker.
     body = review_body(0, [])
     assert EMPTY_RANGE_MARKER not in body
+
+
+def test_empty_range_without_a_note_is_refused() -> None:
+    # Copilot's finding on the introducing PR (#62): the docstring's "always
+    # pair it with a note" was advisory only. A marked-but-unexplained
+    # empty-range review would itself be the "unexplained empty result"
+    # bot_review.py's count_note warns against reporting as clean — enforced
+    # here rather than left to the one caller getting it right by hand.
+    with pytest.raises(ValueError, match="requires a note"):
+        review_body(0, [], empty_range=True)
 
 
 def test_the_empty_range_marker_matches_the_gemini_botspecs_own_pattern() -> None:
