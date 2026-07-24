@@ -369,9 +369,10 @@ def test_a_default_branch_that_is_not_the_diff_base_fails_closed(
 def test_the_pr_head_diffs_while_the_worktree_stays_on_main(tmp_path: Path) -> None:
     """The whole point of the hardening, proven end to end against real git.
 
-    The worktree holds `main` (nothing of the PR is checked out, so nothing of
-    it can be executed) and the PR head exists only as a fetched object — and
-    the diff is still the PR's.
+    The worktree holds the default branch (nothing of the PR is checked out, so
+    nothing of it can be executed) and the PR head is reachable only through
+    the job-owned ref the workflow fetches into — asserted below, not just
+    arranged — and the diff is still the PR's.
     """
     repo = _init_repo(tmp_path)
     (repo / "base.txt").write_text("base\n", encoding="utf-8")
@@ -386,9 +387,20 @@ def test_the_pr_head_diffs_while_the_worktree_stays_on_main(tmp_path: Path) -> N
     _git(repo, "commit", "-qm", "the PR's commit")
     head_sha = _git(repo, "rev-parse", "HEAD").strip()
 
-    # The hardened shape: worktree back on main's content, PR head fetched-only.
+    # The hardened shape, modeled as CI actually has it: the worktree back on
+    # the default branch, the PR head reachable only through the ref the fetch
+    # step writes. The branch name is read, never assumed — `git init` makes
+    # `master` on an unconfigured git (including the runner images) and `main`
+    # elsewhere, so writing refs/heads/main blind would add a second branch and
+    # leave the PR commit reachable through the first.
+    branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
     _git(repo, "checkout", "-q", "--detach", base_sha)
+    _git(repo, "update-ref", "refs/gemini-review/pr-head", head_sha)
+    _git(repo, "update-ref", f"refs/heads/{branch}", base_sha)
     assert not (repo / "pr_only.py").exists()
+    # The docstring's claim, mechanized: no branch reaches the PR head, so the
+    # fixture cannot drift back into modelling a checked-out PR.
+    assert _git(repo, "branch", "--contains", head_sha).strip() == ""
 
     diff = _git(repo, *diff_argv(head_sha)[1:])
     assert "pr_only.py" in diff
