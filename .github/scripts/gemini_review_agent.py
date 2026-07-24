@@ -29,7 +29,12 @@ mirroring what scripts/bot_review.py's ``gemini`` BotSpec expects:
 * each finding that anchors to a diff line becomes an inline review comment;
 * findings that do not anchor are listed in the body instead, explicitly;
 * a clean run is still a review, stating 0 findings (like Copilot, unlike
-  CodeRabbit — so no clean-comment scanning is needed).
+  CodeRabbit — so no clean-comment scanning is needed);
+* an empty *filtered* diff (no commits differ from main, or every changed
+  path was excluded) is also a review stating 0 findings, but carries
+  ``gemini_review_logic.EMPTY_RANGE_MARKER`` so bot_review.py's gemini
+  BotSpec reports it as a third outcome, not a clean review of a diff that
+  was never looked at (issue #59).
 
 Trust boundary (ADR-0064): this job holds ``GEMINI_API_KEY`` and a
 pull-requests:write token, so it runs only default-branch code — this script,
@@ -75,6 +80,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from gemini_review_logic import (  # noqa: E402
     DIFF_BASE,
+    NOTE_ALL_PATHS_EXCLUDED,
+    NOTE_NO_CHANGES_VS_MAIN,
     ReviewResult,
     anchorable_lines,
     diff_argv,
@@ -82,6 +89,7 @@ from gemini_review_logic import (  # noqa: E402
     is_excluded,
     iter_strings,
     review_body,
+    unfiltered_diff_argv,
     verify_diff_base,
 )
 
@@ -214,18 +222,25 @@ def main() -> int:
     # review is posted against it.
     diff = run_cmd(diff_argv(head_sha))
     if not diff.strip():
+        # Which of the two empty-range causes applies (issue #59): re-running
+        # the range without the sensitive-path exclusions tells "nothing
+        # changed against main" apart from "something changed, but every path
+        # was excluded". Cheap and bounded — same range, no exclusions, never
+        # posted or shown to the model.
+        unfiltered = run_cmd(unfiltered_diff_argv(head_sha))
+        note = (
+            NOTE_ALL_PATHS_EXCLUDED if unfiltered.strip() else NOTE_NO_CHANGES_VS_MAIN
+        )
         post_review(
             repo,
             pr,
             {
                 "commit_id": head_sha,
                 "event": "COMMENT",
-                "body": review_body(
-                    0, [], note="The filtered diff is empty — nothing to review."
-                ),
+                "body": review_body(0, [], note=note, empty_range=True),
             },
         )
-        print("empty filtered diff; posted a 0-finding review")
+        print(f"empty filtered diff ({note}); posted an empty-range review")
         return 0
 
     result = asyncio.run(review_diff(diff, styleguide))
