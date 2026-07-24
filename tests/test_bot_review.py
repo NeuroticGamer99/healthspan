@@ -997,6 +997,12 @@ def test_stated_count_distinguishes_wordless_zero_from_no_statement() -> None:
     # #61 gap or silence a genuinely uncountable body's warning.
     assert stated_count("generated no comments.", COPILOT) == 0
     assert stated_count("nothing about counts here", COPILOT) is None
+    # "comment" is a prefix of "commentary" — without a word boundary on the
+    # count term, "generated no commentary" would read as an asserted 0 and
+    # silence the absent-count warning. The `comments?\b` in the regex forbids
+    # it (CodeRabbit, PR #63); it states no count, so it must stay None.
+    assert stated_count("Copilot generated no commentary on this.", COPILOT) is None
+    assert stated_count("generated 2 commentary sections", COPILOT) is None
 
 
 def test_gemini_review_is_authored_by_the_actions_bot() -> None:

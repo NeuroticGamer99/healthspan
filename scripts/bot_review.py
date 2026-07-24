@@ -215,8 +215,11 @@ BOTS: dict[str, BotSpec] = {
         # skipped" — inert for exactly the clean re-review where a caller is
         # most tempted not to read the body. The alternation still captures the
         # digit into group 1 when present; the wordless clean shapes match with
-        # an empty group 1, which `stated_count` reads as an asserted 0.
-        count=re.compile(r"generated (?:(\d+)|no(?: new)?) comment"),
+        # an empty group 1, which `stated_count` reads as an asserted 0. The
+        # trailing `comments?\b` (not a bare `comment`) keeps "generated no
+        # commentary" — where "comment" is a mere prefix — from reading as an
+        # asserted 0 and silencing the absent-count warning (CodeRabbit, PR #63).
+        count=re.compile(r"generated (?:(\d+) comments?|no(?: new)? comments)\b"),
         clean_marker=None,
     ),
     # The Antigravity SDK (Gemini) reviewer is not a GitHub App but a repo
