@@ -5,12 +5,23 @@ description: Dispatch the Antigravity SDK (Gemini) review workflow on the curren
 
 # /gemini-review — dispatch, await, and triage a Gemini review
 
+> **Best-effort reviewer (demoted 2026-07-24).** This is *not* a routine chain member like
+> `/coderabbit-review` or `/copilot-review`. The free AI Studio tier realistically supports only
+> **≈1 successful review per day** — one agentic review consumes roughly a full day's free-tier
+> request budget (observed as ~20 requests/day for this project+model in 2026-07; the free-tier
+> daily cap is project/model/account-dependent and shifts, so the AI Studio rate-limit dashboard is
+> authoritative) — and Google also throws frequent
+> transient 503 "high demand" errors, so **most runs fail without producing a report**. Run this
+> only when the user explicitly asks for the Gemini lens, and **never let its failure or absence
+> block a merge** — CodeRabbit and Copilot are the reliable two. A failed run here is an external
+> capacity/quota fact, not a code defect. (Reliable Gemini review would need a paid API key or a
+> local interactive tool on a Gemini subscription — a deferred decision.)
+
 The Gemini lens is not a GitHub App but a repo-owned workflow —
 `.github/workflows/gemini-review.yml` runs the Antigravity SDK (`google-antigravity`, Gemini 3 Pro
 class) against the PR's diff and posts a real PR review authored by `github-actions[bot]`, with
-`.gemini/styleguide.md` as its review lens. Like every reviewer here it is opt-in, one deliberately
-chosen chain per PR. `/ship gemini` runs this chain automatically after shipping; invoke it
-directly on any PR that is already open.
+`.gemini/styleguide.md` as its review lens. It is opt-in and, per the note above, best-effort.
+`/ship gemini` runs this chain after shipping; invoke it directly on any PR that is already open.
 
 Two facts specific to this reviewer:
 

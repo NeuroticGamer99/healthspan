@@ -12,11 +12,15 @@ Takes an optional reviewer argument choosing which bot chain to spend on this PR
 opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every PR:
 
 - **`/ship`** — ship only. Nothing reviews automatically (`auto_review.enabled: false`); after
-  reporting the PR URL, remind the user of the reviewer chains they can spend: `/coderabbit-review`,
-  `/gemini-review`, `/copilot-review`, or a local `/code-review`.
+  reporting the PR URL, remind the user of the reviewer chains they can spend: the two reliable
+  lenses `/coderabbit-review` and `/copilot-review`, a local `/code-review`, and — only if
+  explicitly asked — the best-effort `/gemini-review` (see below).
 - **`/ship coderabbit`** — ship, then run the **`/coderabbit-review`** chain (step 4).
-- **`/ship gemini`** — ship, then run the **`/gemini-review`** chain (step 4). Not the sunset
-  Gemini Code Assist app: this is the repo-owned Antigravity SDK workflow.
+- **`/ship gemini`** — ship, then run the **`/gemini-review`** chain (step 4). **Best-effort, not a
+  routine chain member** (demoted 2026-07-24): on the free tier it usually fails without producing a
+  report — the `/gemini-review` skill has the quota/capacity math. Run it only when the user names
+  it; never let its failure or absence block a merge. Not the sunset Gemini Code Assist app — this
+  is the repo-owned Antigravity SDK workflow.
 - **`/ship copilot`** — ship, then tell the user Copilot is by preference not chained from
   `/ship`: it runs as its own explicit `/copilot-review` step, which you should offer to run now.
 - Any other argument: stop and say it is not a known reviewer.
@@ -86,8 +90,9 @@ the wait/fetch protects against — reply-reviews with empty bodies, per-page `j
 string-compared timestamps, the clean run that posts no review object at all — is documented and
 tested in `scripts/bot_review.py`; do not re-derive it here.
 
-`/ship gemini`: continue with the **`/gemini-review`** skill from its step 2 — the same
-request/wait/fetch/triage shape, with the ask being a workflow dispatch of
-`.github/workflows/gemini-review.yml` (verified to have actually started a run). Note its
-resolves-on-`main` caveat: a PR that introduces or modifies that workflow cannot be reviewed by
-its own version of it.
+`/ship gemini` (best-effort only): continue with the **`/gemini-review`** skill from its step 2 —
+the same request/wait/fetch/triage shape, with the ask being a workflow dispatch of
+`.github/workflows/gemini-review.yml` (verified to have actually started a run). Expect it to fail
+most of the time on the free tier (the `/gemini-review` skill explains why) — that is not a defect
+and is never grounds to hold the merge; report the failure and move on. Note its resolves-on-`main`
+caveat: a PR that introduces or modifies that workflow cannot be reviewed by its own version of it.
