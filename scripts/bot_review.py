@@ -122,8 +122,10 @@ class BotSpec:
     count: re.Pattern[str]
     # Recognizes the bot's clean-run summary in an *issue comment* body, for a
     # bot whose clean run posts no review object at all (CodeRabbit). None for
-    # a bot whose clean run is still a review (Copilot states "generated 0
-    # comments" in a review body, which select_review already finds).
+    # a bot whose clean run is still a review (Copilot states "generated no
+    # comments" on a clean first pass and "generated no new comments" on a
+    # clean re-review — both nonempty-bodied reviews select_review already
+    # finds, and both counted as 0 by stated_count; see the count regex below).
     clean_marker: re.Pattern[str] | None
     # The workflow file to dispatch, for a bot that is a repo-owned GitHub
     # Actions workflow rather than a GitHub App (Gemini/Antigravity). Its
@@ -204,7 +206,17 @@ BOTS: dict[str, BotSpec] = {
         request_login="copilot-pull-request-reviewer[bot]",
         requested_display="Copilot",
         trigger_body=None,
-        count=re.compile(r"generated (\d+) comment"),
+        # Three shapes, all verified against live review bodies on this repo
+        # (issue #61): a findings run states "generated N comment(s)" (digit,
+        # captured); a clean first pass states "generated no comments" and a
+        # clean re-review states "generated no new comments" — neither carries
+        # a digit. Without the "no"/"no new" alternative both clean shapes made
+        # `stated_count` return None, which `count_note` reports as "cross-check
+        # skipped" — inert for exactly the clean re-review where a caller is
+        # most tempted not to read the body. The alternation still captures the
+        # digit into group 1 when present; the wordless clean shapes match with
+        # an empty group 1, which `stated_count` reads as an asserted 0.
+        count=re.compile(r"generated (?:(\d+)|no(?: new)?) comment"),
         clean_marker=None,
     ),
     # The Antigravity SDK (Gemini) reviewer is not a GitHub App but a repo
@@ -463,9 +475,24 @@ def select_confirmed_run(runs: list[Run], pr: int, before: int | None) -> Run | 
 
 
 def stated_count(body: str, spec: BotSpec) -> int | None:
-    """The finding count the review body claims, if it states one."""
+    """The finding count the review body claims, if it states one.
+
+    Three outcomes, distinct on purpose: no match at all is ``None`` ("the body
+    states nothing countable — cross-check skipped"); a match whose count group
+    captured digits is that integer; a match whose count group is *empty* is a
+    ``0`` explicitly asserted in words. That last case is Copilot's wordless
+    clean review — "generated no comments" / "generated no new comments" (issue
+    #61) — where the count regex matches the phrase but leaves group 1 unset. It
+    must read as an asserted 0, not None, so the cross-check stays live for a
+    clean re-review instead of skipping the one case a caller is most tempted to
+    wave through. Bots whose regex has no wordless alternative always populate
+    group 1 on a match, so this collapses to the digit path for them.
+    """
     found = spec.count.search(body)
-    return int(found.group(1)) if found else None
+    if found is None:
+        return None
+    digits = found.group(1)
+    return int(digits) if digits is not None else 0
 
 
 def count_note(stated: int | None, actual: int) -> str | None:

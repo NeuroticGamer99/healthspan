@@ -319,8 +319,10 @@ def test_another_authors_clean_looking_comment_is_not_the_bots() -> None:
 
 
 def test_copilot_has_no_clean_comment_mode() -> None:
-    # Copilot's clean run is still a review ("generated 0 comments"), which
-    # select_review finds; its spec deliberately opts out of comment scanning.
+    # Copilot's clean run is still a review — "generated no comments" on a first
+    # pass, "generated no new comments" on a re-review (issue #61; verified on
+    # PR#60, never "generated 0 comments") — which select_review finds by its
+    # nonempty body; its spec deliberately opts out of issue-comment scanning.
     assert COPILOT.clean_marker is None
     comment = _comment(
         1,
@@ -962,6 +964,39 @@ def test_stated_count_reads_each_bots_marker() -> None:
         == 3
     )
     assert stated_count("posted 0 inline finding(s).", GEMINI) == 0
+
+
+def test_copilot_wordless_clean_reviews_count_as_zero() -> None:
+    # Copilot never writes "generated 0 comments" (issue #61 — verified across
+    # every Copilot review on this repo; 0 occurrences). A clean first pass says
+    # "no comments" and a clean re-review says "no new comments" — both wordless,
+    # both an explicit assertion of zero findings. They must read as 0, not None:
+    # None would make count_note skip the cross-check on exactly the clean
+    # re-review a caller is most tempted to wave through. Bodies transcribed from
+    # real reviews (the re-review is PR#60's second Copilot review).
+    first_pass = (
+        "Copilot reviewed 8 out of 8 changed files in this pull request "
+        "and generated no comments."
+    )
+    re_review = (
+        "Copilot reviewed 8 out of 8 changed files in this pull request "
+        "and generated no new comments."
+    )
+    assert stated_count(first_pass, COPILOT) == 0
+    assert stated_count(re_review, COPILOT) == 0
+    # A wordless clean review states 0 and fetches 0 comments -> the cross-check
+    # runs and is satisfied, so no spurious "cross-check skipped" note. This is
+    # the behavior change: before the fix stated_count returned None here.
+    assert count_note(stated_count(re_review, COPILOT), 0) is None
+
+
+def test_stated_count_distinguishes_wordless_zero_from_no_statement() -> None:
+    # The three outcomes must stay distinct: a matched-but-wordless count is an
+    # asserted 0 (cross-check lives), while a body that states nothing countable
+    # is None (cross-check skipped). Conflating them would either resurrect the
+    # #61 gap or silence a genuinely uncountable body's warning.
+    assert stated_count("generated no comments.", COPILOT) == 0
+    assert stated_count("nothing about counts here", COPILOT) is None
 
 
 def test_gemini_review_is_authored_by_the_actions_bot() -> None:
