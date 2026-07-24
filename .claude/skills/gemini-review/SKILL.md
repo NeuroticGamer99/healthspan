@@ -7,8 +7,10 @@ description: Dispatch the Antigravity SDK (Gemini) review workflow on the curren
 
 > **Best-effort reviewer (demoted 2026-07-24).** This is *not* a routine chain member like
 > `/coderabbit-review` or `/copilot-review`. The free AI Studio tier realistically supports only
-> **≈1 successful review per day** — one agentic review consumes ≈ the whole 20-request daily cap
-> the free tier allows (`generate_content_free_tier_requests`) — and Google also throws frequent
+> **≈1 successful review per day** — one agentic review consumes roughly a full day's free-tier
+> request budget (observed as ~20 requests/day for this project+model in 2026-07; the free-tier
+> daily cap is project/model/account-dependent and shifts, so the AI Studio rate-limit dashboard is
+> authoritative) — and Google also throws frequent
 > transient 503 "high demand" errors, so **most runs fail without producing a report**. Run this
 > only when the user explicitly asks for the Gemini lens, and **never let its failure or absence
 > block a merge** — CodeRabbit and Copilot are the reliable two. A failed run here is an external
