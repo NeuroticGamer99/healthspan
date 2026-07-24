@@ -12,8 +12,9 @@
 """Review a PR's diff with the Antigravity SDK (Gemini) and post a PR review.
 
 Runs only inside .github/workflows/gemini-review.yml — it expects a checkout of
-the PR head, ``GEMINI_API_KEY`` (free AI Studio key), ``GH_TOKEN``, ``PR`` and
-``GITHUB_REPOSITORY`` in the environment. It is deliberately not part of the
+``main`` (never of the PR: see Trust boundary below) with the PR head fetched as
+data and named by ``PR_HEAD_SHA``, plus ``GEMINI_API_KEY`` (free AI Studio key),
+``GH_TOKEN``, ``PR`` and ``GITHUB_REPOSITORY``. It is deliberately not part of the
 installable project: its dependencies are PEP 723 inline (CI-only, never in
 uv.lock), and living under ``.github/`` keeps it outside the pyright gate's
 scope (ruff still lints it). Its pure logic — diff parsing, sensitive-path
@@ -29,6 +30,26 @@ mirroring what scripts/bot_review.py's ``gemini`` BotSpec expects:
 * findings that do not anchor are listed in the body instead, explicitly;
 * a clean run is still a review, stating 0 findings (like Copilot, unlike
   CodeRabbit — so no clean-comment scanning is needed).
+
+Trust boundary (ADR-0064): this job holds ``GEMINI_API_KEY`` and a
+pull-requests:write token, so it runs only default-branch code — this script,
+the module it imports, and the PEP 723 block above are all the ``main`` copies.
+The PR is reviewed as data: its head is fetched, never checked out, and reaches
+git only as ``PR_HEAD_SHA``. Two consequences are deliberate:
+
+* the reviewed range is ``origin/main...$PR_HEAD_SHA`` rather than ``HEAD``,
+  which here is ``main``.
+* ``view_file`` reads ``main``'s worktree, i.e. the *pre-change* version of
+  every file the PR touches. The system instructions say so and forbid findings
+  that rest on a changed file's on-disk content; the diff is the sole authority
+  on what the PR does. Materializing PR blobs into a read-only path was the
+  alternative and was rejected in ADR-0064.
+
+Residual, accepted there and not closed here: diff content can prompt-inject the
+model into an *unfaithful review*. It cannot reach the token or execute code
+once the surrounding Python is trusted, so the blast radius is a misleading
+review a human triages — the standing rule that every bot finding is verified
+against the code before it is acted on.
 
 Containment: the diff is pre-computed here with the same sensitive-path
 exclusions as .coderabbit.yaml's ``path_filters``, and a pre-tool hook refuses
@@ -53,9 +74,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from gemini_review_logic import (  # noqa: E402
+    DIFF_BASE,
     ReviewResult,
     anchorable_lines,
-    exclusion_pathspecs,
+    diff_argv,
     finding_comment,
     is_excluded,
     iter_strings,
@@ -70,11 +92,14 @@ are given, against the styleguide included in the prompt. Report genuine
 correctness, security, design, and spec-conformance findings — not style nits
 already gated by CI (ruff, pyright strict, PyMarkdown), and not restatements of
 the diff. Every finding must cite the file path and the NEW-side line number of
-a line that appears in the diff. Use view_file only to read surrounding context
-from the checked-out repository. If you encounter personal health values or
-identifying information, report only the path and data category — never quote
-or echo the values themselves; your findings are posted publicly. Finish by
-returning the structured result.
+a line that appears in the diff. view_file reads the repository's DEFAULT BRANCH
+(main), NOT this pull request: for any file the diff touches, disk holds the
+version BEFORE these changes, so use it as before-and-after context only, and
+never report a finding that depends on a changed file's on-disk content — the
+diff is the sole authority on what this pull request does. If you encounter
+personal health values or identifying information, report only the path and data
+category — never quote or echo the values themselves; your findings are posted
+publicly. Finish by returning the structured result.
 """
 
 
@@ -118,19 +143,6 @@ def run_cmd(argv: list[str], stdin: str | None = None) -> str:
     return proc.stdout or ""
 
 
-def filtered_diff() -> str:
-    """The PR diff against the origin/main merge base, exclusions applied.
-
-    The exclusion happens here, in deterministic code — never delegated to the
-    agent's judgment. The pathspec translation (git glob `*` does not cross
-    `/`, unlike fnmatch) lives in gemini_review_logic, where it is tested
-    against a real git repo.
-    """
-    return run_cmd(
-        ["git", "diff", "origin/main...HEAD", "--", ".", *exclusion_pathspecs()]
-    )
-
-
 @hooks.pre_tool_call_decide
 async def deny_sensitive_paths(data: types.ToolCall) -> types.HookResult:
     """Refuse any tool call whose arguments name an excluded path.
@@ -164,7 +176,8 @@ async def review_diff(diff: str, styleguide: str) -> ReviewResult:
         "Review the following diff per the styleguide.\n\n"
         "=== STYLEGUIDE (.gemini/styleguide.md) ===\n"
         f"{styleguide}\n"
-        "=== DIFF (origin/main...HEAD, sensitive paths pre-excluded) ===\n"
+        f"=== DIFF ({DIFF_BASE}...<pull request head>, "
+        "sensitive paths pre-excluded) ===\n"
         f"{diff}\n"
     )
     async with Agent(config) as agent:
@@ -183,10 +196,17 @@ def post_review(repo: str, pr: str, payload: dict[str, object]) -> None:
 def main() -> int:
     repo = os.environ["GITHUB_REPOSITORY"]
     pr = os.environ["PR"]
-    head_sha = run_cmd(["git", "rev-parse", "HEAD"]).strip()
+    # The workflow's fetched PR head, not `git rev-parse HEAD` — that is `main`
+    # here. It is both the reviewed range's endpoint and the review's
+    # commit_id, which GitHub anchors the inline comments to.
+    head_sha = os.environ["PR_HEAD_SHA"].strip()
     styleguide = STYLEGUIDE.read_text(encoding="utf-8")
 
-    diff = filtered_diff()
+    # The range, its fail-closed SHA check, and the sensitive-path exclusions
+    # all live in diff_argv — the tested module, not this CI-only script. This
+    # is head_sha's first use, so a malformed value fails here, before any
+    # review is posted against it.
+    diff = run_cmd(diff_argv(head_sha))
     if not diff.strip():
         post_review(
             repo,

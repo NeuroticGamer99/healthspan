@@ -103,6 +103,7 @@ The remaining gates — ruff lint+format, pyright strict, the test matrix, the l
 ## Links
 - Extended by: [ADR-0061](0061-markdown-link-check-gate.md) — adds the markdown link-check gate as a second script in the §6 docs-consistency job
 - Extended by: [ADR-0063](0063-parallel-ci-test-execution.md) — runs the §5 `windows-latest` matrix leg under `pytest -n auto`, reworking the log-canary capture for parallel execution; the other two legs stay serial
+- Extended by: [ADR-0064](0064-reviewer-workflow-trust-boundary.md) — adds the trust boundary for credential-holding workflows: they execute only default-branch code, and pull-request content is data
 - Related: [testing-strategy.md](../testing-strategy.md) — CI Gates (gate content and the ship-with-first-code rule; this ADR decides the enforcement mechanics around them)
 - Related: [CLAUDE.md](../../CLAUDE.md) — ADR governance rule mechanized by the docs-consistency gate
 - Related: [ADR-0036](0036-plugin-package-installation-integrity.md) — the hash-verification discipline the gitleaks install step follows

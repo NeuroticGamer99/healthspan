@@ -116,3 +116,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0061](0061-markdown-link-check-gate.md) | Markdown Link-Check Gate for the Docs-Consistency Job (extends ADR-0045) | Proposed |
 | [ADR-0062](0062-markdown-style-lint-gate.md) | Markdown Style-Lint Gate (PyMarkdown), Tuned to the Corpus (extends ADR-0061) | Proposed |
 | [ADR-0063](0063-parallel-ci-test-execution.md) | Parallel Test Execution on the windows-latest CI Leg (extends ADR-0045) | Proposed |
+| [ADR-0064](0064-reviewer-workflow-trust-boundary.md) | Reviewer Workflows Execute Only Default-Branch Code (extends ADR-0045) | Proposed |

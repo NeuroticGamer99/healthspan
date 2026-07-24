@@ -19,6 +19,7 @@ from gemini_review_logic import (
     EXCLUDED_GLOBS,
     Finding,
     anchorable_lines,
+    diff_argv,
     exclusion_pathspecs,
     finding_comment,
     is_excluded,
@@ -250,14 +251,19 @@ def _git(cwd: Path, *args: str) -> str:
     return proc.stdout
 
 
-def test_pathspecs_exclude_nested_sensitive_paths_in_a_real_repo(
-    tmp_path: Path,
-) -> None:
+def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "r"
     repo.mkdir()
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@example.invalid")
     _git(repo, "config", "user.name", "t")
+    return repo
+
+
+def test_pathspecs_exclude_nested_sensitive_paths_in_a_real_repo(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
     (repo / "base.txt").write_text("base\n", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-qm", "base")
@@ -278,6 +284,181 @@ def test_pathspecs_exclude_nested_sensitive_paths_in_a_real_repo(
         repo, "diff", "--cached", "--name-only", "--", ".", *exclusion_pathspecs()
     )
     assert out.split() == ["src/keep_me.py"]
+
+
+# --------------------------------------------------------------------------
+# diff_argv: the reviewed range names the PR head explicitly. The workflow
+# keeps the worktree on `main` so only trusted code runs beside the API key and
+# the write token (ADR-0064) — which makes HEAD `main`, and a review that
+# diffed it would post a clean review of nothing.
+# --------------------------------------------------------------------------
+
+HEAD_SHA = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+
+
+def test_the_reviewed_range_targets_the_given_head_not_the_worktree() -> None:
+    argv = diff_argv(HEAD_SHA)
+    assert argv[:3] == ["git", "diff", f"origin/main...{HEAD_SHA}"]
+    # The regression this guards: any re-introduction of the worktree-relative
+    # assumption. With the worktree on `main`, HEAD names the wrong commit.
+    assert "HEAD" not in " ".join(argv)
+
+
+def test_the_range_still_carries_the_sensitive_path_exclusions() -> None:
+    argv = diff_argv(HEAD_SHA)
+    assert argv[3:5] == ["--", "."]
+    assert argv[5:] == exclusion_pathspecs()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "HEAD",  # the pre-hardening assumption, now refused outright
+        "origin/main",
+        "refs/pull/57/head",
+        "feature-branch",
+        "--output=/tmp/leak",  # git would read a leading dash as an option
+        "1a2b3c4",  # abbreviated: real, but not what the workflow passes
+        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0",  # 39
+        "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0bc",  # 41
+        "1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B",  # uppercase
+        f"{HEAD_SHA} --all",
+        "",
+    ],
+)
+def test_anything_that_is_not_a_bare_commit_sha_is_refused(value: str) -> None:
+    # Fail closed: a ref name silently reviews the wrong commits and a dashed
+    # value is read by git as an option — both would be reported as a normal
+    # review, which is exactly the failure mode this check exists to prevent.
+    with pytest.raises(ValueError, match="commit SHA"):
+        diff_argv(value)
+
+
+def test_a_sha256_object_name_is_accepted() -> None:
+    # Not speculative plumbing: `git init --object-format=sha256` exists today,
+    # and a 40-hex-only check would reject every SHA the workflow could pass on
+    # such a repository — a total, mysterious failure of the reviewer.
+    assert diff_argv("f" * 64)[2].endswith("f" * 64)
+
+
+def test_the_pr_head_diffs_while_the_worktree_stays_on_main(tmp_path: Path) -> None:
+    """The whole point of the hardening, proven end to end against real git.
+
+    The worktree holds `main` (nothing of the PR is checked out, so nothing of
+    it can be executed) and the PR head exists only as a fetched object — and
+    the diff is still the PR's.
+    """
+    repo = _init_repo(tmp_path)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    base_sha = _git(repo, "rev-parse", "HEAD").strip()
+    # Stand in for the remote-tracking ref the workflow's checkout provides.
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+
+    (repo / "pr_only.py").write_text("print('from the PR')\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "the PR's commit")
+    head_sha = _git(repo, "rev-parse", "HEAD").strip()
+
+    # The hardened shape: worktree back on main's content, PR head fetched-only.
+    _git(repo, "checkout", "-q", "--detach", base_sha)
+    assert not (repo / "pr_only.py").exists()
+
+    diff = _git(repo, *diff_argv(head_sha)[1:])
+    assert "pr_only.py" in diff
+    assert "from the PR" in diff
+    # And the bug the range replaces: HEAD is main, so its diff is empty — a
+    # 0-finding review of a PR that was never looked at.
+    assert _git(repo, "diff", "origin/main...HEAD") == ""
+
+
+# --------------------------------------------------------------------------
+# The workflow's trust boundary, asserted rather than commented (ADR-0064).
+# The review job holds GEMINI_API_KEY and a pull-requests:write token, so any
+# edit that puts another commit's files in its worktree — `gh pr checkout`, a
+# `ref:` naming the PR — is arbitrary code execution with both, and it passes
+# every other gate green. Same mechanization as the EXCLUDED_GLOBS mirror
+# below, for the same reason: a containment boundary has to fail the build
+# rather than depend on a reviewer noticing one line.
+#
+# Text-matched, not YAML-parsed: the project declares no YAML parser (the
+# .coderabbit.yaml check below hand-parses for the same reason).
+# --------------------------------------------------------------------------
+
+WORKFLOW = (
+    Path(__file__).resolve().parent.parent
+    / ".github"
+    / "workflows"
+    / "gemini-review.yml"
+)
+
+# Every construct that can swap the worktree to another commit. The workflow's
+# own header names `gh pr checkout` in prose, which is why the scan reads only
+# non-comment text.
+WORKTREE_SWAPS = (
+    "gh pr checkout",
+    "git checkout",
+    "git switch",
+    "git worktree",
+    "git reset",
+)
+
+
+def _workflow_code() -> str:
+    """The workflow source with every comment stripped.
+
+    Cuts at the first `#` on each line, which is a comment in both YAML and in
+    the shell of a `run:` block — the two languages this file mixes.
+    """
+    return "\n".join(line.split("#")[0] for line in _workflow_source().splitlines())
+
+
+def _workflow_source() -> str:
+    return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _workflow_steps(source: str) -> list[str]:
+    """The job's step blocks, split on the `      - ` step markers."""
+    blocks: list[list[str]] = []
+    for line in source.splitlines():
+        if line.startswith("      - "):
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+    return ["\n".join(block) for block in blocks]
+
+
+@pytest.mark.parametrize("swap", WORKTREE_SWAPS)
+def test_the_reviewer_workflow_never_swaps_its_worktree(swap: str) -> None:
+    assert swap not in _workflow_code(), (
+        f"{swap!r} in gemini-review.yml puts non-default-branch files in the "
+        "worktree the agent script, its imports, and its PEP 723 dependencies "
+        "resolve from — beside GEMINI_API_KEY and a write token (ADR-0064)"
+    )
+
+
+def test_the_checkout_step_pins_its_ref_to_the_default_branch() -> None:
+    # Unpinned, the checkout follows the dispatched ref — and workflow_dispatch
+    # runs the workflow file from that ref, not from the default branch. The
+    # pin is what makes "only trusted code runs here" true of the job itself
+    # rather than of whoever dispatched it.
+    steps = _workflow_steps(_workflow_source())
+    checkouts = [s for s in steps if "actions/checkout@" in s]
+    assert len(checkouts) == 1
+    assert "ref: ${{ github.event.repository.default_branch }}" in checkouts[0]
+
+
+def test_the_pull_request_ref_is_only_ever_fetched() -> None:
+    # The PR reaches this job as git objects and a SHA. Every other verb —
+    # checkout, merge, worktree — would make it code.
+    uses = [
+        line.strip()
+        for line in _workflow_code().splitlines()
+        if "refs/pull/" in line or "pull/$PR" in line
+    ]
+    assert uses, "the workflow no longer fetches the PR head — did the ref move?"
+    assert all(line.startswith("git fetch ") for line in uses), uses
 
 
 # --------------------------------------------------------------------------

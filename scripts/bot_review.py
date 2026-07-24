@@ -712,10 +712,14 @@ def _request_by_dispatch(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
     dispatch created — the same clock trap :func:`parse_ts` documents, dodged
     rather than re-fought.
 
-    The dispatched ref is the repository's default branch, because that is
-    where workflow_dispatch resolves the workflow file — which also means a PR
-    that *modifies* the workflow is reviewed by the merged version, not its
-    own.
+    The dispatched ref is the repository's default branch — not because the
+    event guarantees it, but because it is the only safe choice. A
+    workflow_dispatch run executes the workflow file from *the ref it is
+    given*; the default branch merely has to carry a same-named file for the
+    ask to be accepted. Dispatching anything else would run that ref's copy of
+    a job holding an API key and a pull-requests:write token (ADR-0064). It
+    also means a PR that *modifies* the workflow is reviewed by the merged
+    version, not its own.
 
     The confirmed run must be title-matched to this PR (see
     :func:`select_confirmed_run`), and its id is printed and threaded into

@@ -83,6 +83,43 @@ def exclusion_pathspecs() -> list[str]:
     return specs
 
 
+# A commit SHA and nothing else: 40 hex today, 64 if the repository ever moves
+# to SHA-256 object names. Anchored and grouped so it means the same thing
+# under every match method — bare `A|B` would let a future `.match`/`.search`
+# accept "<40 hex> --output=/tmp/leak", readmitting the dashed-argument
+# smuggling diff_argv rejects.
+COMMIT_SHA = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+DIFF_BASE = "origin/main"
+
+
+def diff_argv(head_sha: str) -> list[str]:
+    """The git argv for one PR's filtered diff, ``origin/main...head_sha``.
+
+    The head is *passed in*, never taken from ``HEAD``. The workflow keeps the
+    worktree on ``main`` — only trusted code may run beside the API key and the
+    write token (ADR-0064) — and fetches the PR head as data, so ``HEAD`` is
+    ``main`` and diffing it would review nothing while posting a clean review.
+
+    ``head_sha`` must be a bare commit SHA. Refusing anything else is a
+    fail-closed check, not a formality: a ref name would silently review the
+    wrong commits, a value starting with ``-`` would be read by git as an
+    option rather than a revision, and both would be reported as a normal
+    review. It is the only caller-supplied element of this argv — the base is
+    fixed rather than a parameter, so there is exactly one thing to validate.
+    """
+    if not COMMIT_SHA.fullmatch(head_sha):
+        raise ValueError(f"head_sha must be a commit SHA, got: {head_sha!r}")
+    return [
+        "git",
+        "diff",
+        f"{DIFF_BASE}...{head_sha}",
+        "--",
+        ".",
+        *exclusion_pathspecs(),
+    ]
+
+
 class Finding(pydantic.BaseModel):
     """One review finding, anchored to a new-side line of the diff."""
 
