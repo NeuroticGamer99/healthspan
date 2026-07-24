@@ -25,6 +25,7 @@ from gemini_review_logic import (
     is_excluded,
     iter_strings,
     review_body,
+    verify_diff_base,
 )
 
 GEMINI = BOTS["gemini"]
@@ -341,6 +342,30 @@ def test_a_sha256_object_name_is_accepted() -> None:
     assert diff_argv("f" * 64)[2].endswith("f" * 64)
 
 
+def test_a_default_branch_matching_the_diff_base_is_accepted() -> None:
+    verify_diff_base("main")  # the repository as it stands; must not raise
+
+
+@pytest.mark.parametrize(
+    "default_branch", ["trunk", "master", "Main", "", "origin/main"]
+)
+def test_a_default_branch_that_is_not_the_diff_base_fails_closed(
+    default_branch: str,
+) -> None:
+    # The workflow checks out github.event.repository.default_branch while the
+    # range is built from the literal DIFF_BASE. If the default branch is
+    # redesignated and a stale `main` survives, the job would execute the right
+    # code and diff the wrong base — a review of unrelated changes, posted as
+    # an ordinary one. Nothing else in the job can see that.
+    with pytest.raises(ValueError, match="diverged") as excinfo:
+        verify_diff_base(default_branch)
+    # Self-describing: a CI failure has to say what diverged and what to edit,
+    # or it reads as an unexplained crash in the reviewer.
+    message = str(excinfo.value)
+    assert repr(default_branch) in message
+    assert "DIFF_BASE" in message
+
+
 def test_the_pr_head_diffs_while_the_worktree_stays_on_main(tmp_path: Path) -> None:
     """The whole point of the hardening, proven end to end against real git.
 
@@ -447,6 +472,16 @@ def test_the_checkout_step_pins_its_ref_to_the_default_branch() -> None:
     checkouts = [s for s in steps if "actions/checkout@" in s]
     assert len(checkouts) == 1
     assert "ref: ${{ github.event.repository.default_branch }}" in checkouts[0]
+
+
+def test_the_review_step_is_handed_the_head_sha_and_the_default_branch() -> None:
+    # Both are env-only inputs the agent requires. A missing one is a KeyError
+    # on a live run — and this reviewer gets its first live run only after the
+    # change merges, so the cheap place to catch it is here.
+    review = [s for s in _workflow_steps(_workflow_source()) if "_agent.py" in s]
+    assert len(review) == 1
+    assert "PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}" in review[0]
+    assert "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}" in review[0]
 
 
 def test_the_pull_request_ref_is_only_ever_fetched() -> None:

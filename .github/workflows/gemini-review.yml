@@ -123,6 +123,10 @@ jobs:
           # told the head explicitly — HEAD is `main` here, and diffing that
           # would review an empty diff and post a false clean review.
           PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}
+          # Data, never an argument to git: the agent compares it with its own
+          # DIFF_BASE and refuses to run if the checkout above and the diff
+          # base have drifted apart (verify_diff_base).
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         # --no-project: the agent script carries its own PEP 723 inline
         # dependencies (google-antigravity is CI-only and deliberately kept out
         # of the project lockfile). Both this script and that dependency block

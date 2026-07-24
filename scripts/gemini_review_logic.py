@@ -93,6 +93,34 @@ COMMIT_SHA = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_BASE = "origin/main"
 
 
+def verify_diff_base(default_branch: str) -> None:
+    """Fail closed when :data:`DIFF_BASE` no longer names the repository's trunk.
+
+    The workflow checks out ``github.event.repository.default_branch`` — it
+    executes whatever GitHub currently calls the default branch — while the
+    reviewed range is built from the literal ``DIFF_BASE``, matching
+    ``ci.yml``'s ``branches: [main]`` and the `.claude/skills` that all say
+    ``origin/main``. The two agree today, and a rename is a repo-wide edit
+    event that breaks those loudly.
+
+    They can diverge *silently* in exactly one shape: the default branch is
+    redesignated while a stale ``main`` still exists. The job then executes the
+    right code and diffs against the wrong base — a review full of unrelated
+    changes, posted as an ordinary one. (A default branch renamed with no
+    ``main`` left behind is already loud: ``git diff origin/main...`` exits
+    non-zero.) One comparison closes the silent case, and the failure names its
+    own fix.
+    """
+    expected = DIFF_BASE.removeprefix("origin/")
+    if default_branch != expected:
+        raise ValueError(
+            f"the repository's default branch is {default_branch!r}, but the "
+            f"review diffs against {DIFF_BASE!r} — the checked-out branch and "
+            f"the diff base have diverged. Update DIFF_BASE (and the comments "
+            f"quoting it in gemini-review.yml) to the current trunk."
+        )
+
+
 def diff_argv(head_sha: str) -> list[str]:
     """The git argv for one PR's filtered diff, ``origin/main...head_sha``.
 

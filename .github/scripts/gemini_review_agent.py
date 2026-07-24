@@ -82,6 +82,7 @@ from gemini_review_logic import (  # noqa: E402
     is_excluded,
     iter_strings,
     review_body,
+    verify_diff_base,
 )
 
 STYLEGUIDE = REPO_ROOT / ".gemini" / "styleguide.md"
@@ -200,6 +201,11 @@ def main() -> int:
     # here. It is both the reviewed range's endpoint and the review's
     # commit_id, which GitHub anchors the inline comments to.
     head_sha = os.environ["PR_HEAD_SHA"].strip()
+    # Before any git call: the workflow checks out whatever GitHub calls the
+    # default branch, while the range below is the literal DIFF_BASE. The one
+    # way those diverge silently is a redesignated default branch with a stale
+    # `main` still present — right code, wrong base, ordinary-looking review.
+    verify_diff_base(os.environ["DEFAULT_BRANCH"].strip())
     styleguide = STYLEGUIDE.read_text(encoding="utf-8")
 
     # The range, its fail-closed SHA check, and the sensitive-path exclusions
