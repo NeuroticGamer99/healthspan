@@ -8,7 +8,7 @@ description: Dispatch the Antigravity SDK (Gemini) review workflow on the curren
 > **Best-effort reviewer (demoted 2026-07-24).** This is *not* a routine chain member like
 > `/coderabbit-review` or `/copilot-review`. The free AI Studio tier realistically supports only
 > **≈1 successful review per day** — one agentic review consumes ≈ the whole 20-request daily cap
-> (`generate_content_free_tier_requests`, `gemini-3.5-flash`) — and Google also throws frequent
+> the free tier allows (`generate_content_free_tier_requests`) — and Google also throws frequent
 > transient 503 "high demand" errors, so **most runs fail without producing a report**. Run this
 > only when the user explicitly asks for the Gemini lens, and **never let its failure or absence
 > block a merge** — CodeRabbit and Copilot are the reliable two. A failed run here is an external
@@ -28,8 +28,7 @@ Two facts specific to this reviewer:
   introduces or modifies its own workflow — such a PR is reviewed by the merged version (or, for
   the introducing PR, not at all; the request step fails loud in that case).
 - **Quota is the free AI Studio tier** and Google may cut it without notice. A run that fails on
-  quota (or the 20/day cap) surfaces as a failed workflow run, which the wait step reports — it
-  never silently passes.
+  quota surfaces as a failed workflow run, which the wait step reports — it never silently passes.
 
 ## 1. Find the PR
 
