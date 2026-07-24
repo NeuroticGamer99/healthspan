@@ -52,6 +52,20 @@ jumbled together with "address review" fixups. Always replace it:
   messages themselves. If the first commit's body is somehow empty, compose from the PR
   description's "What landed" and `Decisions:` sections instead.
 
+  **The body must describe the merged state, not the first attempt.** The first commit's body is
+  the *base*, not a quotation: where a later commit invalidated a claim it makes, correct that
+  claim rather than reproducing it. The "Includes …" line records what rode along; it does not
+  neutralize a sentence the branch went on to contradict, and a reader of `main` has only this
+  message. Read the branch diff (`git diff origin/main...HEAD`), not just the first commit, and
+  reconcile every claim against it before composing.
+
+  This is not hypothetical: on PR #65 the review findings were about the entry's *own* accuracy,
+  so the fixes falsified three of the first commit's sentences — an unqualified quota rate, a
+  posture the branch had since softened, and a citation it had removed. Verbatim reuse would have
+  put all three permanently on append-only `main`. Where a correction is judgment rather than
+  fact — the claim is arguable, or rewriting it would change what the user approved at `/land` —
+  surface the fork and let the user pick; everything else, fix and say so in the report.
+
 ## 3. Merge
 
 ```bash
