@@ -56,6 +56,19 @@ reviews:
     - "!specs/personal/**"
 
   path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Personal-data containment (CLAUDE.md), repo-wide: specs/personal/ is
+        the ONLY location for personal health values, lab results, diagnoses,
+        medications, clinical history, or the provenance/sequence of the
+        owner's actual records. Flag any such content appearing ANYWHERE else
+        — not just under specs/, but in test fixtures, code comments, scripts,
+        and docs — but report only the path and the data category; never quote,
+        copy, or echo the actual values, provenance, or identifying details
+        into a review comment (reviews are public). This is the repo-wide
+        containment lens that mirrors .gemini/styleguide.md; keep the two in
+        sync.
+
     - path: "specs/adr/**"
       instructions: >-
         ADR governance (CLAUDE.md): Accepted ADRs are immutable historical
@@ -71,15 +84,10 @@ reviews:
 
     - path: "specs/**"
       instructions: >-
-        Personal-data containment (CLAUDE.md): specs/personal/ is the ONLY
-        location for personal health values, lab results, diagnoses,
-        medications, clinical history, or the provenance/sequence of the
-        owner's actual records. Flag any such content appearing elsewhere in
-        specs/ — but report only the path and the data category; never quote,
-        copy, or echo the actual values, provenance, or identifying details
-        into a review comment (reviews are public). Also flag inline ADR
-        status annotations in prose being edited to "chase" a status change —
-        those are point-in-time by design.
+        ADR status annotations (CLAUDE.md): flag inline ADR status annotations
+        in prose being edited to "chase" a status change — those are
+        point-in-time by design. (Personal-data containment for specs/ is
+        covered by the repo-wide "**/*" entry above.)
 
     - path: "**/*.{py,md,yaml,yml,toml,json}"
       instructions: >-
