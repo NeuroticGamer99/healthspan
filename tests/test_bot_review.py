@@ -26,12 +26,14 @@ from bot_review import (
     run_cmd,
     same_login,
     select_clean_comment,
+    select_failed_run,
     select_review,
     stated_count,
 )
 
 CODERABBIT = BOTS["coderabbit"]
 COPILOT = BOTS["copilot"]
+GEMINI = BOTS["gemini"]
 
 
 def _review(
@@ -483,6 +485,364 @@ def test_login_comparison_is_case_folded_but_whole_string() -> None:
 
 
 # --------------------------------------------------------------------------
+# Dispatch: the Gemini reviewer is a workflow, not a GitHub App
+# --------------------------------------------------------------------------
+
+
+def test_gemini_is_asked_by_dispatch_and_reviews_as_the_actions_bot() -> None:
+    # The Antigravity workflow's reviews are authored by github-actions[bot];
+    # its only ask channel is dispatching .github/workflows/gemini-review.yml.
+    assert GEMINI.dispatch_workflow == "gemini-review.yml"
+    assert GEMINI.trigger_body is None
+    assert GEMINI.request_login is None
+    assert GEMINI.review_login == "github-actions[bot]"
+    # Clean run is still a review stating 0 findings (like Copilot), so no
+    # clean-comment scanning: wait/fetch exit 0 and triage sees the count.
+    assert GEMINI.clean_marker is None
+
+
+def test_a_spec_combining_dispatch_with_another_channel_cannot_be_built() -> None:
+    # cmd_request tries trigger, then dispatch, then requested_reviewers; a
+    # spec setting two would carry config that reads as active but never runs.
+    import bot_review
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        bot_review.BotSpec(
+            key="greedy",
+            review_login="greedy[bot]",
+            request_login=None,
+            requested_display=None,
+            trigger_body="@greedy review",
+            count=CODERABBIT.count,
+            clean_marker=None,
+            dispatch_workflow="greedy.yml",
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        bot_review.BotSpec(
+            key="greedy",
+            review_login="greedy[bot]",
+            request_login="greedy[bot]",
+            requested_display="Greedy",
+            trigger_body=None,
+            count=CODERABBIT.count,
+            clean_marker=None,
+            dispatch_workflow="greedy.yml",
+        )
+
+
+def _run(
+    run_id: int,
+    status: str,
+    conclusion: str | None,
+    created_at: str,
+    title: str = "Gemini review: PR 56",
+) -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "status": status,
+        "conclusion": conclusion,
+        "created_at": created_at,
+        "display_title": title,
+    }
+
+
+def test_a_failed_run_after_the_floor_is_selected() -> None:
+    # The run that was supposed to post the review died (SDK error, exhausted
+    # quota): no review is ever coming, and polling the reviews endpoint would
+    # ride the 30-minute timeout to say less than the conclusion already says.
+    since = parse_ts("2026-07-23T14:00:00Z")
+    failed = _run(101, "completed", "failure", "2026-07-23T14:00:05Z")
+    chosen = select_failed_run([failed], since, 56)
+    assert chosen is not None
+    assert chosen["id"] == 101
+
+
+def test_an_in_progress_run_has_no_verdict_yet() -> None:
+    since = parse_ts("2026-07-23T14:00:00Z")
+    running = _run(101, "in_progress", None, "2026-07-23T14:00:05Z")
+    assert select_failed_run([running], since, 56) is None
+
+
+def test_a_successful_run_is_not_a_failure() -> None:
+    # Its review is found by the caller's own review check.
+    since = parse_ts("2026-07-23T14:00:00Z")
+    ok = _run(101, "completed", "success", "2026-07-23T14:00:05Z")
+    assert select_failed_run([ok], since, 56) is None
+
+
+def test_a_stale_failed_run_does_not_answer_for_a_new_ask() -> None:
+    # An earlier ask's failure, at or before the floor, must not fail this one.
+    since = parse_ts("2026-07-23T14:00:00Z")
+    stale = _run(90, "completed", "failure", "2026-07-23T10:00:00Z")
+    assert select_failed_run([stale], since, 56) is None
+
+
+def test_select_failed_run_takes_the_newest_of_several() -> None:
+    # Same rule as select_review: recency by instant, not list order.
+    since = parse_ts("2026-07-23T14:00:00Z")
+    older = _run(101, "completed", "failure", "2026-07-23T14:00:05Z")
+    newer = _run(102, "completed", "cancelled", "2026-07-23T14:10:00Z")
+    chosen = select_failed_run([newer, older], since, 56)
+    assert chosen is not None
+    assert chosen["id"] == 102
+
+
+def test_a_neighbouring_prs_failed_run_does_not_abort_this_wait() -> None:
+    # Two PRs dispatch concurrently (the workflow concurrency group is per-PR);
+    # PR 41's quota failure after PR 56's floor must not end 56's wait — 56's
+    # real review may post minutes later.
+    since = parse_ts("2026-07-23T14:00:00Z")
+    other = _run(
+        101,
+        "completed",
+        "failure",
+        "2026-07-23T14:00:05Z",
+        title="Gemini review: PR 41",
+    )
+    assert select_failed_run([other], since, 56) is None
+
+
+def test_pr_title_matching_is_whole_token() -> None:
+    # "PR 5" must not claim PR 56's run.
+    from bot_review import run_is_for_pr
+
+    run = _run(1, "completed", "failure", "2026-07-23T14:00:05Z")
+    assert run_is_for_pr(run, 56) is True
+    assert run_is_for_pr(run, 5) is False
+    assert run_is_for_pr(run, 6) is False
+
+
+def test_wait_with_a_run_id_fails_fast_on_exactly_that_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The --run path: request confirmed run 101 and printed it; when that run
+    # dies, no review is ever coming and wait says so immediately. Polling by
+    # id also sidesteps the clock-skew trap: a GitHub-stamped created_at just
+    # below the locally-stamped floor would make a timestamp filter miss the
+    # very run the dispatch created.
+    import bot_review
+
+    def no_reviews(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def failed_run(repo: str, run_id: int) -> dict[str, Any]:
+        assert run_id == 101
+        return _run(101, "completed", "failure", "2026-07-23T13:59:59Z")
+
+    monkeypatch.setattr(bot_review, "list_reviews", no_reviews)
+    monkeypatch.setattr(bot_review, "workflow_run", failed_run)
+    since = parse_ts("2026-07-23T14:00:00Z")  # skew: run stamped 1s below it
+    assert bot_review.cmd_wait("o/r", 56, GEMINI, since, 600, run_id=101) == 1
+    err = capsys.readouterr().err
+    assert "run 101" in err
+    assert "'failure'" in err
+
+
+def test_wait_without_a_run_id_falls_back_to_this_prs_runs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The recovered-floor path (--since-commit, no --run): the fail-fast scans
+    # the runs list, but only THIS PR's runs — a neighbouring PR's failure
+    # keeps this wait alive, then this PR's own failure ends it.
+    import bot_review
+
+    def no_reviews(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    runs_by_call = iter(
+        [
+            [
+                _run(
+                    101,
+                    "completed",
+                    "failure",
+                    "2026-07-23T14:00:05Z",
+                    title="Gemini review: PR 41",
+                )
+            ],
+            [_run(102, "completed", "failure", "2026-07-23T14:00:06Z")],
+        ]
+    )
+
+    def runs(repo: str, wf: str) -> list[dict[str, Any]]:
+        return next(runs_by_call)
+
+    def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(bot_review, "list_reviews", no_reviews)
+    monkeypatch.setattr(bot_review, "workflow_runs", runs)
+    monkeypatch.setattr(bot_review.time, "sleep", no_sleep)
+    since = parse_ts("2026-07-23T14:00:00Z")
+    assert bot_review.cmd_wait("o/r", 56, GEMINI, since, timeout=600) == 1
+    assert "run 102" in capsys.readouterr().err
+
+
+def test_a_posted_review_outranks_a_red_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ordering the fail-fast branch promises: findings first, every
+    # iteration. A review that landed before its run turned red (or a red run
+    # from an unrelated dispatch) must never eat a real review.
+    import bot_review
+
+    review = _review(
+        7,
+        "github-actions[bot]",
+        "2026-07-23T14:05:00Z",
+        body="posted 1 inline finding(s).",
+    )
+
+    def the_review(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [review]
+
+    def failed_run(repo: str, run_id: int) -> dict[str, Any]:
+        return _run(101, "completed", "failure", "2026-07-23T14:00:05Z")
+
+    monkeypatch.setattr(bot_review, "list_reviews", the_review)
+    monkeypatch.setattr(bot_review, "workflow_run", failed_run)
+    since = parse_ts("2026-07-23T14:00:00Z")
+    assert bot_review.cmd_wait("o/r", 56, GEMINI, since, 600, run_id=101) == 0
+
+
+def test_dispatch_request_confirms_a_new_run_and_prints_the_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The dispatches endpoint answers 204 before any run exists, so the
+    # read-back polls for a run id newer than the newest pre-dispatch run —
+    # ids, not timestamps, because the floor is stamped by this machine's
+    # clock and run creation by GitHub's.
+    import bot_review
+
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    # before; first poll: another PR's newer run must NOT confirm; then ours.
+    pages = iter(
+        [
+            [_run(100, "in_progress", None, "2026-07-23T13:00:00Z")],
+            [
+                _run(
+                    101,
+                    "in_progress",
+                    None,
+                    "2026-07-23T14:00:02Z",
+                    title="Gemini review: PR 41",
+                )
+            ],
+            [_run(102, "in_progress", None, "2026-07-23T14:00:05Z")],
+        ]
+    )
+
+    def fake_gh(path: str, *args: str) -> Any:
+        calls.append((path, args))
+        if path == "repos/o/r":
+            return {"default_branch": "main"}
+        if path.endswith("/dispatches"):
+            return None
+        assert "/runs?" in path
+        return {"workflow_runs": next(pages)}
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+
+    def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(bot_review.time, "sleep", no_sleep)
+    assert bot_review.cmd_request("o/r", 56, GEMINI) == 0
+    dispatch = next(c for c in calls if c[0].endswith("/dispatches"))
+    assert dispatch == (
+        "repos/o/r/actions/workflows/gemini-review.yml/dispatches",
+        ("-f", "ref=main", "-f", "inputs[pr]=56"),
+    )
+    out = capsys.readouterr().out
+    assert "dispatched gemini-review.yml run 102 for PR 56" in out
+    assert "since: " in out
+    assert "--bot gemini --pr 56" in out
+    assert "--run 102" in out  # threads into wait's exact-run fail-fast
+
+
+def test_the_first_ever_dispatch_of_a_workflow_is_confirmed_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The bootstrap case: a workflow with zero prior runs has no pre-dispatch
+    # id to compare against; the appearance of any run is the confirmation.
+    import bot_review
+
+    pages: list[dict[str, Any]] = [
+        {"workflow_runs": []},
+        {"workflow_runs": [_run(5, "in_progress", None, "2026-07-23T14:00:05Z")]},
+    ]
+    empty_then_one = iter(pages)
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path == "repos/o/r":
+            return {"default_branch": "main"}
+        if path.endswith("/dispatches"):
+            return None
+        return next(empty_then_one)
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    assert bot_review.cmd_request("o/r", 56, GEMINI) == 0
+    assert "dispatched gemini-review.yml run 5 for PR 56" in capsys.readouterr().out
+
+
+def test_a_dispatch_that_spawns_no_run_fails_loudly_rather_than_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 204 with no run ever appearing (disabled workflow, or the workflow file
+    # not on the default branch yet — a dispatch workflow cannot review the PR
+    # that introduces it). Waiting after that buys the full poll timeout for a
+    # review nobody managed to ask for.
+    import bot_review
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path == "repos/o/r":
+            return {"default_branch": "main"}
+        if path.endswith("/dispatches"):
+            return None
+        # A NEWER run exists — but it belongs to another PR, so it must not
+        # cross-confirm this dispatch (two sessions shipping within seconds).
+        return {
+            "workflow_runs": [
+                _run(
+                    101,
+                    "in_progress",
+                    None,
+                    "2026-07-23T14:00:02Z",
+                    title="Gemini review: PR 41",
+                ),
+                _run(
+                    100,
+                    "in_progress",
+                    None,
+                    "2026-07-23T13:00:00Z",
+                    title="Gemini review: PR 41",
+                ),
+            ]
+        }
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review, "DISPATCH_CONFIRM_TIMEOUT", 0)
+    with pytest.raises(BotReviewError, match="Do not wait"):
+        bot_review.cmd_request("o/r", 56, GEMINI)
+
+
+def test_a_runs_payload_without_the_envelope_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The runs endpoint wraps its list in an envelope object; GitHub's error
+    # object is a dict *without* workflow_runs. Degrading that to "no runs"
+    # would silently disarm both the dispatch read-back and wait's fail-fast.
+    import bot_review
+
+    def error_gh(path: str, *args: str) -> Any:
+        return {"message": "Not Found"}
+
+    monkeypatch.setattr(bot_review, "gh", error_gh)
+    with pytest.raises(BotReviewError, match="workflow_runs"):
+        bot_review.workflow_runs("o/r", "gemini-review.yml")
+
+
+# --------------------------------------------------------------------------
 # Counting: the body's claim is evidence, not truth
 # --------------------------------------------------------------------------
 
@@ -496,6 +856,27 @@ def test_stated_count_reads_each_bots_marker() -> None:
         )
         == 1
     )
+    # The marker .github/scripts/gemini_review_agent.py writes into every
+    # review body — including the body-only fallback, which restates 0 inline.
+    assert (
+        stated_count(
+            "reviewed this PR's filtered diff and posted 3 inline finding(s).",
+            GEMINI,
+        )
+        == 3
+    )
+    assert stated_count("posted 0 inline finding(s).", GEMINI) == 0
+
+
+def test_gemini_review_is_authored_by_the_actions_bot() -> None:
+    review = _review(
+        1,
+        "github-actions[bot]",
+        "2026-07-23T14:05:00Z",
+        body="## Antigravity Gemini review\n\nposted 2 inline finding(s).",
+    )
+    assert is_findings_review(review, GEMINI) is True
+    assert is_findings_review(review, CODERABBIT) is False
 
 
 def test_stated_count_is_none_when_the_body_says_nothing() -> None:

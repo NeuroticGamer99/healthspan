@@ -3,6 +3,10 @@
 # CodeRabbit configuration for the healthspan project.
 # Teaches the reviewer this project's non-obvious conventions (see CLAUDE.md)
 # and stands its built-in linters down where CI already gates them.
+#
+# Sibling reviewer config: .gemini/styleguide.md teaches the same conventions
+# to the Antigravity SDK (Gemini) reviewer — a convention added or changed
+# here must be mirrored there, and vice versa.
 
 language: en-US
 
@@ -52,6 +56,34 @@ reviews:
     - "!specs/personal/**"
 
   path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Personal-data containment (CLAUDE.md), repo-wide: specs/personal/ is
+        the ONLY location for personal health values, lab results, diagnoses,
+        medications, clinical history, or the provenance/sequence of the
+        owner's actual records. Flag any such content appearing ANYWHERE else
+        — not just under specs/, but in test fixtures, code comments, scripts,
+        and docs — but report only the path and the data category; never quote,
+        copy, or echo the actual values, provenance, or identifying details
+        into a review comment (reviews are public). This is the repo-wide
+        containment lens that mirrors .gemini/styleguide.md; keep the two in
+        sync. Hidden dot-paths are covered by the sibling entry below.
+
+    - path: "{.github/**,.gemini/**,.claude/**,.coderabbit.yaml,.markdownlint.yaml}"
+      instructions: >-
+        Personal-data containment (CLAUDE.md), hidden paths: the "**/*" entry
+        above cannot reach these — CodeRabbit globs use dot:false semantics, so
+        `**` does not descend into dot-directories. This is a separate entry
+        for exactly that reason; do not "simplify" the pair back into one glob,
+        which silently reopens the gap. Same rule: specs/personal/ is the ONLY
+        location for personal health values, lab results, diagnoses,
+        medications, clinical history, or the provenance/sequence of the
+        owner's actual records. Flag any such content appearing here —
+        .claude/ skill and triage prose especially, where a real example value
+        could land — but report only the path and the data category; never
+        quote, copy, or echo the actual values, provenance, or identifying
+        details into a review comment (reviews are public).
+
     - path: "specs/adr/**"
       instructions: >-
         ADR governance (CLAUDE.md): Accepted ADRs are immutable historical
@@ -67,12 +99,10 @@ reviews:
 
     - path: "specs/**"
       instructions: >-
-        Personal-data containment (CLAUDE.md): specs/personal/ is the ONLY
-        location for personal health values, lab results, diagnoses,
-        medications, clinical history, or the provenance/sequence of the
-        owner's actual records. Flag any such content appearing elsewhere in
-        specs/. Also flag inline ADR status annotations in prose being edited
-        to "chase" a status change — those are point-in-time by design.
+        ADR status annotations (CLAUDE.md): flag inline ADR status annotations
+        in prose being edited to "chase" a status change — those are
+        point-in-time by design. (Personal-data containment for specs/ is
+        covered by the repo-wide "**/*" entry above.)
 
     - path: "**/*.{py,md,yaml,yml,toml,json}"
       instructions: >-
@@ -88,10 +118,11 @@ reviews:
     # Hidden config: the glob above uses dot:false semantics, so `*` does not
     # match dotfiles and `**` does not descend into dot-directories. These
     # literal/explicit-dot entries cover the hidden config that carries
-    # decisions today — CI pinned tool versions + gates under .github/, and the
-    # ADR-0062 markdownlint config. This reviewer config (.coderabbit.yaml) is
-    # included only so its OWN carve-out below is applied to it.
-    - path: "{.coderabbit.yaml,.markdownlint.yaml,.github/**}"
+    # decisions today — CI pinned tool versions + gates under .github/, the
+    # ADR-0062 markdownlint config, and the Gemini reviewer's styleguide under
+    # .gemini/. The reviewer configs (.coderabbit.yaml, .gemini/**) are
+    # included only so their OWN carve-out below is applied to them.
+    - path: "{.coderabbit.yaml,.markdownlint.yaml,.gemini/**,.github/**}"
       instructions: >-
         Decision-capture routing (CLAUDE.md) for hidden config that has an
         owning ADR or is a CI gate: application config knobs/defaults route to

@@ -1,0 +1,85 @@
+# Opt-in Gemini reviewer, run through the Antigravity SDK (google-antigravity)
+# authenticated by the free AI Studio GEMINI_API_KEY repo secret.
+#
+# manual-trigger only (workflow_dispatch): reviews are opt-in per PR, one
+# deliberately chosen reviewer chain instead of every bot dogpiling every PR —
+# the same stance as `auto_review.enabled: false` in .coderabbit.yaml. The ask
+# is mechanized as `scripts/bot_review.py request --bot gemini`, which the
+# /gemini-review skill (and `/ship gemini`) drives.
+#
+# Not a CI gate: this job is deliberately absent from ci.yml's `ci-ok` needs
+# list, so it can never block a merge. Its product is a PR *review* authored by
+# github-actions[bot], which bot_review.py wait/fetch then picks up.
+#
+# workflow_dispatch resolves the workflow file on the DEFAULT branch, so this
+# reviewer cannot review the PR that introduces or modifies it — a workflow
+# change is only exercisable after it merges.
+
+name: Gemini review (Antigravity SDK)
+
+# The PR number in the run title is load-bearing, not cosmetic: dispatch
+# inputs appear in no runs-list payload, so bot_review.py attributes runs to
+# PRs by reading this title back (run_is_for_pr). Changing its shape breaks
+# request confirmation and wait's fail-fast.
+run-name: "Gemini review: PR ${{ inputs.pr }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to review"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One review at a time per PR; a second ask queues rather than cancels — a
+# cancelled run would leave bot_review.py waiting on a review that will never
+# arrive.
+concurrency:
+  group: gemini-review-${{ inputs.pr }}
+  cancel-in-progress: false
+
+env:
+  # Pinned like ci.yml's env block (testing-strategy.md "Workflow provenance");
+  # bumped by hand.
+  UV_VERSION: "0.11.28"
+
+jobs:
+  review:
+    name: Review PR ${{ inputs.pr }}
+    runs-on: ubuntu-latest
+    # Well under bot_review.py's 1800s wait default, so a hung run turns into
+    # a failed run the wait's fail-fast can see — not an opaque wait timeout
+    # (and, with cancel-in-progress: false, not a queue blocking later asks).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # the review diffs against the origin/main merge base
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Check out the pull request head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Through env, not inline templating: `${{ inputs.pr }}` spliced into
+          # `run:` text would execute whatever the input contains.
+          PR: ${{ inputs.pr }}
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "pr input must be a PR number, got: $PR" >&2; exit 1; }
+          gh pr checkout "$PR"
+
+      - name: Review the diff and post the PR review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR: ${{ inputs.pr }}
+        # --no-project: the agent script carries its own PEP 723 inline
+        # dependencies (google-antigravity is CI-only and deliberately kept out
+        # of the project lockfile).
+        run: uv run --no-project .github/scripts/gemini_review_agent.py

@@ -50,6 +50,6 @@ Compose the commit message:
 
 Present the message and **stop**. `/land` proposes; `/ship` disposes.
 
-The user lands it by invoking **`/ship`**, which commits with this message, pushes, and opens the PR (`/ship coderabbit` additionally triggers and triages the CodeRabbit chain). If the user instead replies "commit" (the pre-`/ship` habit), treat that as the go and run `/ship`.
+The user lands it by invoking **`/ship`**, which commits with this message, pushes, and opens the PR (`/ship coderabbit` or `/ship gemini` additionally triggers and triages that reviewer's chain). If the user instead replies "commit" (the pre-`/ship` habit), treat that as the go and run `/ship`.
 
 **Never commit or push from this skill**, and never without that explicit go.
