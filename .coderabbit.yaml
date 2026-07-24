@@ -67,7 +67,22 @@ reviews:
         copy, or echo the actual values, provenance, or identifying details
         into a review comment (reviews are public). This is the repo-wide
         containment lens that mirrors .gemini/styleguide.md; keep the two in
-        sync.
+        sync. Hidden dot-paths are covered by the sibling entry below.
+
+    - path: "{.github/**,.gemini/**,.claude/**,.coderabbit.yaml,.markdownlint.yaml}"
+      instructions: >-
+        Personal-data containment (CLAUDE.md), hidden paths: the "**/*" entry
+        above cannot reach these — CodeRabbit globs use dot:false semantics, so
+        `**` does not descend into dot-directories. This is a separate entry
+        for exactly that reason; do not "simplify" the pair back into one glob,
+        which silently reopens the gap. Same rule: specs/personal/ is the ONLY
+        location for personal health values, lab results, diagnoses,
+        medications, clinical history, or the provenance/sequence of the
+        owner's actual records. Flag any such content appearing here —
+        .claude/ skill and triage prose especially, where a real example value
+        could land — but report only the path and the data category; never
+        quote, copy, or echo the actual values, provenance, or identifying
+        details into a review comment (reviews are public).
 
     - path: "specs/adr/**"
       instructions: >-
