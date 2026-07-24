@@ -15,8 +15,7 @@ description: Dispatch the Antigravity SDK (Gemini) review workflow on the curren
 > only when the user explicitly asks for the Gemini lens, and **never let its failure or absence
 > block a merge** — CodeRabbit and Copilot are the reliable two. A failed run here is an external
 > capacity/quota fact, not a code defect. (Reliable Gemini review would need a paid API key or a
-> local interactive tool on a Gemini subscription — a deferred decision; see the
-> `project_reviewer_orchestration` memory.)
+> local interactive tool on a Gemini subscription — a deferred decision.)
 
 The Gemini lens is not a GitHub App but a repo-owned workflow —
 `.github/workflows/gemini-review.yml` runs the Antigravity SDK (`google-antigravity`, Gemini 3 Pro
