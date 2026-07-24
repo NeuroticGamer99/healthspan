@@ -11,9 +11,26 @@
 # list, so it can never block a merge. Its product is a PR *review* authored by
 # github-actions[bot], which bot_review.py wait/fetch then picks up.
 #
-# workflow_dispatch resolves the workflow file on the DEFAULT branch, so this
-# reviewer cannot review the PR that introduces or modifies it — a workflow
-# change is only exercisable after it merges.
+# workflow_dispatch requires this file to exist on the default branch, and the
+# mechanized ask always dispatches `ref=<default branch>`
+# (bot_review.py::_request_by_dispatch), so in practice this reviewer runs
+# main's copy and cannot review the PR that introduces or modifies it — a
+# workflow change is only exercisable after it merges. That is the dispatcher's
+# choice, not a property of the event: dispatching some other ref runs THAT
+# ref's copy of this file. Hence the checkout below pins its own `ref:`.
+#
+# TRUST BOUNDARY (ADR-0064): every executable artifact this job runs — the agent
+# script, the module it imports, and the PEP 723 `dependencies:` block uv
+# installs from — resolves from the DEFAULT-BRANCH checkout, pinned by the
+# checkout step's `ref:` rather than inherited from the dispatched ref. The pull
+# request head is fetched as DATA (git objects) and named only by SHA; it is
+# never checked out, so nothing in it is ever executed, imported, or installed.
+# Do NOT reintroduce `gh pr checkout` (or any other worktree swap, or a `ref:`
+# naming the PR) into this job: it holds GEMINI_API_KEY and a
+# pull-requests:write token, and PR-controlled code running beside them is
+# arbitrary code execution with both. tests/test_gemini_review_logic.py asserts
+# this shape, so the prohibition fails the build rather than needing to be
+# noticed in review.
 
 name: Gemini review (Antigravity SDK)
 
@@ -58,28 +75,60 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # The trust boundary's anchor: without it the checkout follows the
+          # dispatched ref, and this job would execute that ref's agent script
+          # and PEP 723 dependencies beside the key and the write token.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0 # the review diffs against the origin/main merge base
+          # Stated, not inherited: the fetch step below carries no token of its
+          # own and authenticates with the credentials this step leaves in the
+          # local git config. It is this action's current default — pinning it
+          # here keeps a future default flip (or a private repo) from breaking
+          # the fetch with an error that points nowhere near the cause.
+          persist-credentials: true
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Check out the pull request head
+      # Fetch, never check out: fetching moves git objects into .git and leaves
+      # the worktree (and therefore every file this job executes) on the default
+      # branch. `refs/pull/N/head` is the one ref that resolves a fork PR's head
+      # too, and it is fetched into a ref of our own rather than left on
+      # FETCH_HEAD, so the SHA the next step reviews is anchored and re-readable.
+      # No token env: the checkout step's persisted credentials authenticate it.
+      - name: Fetch the pull request head as data
+        id: pr-head
         env:
-          GH_TOKEN: ${{ github.token }}
           # Through env, not inline templating: `${{ inputs.pr }}` spliced into
           # `run:` text would execute whatever the input contains.
           PR: ${{ inputs.pr }}
         run: |
           [[ "$PR" =~ ^[0-9]+$ ]] || { echo "pr input must be a PR number, got: $PR" >&2; exit 1; }
-          gh pr checkout "$PR"
+          git fetch --no-tags origin "+refs/pull/$PR/head:refs/gemini-review/pr-head"
+          # Assigned on its own line, never inside the echo: a `$( )` that fails
+          # inside `echo` still exits 0, so a missing ref would publish its own
+          # name as the SHA and green this step — leaving the agent's SHA check
+          # to fail two steps later, pointing away from the real failure.
+          # --verify ...^{commit} also refuses a ref that is not a commit.
+          sha="$(git rev-parse --verify "refs/gemini-review/pr-head^{commit}")"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Review the diff and post the PR review
         env:
           GH_TOKEN: ${{ github.token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PR: ${{ inputs.pr }}
+          # The reviewed range is origin/main...$PR_HEAD_SHA. The agent must be
+          # told the head explicitly — HEAD is `main` here, and diffing that
+          # would review an empty diff and post a false clean review.
+          PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}
+          # Data, never an argument to git: the agent compares it with its own
+          # DIFF_BASE and refuses to run if the checkout above and the diff
+          # base have drifted apart (verify_diff_base).
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         # --no-project: the agent script carries its own PEP 723 inline
         # dependencies (google-antigravity is CI-only and deliberately kept out
-        # of the project lockfile).
+        # of the project lockfile). Both this script and that dependency block
+        # are the `main` copies — see TRUST BOUNDARY above.
         run: uv run --no-project .github/scripts/gemini_review_agent.py

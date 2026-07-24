@@ -83,6 +83,71 @@ def exclusion_pathspecs() -> list[str]:
     return specs
 
 
+# A commit SHA and nothing else: 40 hex today, 64 if the repository ever moves
+# to SHA-256 object names. Anchored and grouped so it means the same thing
+# under every match method — bare `A|B` would let a future `.match`/`.search`
+# accept "<40 hex> --output=/tmp/leak", readmitting the dashed-argument
+# smuggling diff_argv rejects.
+COMMIT_SHA = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+DIFF_BASE = "origin/main"
+
+
+def verify_diff_base(default_branch: str) -> None:
+    """Fail closed when :data:`DIFF_BASE` no longer names the repository's trunk.
+
+    The workflow checks out ``github.event.repository.default_branch`` — it
+    executes whatever GitHub currently calls the default branch — while the
+    reviewed range is built from the literal ``DIFF_BASE``, matching
+    ``ci.yml``'s ``branches: [main]`` and the `.claude/skills` that all say
+    ``origin/main``. The two agree today, and a rename is a repo-wide edit
+    event that breaks those loudly.
+
+    They can diverge *silently* in exactly one shape: the default branch is
+    redesignated while a stale ``main`` still exists. The job then executes the
+    right code and diffs against the wrong base — a review full of unrelated
+    changes, posted as an ordinary one. (A default branch renamed with no
+    ``main`` left behind is already loud: ``git diff origin/main...`` exits
+    non-zero.) One comparison closes the silent case, and the failure names its
+    own fix.
+    """
+    expected = DIFF_BASE.removeprefix("origin/")
+    if default_branch != expected:
+        raise ValueError(
+            f"the repository's default branch is {default_branch!r}, but the "
+            f"review diffs against {DIFF_BASE!r} — the checked-out branch and "
+            f"the diff base have diverged. Update DIFF_BASE (and the comments "
+            f"quoting it in gemini-review.yml) to the current trunk."
+        )
+
+
+def diff_argv(head_sha: str) -> list[str]:
+    """The git argv for one PR's filtered diff, ``origin/main...head_sha``.
+
+    The head is *passed in*, never taken from ``HEAD``. The workflow keeps the
+    worktree on ``main`` — only trusted code may run beside the API key and the
+    write token (ADR-0064) — and fetches the PR head as data, so ``HEAD`` is
+    ``main`` and diffing it would review nothing while posting a clean review.
+
+    ``head_sha`` must be a bare commit SHA. Refusing anything else is a
+    fail-closed check, not a formality: a ref name would silently review the
+    wrong commits, a value starting with ``-`` would be read by git as an
+    option rather than a revision, and both would be reported as a normal
+    review. It is the only caller-supplied element of this argv — the base is
+    fixed rather than a parameter, so there is exactly one thing to validate.
+    """
+    if not COMMIT_SHA.fullmatch(head_sha):
+        raise ValueError(f"head_sha must be a commit SHA, got: {head_sha!r}")
+    return [
+        "git",
+        "diff",
+        f"{DIFF_BASE}...{head_sha}",
+        "--",
+        ".",
+        *exclusion_pathspecs(),
+    ]
+
+
 class Finding(pydantic.BaseModel):
     """One review finding, anchored to a new-side line of the diff."""
 
