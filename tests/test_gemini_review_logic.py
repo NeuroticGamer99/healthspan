@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 from bot_review import BOTS
 from gemini_review_logic import (
+    EMPTY_RANGE_MARKER,
     EXCLUDED_GLOBS,
+    NOTE_ALL_PATHS_EXCLUDED,
+    NOTE_NO_CHANGES_VS_MAIN,
     Finding,
     anchorable_lines,
     diff_argv,
@@ -25,6 +28,7 @@ from gemini_review_logic import (
     is_excluded,
     iter_strings,
     review_body,
+    unfiltered_diff_argv,
     verify_diff_base,
 )
 
@@ -342,6 +346,59 @@ def test_a_sha256_object_name_is_accepted() -> None:
     assert diff_argv("f" * 64)[2].endswith("f" * 64)
 
 
+# --------------------------------------------------------------------------
+# unfiltered_diff_argv: same range as diff_argv, no sensitive-path exclusions
+# — used only to tell apart issue #59's two empty-range causes
+# --------------------------------------------------------------------------
+
+
+def test_unfiltered_diff_argv_targets_the_same_range_with_no_pathspecs() -> None:
+    argv = unfiltered_diff_argv(HEAD_SHA)
+    assert argv == [
+        "git",
+        "diff",
+        "--name-only",
+        f"origin/main...{HEAD_SHA}",
+        "--",
+        ".",
+    ]
+    # No exclusion pathspecs — the whole point is to see past them.
+    assert not any("exclude" in part for part in argv)
+
+
+def test_unfiltered_diff_argv_never_materializes_patch_content(tmp_path: Path) -> None:
+    # Copilot's finding on the introducing PR (#62): the excluded paths this
+    # check exists to look past are exactly the sensitive ones
+    # (specs/personal/*, *.db, ...), so this must stay existence-only —
+    # --name-only, never a full patch — to avoid materializing their content
+    # in this process's memory even transiently.
+    repo = _init_repo(tmp_path)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    base_sha = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "update-ref", "refs/remotes/origin/main", base_sha)
+
+    secret = repo / "specs" / "personal" / "notes.md"
+    secret.parent.mkdir(parents=True)
+    secret.write_text(
+        "a value that must never be materialized here\n", encoding="utf-8"
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "add a sensitive file")
+    head_sha = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "checkout", "-q", "--detach", base_sha)
+
+    out = _git(repo, *unfiltered_diff_argv(head_sha)[1:])
+    assert "specs/personal/notes.md" in out  # existence is still visible...
+    assert "must never be materialized here" not in out  # ...content is not
+
+
+def test_unfiltered_diff_argv_rejects_a_non_sha_the_same_way_diff_argv_does() -> None:
+    with pytest.raises(ValueError, match="commit SHA"):
+        unfiltered_diff_argv("HEAD")
+
+
 def test_a_default_branch_matching_the_diff_base_is_accepted() -> None:
     verify_diff_base("main")  # the repository as it stands; must not raise
 
@@ -576,6 +633,61 @@ def test_a_caller_note_replaces_the_default_clean_line_not_doubles_it() -> None:
     found = GEMINI.count.search(body)  # marker still present for the cross-check
     assert found is not None
     assert int(found.group(1)) == 0
+
+
+# --------------------------------------------------------------------------
+# review_body(empty_range=True): the "nothing to review" outcome (issue #59)
+# — a third state bot_review.py's gemini BotSpec must tell apart from both a
+# findings review and a genuinely clean one
+# --------------------------------------------------------------------------
+
+
+def test_an_empty_range_body_carries_the_marker_and_the_count_stays_zero() -> None:
+    body = review_body(0, [], note=NOTE_NO_CHANGES_VS_MAIN, empty_range=True)
+    assert EMPTY_RANGE_MARKER in body
+    assert NOTE_NO_CHANGES_VS_MAIN in body
+    found = GEMINI.count.search(body)
+    assert found is not None
+    assert int(found.group(1)) == 0
+    # The default clean line is still suppressed by the caller note, same as
+    # the pre-#59 empty-diff path.
+    assert "No findings — clean per the styleguide lenses." not in body
+
+
+def test_an_all_excluded_body_names_that_cause() -> None:
+    body = review_body(0, [], note=NOTE_ALL_PATHS_EXCLUDED, empty_range=True)
+    assert EMPTY_RANGE_MARKER in body
+    assert NOTE_ALL_PATHS_EXCLUDED in body
+
+
+def test_a_genuinely_clean_review_never_carries_the_empty_range_marker() -> None:
+    # The regression this whole feature exists to prevent: a real 0-finding
+    # review (empty_range defaults to False) must stay indistinguishable from
+    # what it always was, not accidentally pick up the new marker.
+    body = review_body(0, [])
+    assert EMPTY_RANGE_MARKER not in body
+
+
+def test_empty_range_without_a_note_is_refused() -> None:
+    # Copilot's finding on the introducing PR (#62): the docstring's "always
+    # pair it with a note" was advisory only. A marked-but-unexplained
+    # empty-range review would itself be the "unexplained empty result"
+    # bot_review.py's count_note warns against reporting as clean — enforced
+    # here rather than left to the one caller getting it right by hand.
+    with pytest.raises(ValueError, match="requires a note"):
+        review_body(0, [], empty_range=True)
+
+
+def test_the_empty_range_marker_matches_the_gemini_botspecs_own_pattern() -> None:
+    # Cross-module contract, same shape as the count-marker cross-check below:
+    # bot_review.py cannot import this module (it is stdlib-only), so its
+    # gemini BotSpec.empty_range_marker is a hand-kept mirror of
+    # EMPTY_RANGE_MARKER. If the two ever disagree, an empty-range review
+    # reads back as an ordinary findings review — the exact silent failure
+    # issue #59 is about.
+    body = review_body(0, [], note=NOTE_NO_CHANGES_VS_MAIN, empty_range=True)
+    assert GEMINI.empty_range_marker is not None
+    assert GEMINI.empty_range_marker.search(body) is not None
 
 
 def test_unanchored_findings_are_listed_in_the_body_with_their_location() -> None:

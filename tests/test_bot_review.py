@@ -16,11 +16,13 @@ import pytest
 from bot_review import (
     BOTS,
     EXIT_CLEAN,
+    EXIT_EMPTY_RANGE,
     BotReviewError,
     as_page,
     comment_ts,
     count_note,
     is_clean_comment,
+    is_empty_range_review,
     is_findings_review,
     parse_ts,
     run_cmd,
@@ -142,6 +144,100 @@ def test_select_accepts_a_floor_expressed_in_local_time() -> None:
     chosen = select_review([stale, fresh], CODERABBIT, since)
     assert chosen is not None
     assert chosen["id"] == 2  # not the 18:09:41Z one the string compare preferred
+
+
+# --------------------------------------------------------------------------
+# Empty range (issue #59): an empty filtered diff posts a review that reads
+# identically to a genuinely clean one — `posted 0 inline finding(s)` — unless
+# it also carries empty_range_marker. Currently only gemini sets one.
+# --------------------------------------------------------------------------
+
+EMPTY_RANGE_BODY = (
+    "## Antigravity Gemini review\n\n"
+    "<!-- gemini-review: empty-diff-range -->\n\n"
+    "Antigravity (Gemini 3 Pro class, `.gemini/styleguide.md` lenses) "
+    "reviewed this PR's filtered diff and posted 0 inline finding(s).\n\n"
+    "The PR head introduces no changes against main (already merged, or an "
+    "empty PR) — nothing to review."
+)
+
+
+def test_is_empty_range_review_recognizes_the_marker() -> None:
+    review = _review(1, "github-actions[bot]", "2026-07-24T13:45:42Z", EMPTY_RANGE_BODY)
+    assert is_empty_range_review(review, GEMINI) is True
+
+
+def test_a_genuinely_clean_gemini_review_is_not_an_empty_range_one() -> None:
+    review = _review(
+        1,
+        "github-actions[bot]",
+        "2026-07-24T13:45:42Z",
+        "posted 0 inline finding(s). No findings — clean per the styleguide lenses.",
+    )
+    assert is_empty_range_review(review, GEMINI) is False
+
+
+def test_a_bot_with_no_empty_range_marker_never_reports_one() -> None:
+    # Copilot and CodeRabbit leave empty_range_marker unset — this outcome is
+    # gemini-specific (issue #61 tracks Copilot's own, different count-regex
+    # gap). Even a body that happens to contain gemini's marker text must not
+    # spuriously match a bot that never set the field.
+    review = _review(
+        1,
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-24T13:45:42Z",
+        EMPTY_RANGE_BODY,
+    )
+    assert is_empty_range_review(review, COPILOT) is False
+    assert is_empty_range_review(review, CODERABBIT) is False
+
+
+def test_empty_range_exit_code_is_distinct_from_ready_failure_and_clean() -> None:
+    assert EXIT_EMPTY_RANGE not in (0, 1, EXIT_CLEAN)
+
+
+def test_cmd_wait_reports_empty_range_distinct_from_a_ready_review(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import bot_review
+
+    review = _review(9, "github-actions[bot]", "2026-07-24T13:45:42Z", EMPTY_RANGE_BODY)
+
+    def the_review(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [review]
+
+    monkeypatch.setattr(bot_review, "list_reviews", the_review)
+    since = parse_ts("2026-07-24T13:38:31Z")
+    assert bot_review.cmd_wait("o/r", 60, GEMINI, since, 600) == EXIT_EMPTY_RANGE
+    out = capsys.readouterr().out
+    assert "nothing to review" in out
+    assert "not findings" in out
+
+
+def test_cmd_fetch_reports_empty_range_distinct_from_findings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import bot_review
+
+    review = _review(9, "github-actions[bot]", "2026-07-24T13:45:42Z", EMPTY_RANGE_BODY)
+
+    def the_review(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [review]
+
+    def no_comments(repo: str, pr: int, review_id: int) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(bot_review, "list_reviews", the_review)
+    monkeypatch.setattr(bot_review, "review_comments", no_comments)
+    since = parse_ts("2026-07-24T13:38:31Z")
+    assert bot_review.cmd_fetch("o/r", 60, GEMINI, since) == EXIT_EMPTY_RANGE
+    out = capsys.readouterr().out
+    assert "EMPTY RANGE" in out
+    # The generic count_note path (mismatch / cross-check-skipped wording)
+    # must not also fire for this outcome — it would misreport a 0==0 count
+    # match as an ordinary clean result.
+    assert "cross-check skipped" not in out
+    assert "count mismatch" not in out
 
 
 # --------------------------------------------------------------------------

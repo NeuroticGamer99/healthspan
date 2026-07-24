@@ -70,6 +70,10 @@ Run with `run_in_background: true`. Exit codes:
 - **1** — either the dispatched run **failed** (the message names the run — check its logs;
   common cause: exhausted free-tier Gemini quota) or the wait timed out. **Silence is not a clean
   review**; report and stop.
+- **3** — **empty range**: there was nothing to review — the PR head introduced no changes against
+  `main` (already merged, or an empty PR), or every changed path was excluded by the sensitive-path
+  filters. Distinct from a clean run: the diff was never looked at, not looked at and found clean.
+  Report which cause (the body says) and stop; there is nothing to triage.
 
 ## 4. Triage and reply
 

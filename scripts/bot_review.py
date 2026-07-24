@@ -31,7 +31,8 @@ this can:
   already said.
 
 Commands (exit 0 = findings review ready, 1 = failure or timeout,
-2 = clean review — the bot reported no findings; nothing to triage):
+2 = clean review — the bot reported no findings; nothing to triage,
+3 = empty range — there was nothing to review at all; nothing to triage):
 
 * ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
   took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
@@ -80,6 +81,15 @@ COMMAND_TIMEOUT = 120
 # 0 so a caller never runs a findings triage against a review that does not
 # exist, and from 1 so a clean run is never reported as a failure.
 EXIT_CLEAN = 2
+# `wait`/`fetch` exit status for "there was nothing to review" (issue #59) —
+# an empty diff range, not a reviewed-and-clean one. Distinct from EXIT_CLEAN:
+# a clean review means the bot looked at real changes and found nothing; this
+# means no changes ever reached the bot (an already-merged head, an empty PR,
+# or every changed path excluded). Distinct from 0 for the same reason
+# EXIT_CLEAN is — nothing to triage either way. Currently reachable only
+# through a BotSpec that sets `empty_range_marker` (gemini); a bot that
+# leaves it unset never returns this.
+EXIT_EMPTY_RANGE = 3
 # Confirming a workflow dispatch: run creation is asynchronous (the POST
 # answers 204 before any run exists), so the read-back polls — briefly, since
 # a run that has not appeared within this window is not coming.
@@ -121,6 +131,17 @@ class BotSpec:
     # mutually exclusive with the other two. Defaulted (unlike every field
     # above) so the specs and tests that predate it stay valid as written.
     dispatch_workflow: str | None = None
+    # Recognizes the "nothing to review" outcome in a *review* body (issue
+    # #59) — a review stating 0 findings not because the diff was reviewed
+    # and found clean, but because the range was empty (already-merged head,
+    # empty PR, or every changed path excluded). None for a bot whose
+    # empty-range case is not distinguished this way (Copilot always reviews
+    # something real when it reviews at all; CodeRabbit's clean case is
+    # already the separate `clean_marker` path — see issue #61 for a related
+    # but distinct gap in Copilot's own count regex). Checked only after a
+    # review already passed `is_findings_review`, i.e. only for a bot whose
+    # empty-range case still posts a nonempty-body review.
+    empty_range_marker: re.Pattern[str] | None = None
 
     def __post_init__(self) -> None:
         # One ask channel per bot. cmd_request dispatches on trigger_body
@@ -201,6 +222,12 @@ BOTS: dict[str, BotSpec] = {
         count=re.compile(r"posted (\d+) inline finding"),
         clean_marker=None,
         dispatch_workflow="gemini-review.yml",
+        # Mirrors gemini_review_logic.EMPTY_RANGE_MARKER — the two are not
+        # imported from a shared module (this file is stdlib-only; the
+        # SDK-dependent agent lives under .github/scripts/) and are kept in
+        # sync by a cross-check test, the same convention as the count regex
+        # above and review_body's marker.
+        empty_range_marker=re.compile(r"<!-- gemini-review: empty-diff-range -->"),
     ),
 }
 
@@ -322,6 +349,21 @@ def is_clean_comment(comment: Comment, spec: BotSpec) -> bool:
     if not same_login(_login_of(comment), spec.review_login):
         return False
     return bool(spec.clean_marker.search(str(comment.get("body") or "")))
+
+
+def is_empty_range_review(review: Review, spec: BotSpec) -> bool:
+    """Whether a findings-shaped review actually states "nothing to review".
+
+    Applies only to a bot whose empty-range case is still a *review* with a
+    nonempty body (currently gemini) — such a review already passes
+    :func:`is_findings_review`, so callers check this only after
+    :func:`select_review` has returned one, to separate "reviewed and found
+    nothing" (genuinely clean, or real findings) from "there was nothing to
+    review" (issue #59).
+    """
+    if spec.empty_range_marker is None:
+        return False
+    return bool(spec.empty_range_marker.search(str(review.get("body") or "")))
 
 
 def select_clean_comment(
@@ -779,6 +821,14 @@ def cmd_wait(
         # review's submission cannot misreport a findings run as clean.
         review = select_review(list_reviews(repo, pr), spec, since)
         if review is not None:
+            if is_empty_range_review(review, spec):
+                print(
+                    f"{spec.key} review {review.get('id')} "
+                    f"({review.get('submitted_at')}) reports nothing to "
+                    "review — no diff was ever reviewed. Not a clean review, "
+                    "not findings; nothing to triage."
+                )
+                return EXIT_EMPTY_RANGE
             print(
                 f"{spec.key} findings review {review.get('id')} "
                 f"({review.get('submitted_at')}) is ready"
@@ -841,13 +891,21 @@ def cmd_fetch(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
     review_id = int(str(review.get("id")))
     body = str(review.get("body") or "")
     comments = review_comments(repo, pr, review_id)
+    empty_range = is_empty_range_review(review, spec)
 
     print(f"=== {spec.key} review {review_id} ===")
     print(f"commit:    {str(review.get('commit_id', ''))[:7]}")
     print(f"submitted: {review.get('submitted_at')}")
-    note = count_note(stated_count(body, spec), len(comments))
-    if note:
-        print(f"NOTE: {note}")
+    if empty_range:
+        print(
+            "NOTE: EMPTY RANGE — nothing was reviewed; see the body below "
+            "for which cause. Not a clean review, not findings; nothing to "
+            "triage."
+        )
+    else:
+        note = count_note(stated_count(body, spec), len(comments))
+        if note:
+            print(f"NOTE: {note}")
     print()
     print(body)
     print(f"=== {len(comments)} comment(s) on this review ===")
@@ -855,7 +913,7 @@ def cmd_fetch(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
         line = comment.get("line") or comment.get("original_line")
         print(f"\n--- {comment.get('path')}:{line} [id={comment.get('id')}] ---")
         print(comment.get("body"))
-    return 0
+    return EXIT_EMPTY_RANGE if empty_range else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

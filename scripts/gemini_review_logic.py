@@ -121,6 +121,30 @@ def verify_diff_base(default_branch: str) -> None:
         )
 
 
+def unfiltered_diff_argv(head_sha: str) -> list[str]:
+    """The git argv for one PR's UNFILTERED range — existence-only, no content.
+
+    Used only when :func:`diff_argv`'s filtered diff comes back empty, to tell
+    apart the two ways that happens: the range itself carries no changes (a
+    tree-identical head — the truest reading of "already merged" or "an empty
+    PR"; note that under a squash-merge workflow a merged PR's head is
+    usually *not* an ancestor of main, since squashing rewrites history, so
+    ``origin/main...head_sha`` still lands on the PR's original diff rather
+    than an empty range — verified live against PR #60 while building this
+    check) versus every changed path being swallowed by
+    :data:`EXCLUDED_GLOBS`. Only whether the range is empty is ever asked, so
+    this is ``--name-only``, not a full unfiltered patch: when the cause is
+    "every path excluded", the excluded paths are exactly the sensitive ones
+    (``specs/personal/*``, ``*.db``, ...), and materializing their full
+    content in this process's memory — even transiently, even if never
+    logged — is exposure this check has no reason to risk. Same ``head_sha``
+    validation as :func:`diff_argv`; no exclusion pathspecs.
+    """
+    if not COMMIT_SHA.fullmatch(head_sha):
+        raise ValueError(f"head_sha must be a commit SHA, got: {head_sha!r}")
+    return ["git", "diff", "--name-only", f"{DIFF_BASE}...{head_sha}", "--", "."]
+
+
 def diff_argv(head_sha: str) -> list[str]:
     """The git argv for one PR's filtered diff, ``origin/main...head_sha``.
 
@@ -248,15 +272,62 @@ def finding_comment(finding: Finding) -> str:
     return body
 
 
-def review_body(inline: int, unanchored: list[Finding], note: str = "") -> str:
+# The empty-range outcome's machine-readable marker — a third state alongside
+# "findings" and "clean", both already carried by the posted-N-inline count.
+# Mirrors the clean_marker/count split bot_review.py already has for
+# CodeRabbit, but on a *review* body rather than an issue comment, since a
+# Gemini review is posted either way (issue #59): without this, an empty
+# filtered diff posts `posted 0 inline finding(s)` — byte-for-byte what a
+# genuinely clean run posts — and bot_review.py's count cross-check cannot
+# tell "reviewed the diff, found nothing" from "there was no diff to review".
+EMPTY_RANGE_MARKER = "<!-- gemini-review: empty-diff-range -->"
+
+# The two empty-range causes worth telling apart (issue #59's three collapse
+# to two: an already-merged head and a genuinely empty PR both read as "no
+# changes against main", and only the exclusion case needs its own wording —
+# neither a human nor bot_review.py would act on the merged/empty split
+# differently).
+NOTE_NO_CHANGES_VS_MAIN = (
+    "The PR head introduces no changes against main (already merged, or an "
+    "empty PR) — nothing to review."
+)
+NOTE_ALL_PATHS_EXCLUDED = (
+    "Every changed path is excluded from review (sensitive-path filters) — "
+    "nothing to review."
+)
+
+
+def review_body(
+    inline: int,
+    unanchored: list[Finding],
+    note: str = "",
+    empty_range: bool = False,
+) -> str:
     """The review body, always carrying the ``posted N inline finding(s)``
-    marker that bot_review.py's gemini count regex cross-checks."""
+    marker that bot_review.py's gemini count regex cross-checks.
+
+    ``empty_range=True`` additionally stamps :data:`EMPTY_RANGE_MARKER` —
+    bot_review.py's gemini BotSpec recognizes it as a third outcome, distinct
+    from both a findings review and a genuinely clean one. Always pair it with
+    a ``note`` (:data:`NOTE_NO_CHANGES_VS_MAIN` or
+    :data:`NOTE_ALL_PATHS_EXCLUDED`); the marker alone does not say which
+    empty-range cause applied, and this is enforced rather than merely
+    documented — a marked-but-unexplained empty-range review would be exactly
+    the "unexplained empty result" bot_review.py's own count_note warns
+    against reporting as clean.
+    """
+    if empty_range and not note:
+        raise ValueError("empty_range=True requires a note naming the cause")
     lines = [
         "## Antigravity Gemini review",
         "",
-        "Antigravity (Gemini 3 Pro class, `.gemini/styleguide.md` lenses) "
-        f"reviewed this PR's filtered diff and posted {inline} inline finding(s).",
     ]
+    if empty_range:
+        lines += [EMPTY_RANGE_MARKER, ""]
+    lines.append(
+        "Antigravity (Gemini 3 Pro class, `.gemini/styleguide.md` lenses) "
+        f"reviewed this PR's filtered diff and posted {inline} inline finding(s)."
+    )
     if note:
         lines += ["", note]
     if unanchored:
