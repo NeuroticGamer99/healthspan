@@ -69,15 +69,22 @@ def _init(tmp_path: Path, *, migrate: bool) -> Path:
     return config
 
 
-def _passphrase_file(tmp_path: Path, name: str = "pp.secret") -> Path:
+def _passphrase_file(
+    tmp_path: Path, name: str = "pp.secret", content: str = PASSPHRASE
+) -> Path:
     """A passphrase file as a real deployment must present one: owner-only.
 
     ADR-0066 refuses to read this channel when it is readable beyond its
     owner, so a fixture that skipped the protection would be testing an
-    unstartable deployment.
+    unstartable deployment. Every passphrase file in this module goes through
+    here — including the deliberately *wrong* ones, which still have to be
+    readable to fail for the reason the test is about. A file written at the
+    default umask is 0644 on POSIX and refused before the test's own
+    assertion is ever reached; on Windows the same file carries only benign
+    principals and passes, so the mistake is invisible until CI's POSIX legs.
     """
     path = tmp_path / name
-    path.write_text(PASSPHRASE, encoding="utf-8")
+    path.write_text(content, encoding="utf-8")
     set_owner_only(path)
     return path
 
@@ -366,8 +373,7 @@ def test_build_runtime_wrong_passphrase_releases_lock(
     tmp_path: Path, empty_stdin: None
 ) -> None:
     cfg = load_config(flag=_init(tmp_path, migrate=True))
-    bad = tmp_path / "bad.secret"
-    bad.write_text("not the right passphrase at all", encoding="utf-8")
+    bad = _passphrase_file(tmp_path, "bad.secret", "not the right passphrase at all")
     with pytest.raises(rotation.RotationError):
         build_runtime(cfg, passphrase_file_flag=bad)
     reclaim = InstanceLock(cfg.database.path)
