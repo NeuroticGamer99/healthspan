@@ -146,6 +146,11 @@ Three uniqueness surfaces can collide, and all take the same rule:
 | `framework_ranges` `UNIQUE(framework_id, biomarker_id, effective_date)` (and the dateless-default partial index) | both rows carry a range for the same framework and date | two curated range values, possibly different |
 | `ux_lab_draws_natural_key` (lab merge) | both lab spellings hold a **current** draw at the same `draw_utc` | the same real draw entered twice |
 
+The preflight carries one check beyond this table: §4's defensive alias-namespace
+condition — an equal-normalized alias pointing at a *third* biomarker — which takes the
+same refuse-and-report rule (biomarker merges only; the schema cannot collide there, so it
+is an ambiguity check, not a uniqueness surface).
+
 **Any collision aborts the entire merge; nothing is written.** The refusal is the report: it
 lists every colliding pair with both rows' values, discovered by preflight before the first
 write (mirroring [ADR-0004](0004-data-ingestion-strategy.md)'s collect-all-errors
