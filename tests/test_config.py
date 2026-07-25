@@ -1,6 +1,7 @@
 """Unit tests for config discovery and strict TOML parsing (ADR-0046)."""
 
 import os
+import stat
 from collections.abc import Callable
 from pathlib import Path
 
@@ -198,6 +199,20 @@ class TestPermissionWarning:
         load_config(flag=cfg_file, env={}, warn=warnings.append)
         assert len(warnings) == 1
         assert "owner-only" in warnings[0]
+        # ADR-0066: loading does not merely narrate the drift, it ends it.
+        assert stat.S_IMODE(cfg_file.stat().st_mode) == 0o600
+
+    def test_repaired_config_stops_warning(
+        self, tmp_path: Path, write_file: WriteFile
+    ) -> None:
+        cfg_file = write_file(tmp_path / "config.toml", "config_version = 1\n")
+        cfg_file.chmod(0o644)
+        warnings: list[str] = []
+        load_config(flag=cfg_file, env={}, warn=warnings.append)
+        load_config(flag=cfg_file, env={}, warn=warnings.append)
+        # One report, not one per command: the repair is what makes the
+        # warning informative rather than background noise.
+        assert len(warnings) == 1
 
     def test_silent_on_owner_only(self, tmp_path: Path, write_file: WriteFile) -> None:
         cfg_file = write_file(tmp_path / "config.toml", "config_version = 1\n")

@@ -17,17 +17,19 @@ from typing import Annotated
 
 import typer
 
-from healthspan import db, keychain, migrate, restore, rotation
+from healthspan import db, keychain, migrate, permcheck, restore, rotation
 from healthspan.backup import (
     BackupError,
     create_verified_backup,
     latest_backup,
+    list_backups,
     prune_backups,
 )
 from healthspan.cli_support import (
     exclusive_database_access,
     fail,
     load_config_or_exit,
+    warn_cli,
 )
 from healthspan.fsperm import PermissionSetError
 from healthspan.keyparams import KeyParamsError
@@ -92,6 +94,12 @@ def db_backup(ctx: typer.Context) -> None:
             f"Pruned {len(pruned)} old backup(s) beyond the retention count "
             f"of {cfg.backup.retention_count}."
         )
+    # Every retained backup is a full copy of the database, so it carries the
+    # same exposure. The sweep rides this command rather than every start
+    # (ADR-0066 §3): it is the low-frequency moment the archive is already
+    # being rewritten, and the cost is one check per retained pair.
+    for retained in _run(lambda: list_backups(cfg.backup.directory)):
+        permcheck.verify_backup_pair(retained, warn_cli)
 
 
 @db_app.command("restore")
@@ -120,6 +128,9 @@ def db_restore(
 
     with exclusive_database_access(cfg):
         source = backup_file or _run(lambda: latest_backup(cfg.backup.directory))
+        # The tar-arrival case the check exists for: a backup handed to
+        # restore may never have been written by this platform (ADR-0066 §3).
+        permcheck.verify_backup_pair(source, warn_cli)
         typer.echo(f"Restoring {source} to {cfg.database.path}.")
         passphrase = typer.prompt("Master passphrase", hide_input=True)
         key = _run(lambda: restore.derive_backup_key(source, passphrase))

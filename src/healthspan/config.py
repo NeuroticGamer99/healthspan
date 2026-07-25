@@ -5,12 +5,13 @@ the shared configuration file ADR-0006 defines. Readers never write the
 file; creation belongs to ``healthspan init`` and, later, the launcher
 (ADR-0008). A missing file at the platform-default location means
 defaults apply; a missing file behind an explicit ``--config`` flag or
-``HEALTHSPAN_CONFIG`` is an error.
+``HEALTHSPAN_CONFIG`` is an error. Readers never write the file's
+*contents*; loading does restore owner-only permissions on it when they
+have drifted, and reports having done so (ADR-0066).
 """
 
 import json
 import os
-import stat
 import sys
 import tomllib
 from collections.abc import Callable, Mapping
@@ -19,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-from healthspan import paths
+from healthspan import paths, permcheck
 
 SUPPORTED_CONFIG_VERSION = 1
 
@@ -201,19 +202,11 @@ def _defaults(path: Path, source: ConfigSource) -> Config:
 
 
 def _check_permissions(path: Path, warn: Callable[[str], None]) -> None:
-    # POSIX only: Windows permission bits carry no ACL information, and the
-    # writer side (`init`) owns setting owner-only ACLs there.
-    if os.name != "posix":
-        return
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return  # an unreadable stat is not fatal here; _load_toml surfaces it
-    if mode & 0o077:
-        warn(
-            f"config file {path} is accessible beyond its owner "
-            f"(mode {stat.filemode(mode)}); expected owner-only (chmod 600)"
-        )
+    # Restore owner-only protection and say so (ADR-0066). `acl_scan=False`
+    # keeps the Windows ACL enumeration — a subprocess per path — off this
+    # every-command path; the startup sweep in permcheck.verify_startup_files
+    # gives the config file its full-depth check where the cost is affordable.
+    permcheck.repair_owner_only(path, "config file", warn, acl_scan=False)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:

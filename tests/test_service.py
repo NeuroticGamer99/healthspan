@@ -3,6 +3,7 @@
 import dataclasses
 import io
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -22,7 +23,9 @@ from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_security import LivenessRateLimiter, assert_all_routes_declared
 from healthspan.cli import app as cli_app
 from healthspan.config import Config, load_config
+from healthspan.fsperm import owner_only_exposure, set_owner_only
 from healthspan.kdf import DbKey
+from healthspan.keyparams import sidecar_path
 from healthspan.locking import InstanceLock
 from healthspan.pool import ConnectionPool, PoolClosedError
 from healthspan.service import (
@@ -66,9 +69,16 @@ def _init(tmp_path: Path, *, migrate: bool) -> Path:
     return config
 
 
-def _passphrase_file(tmp_path: Path) -> Path:
-    path = tmp_path / "pp.secret"
+def _passphrase_file(tmp_path: Path, name: str = "pp.secret") -> Path:
+    """A passphrase file as a real deployment must present one: owner-only.
+
+    ADR-0066 refuses to read this channel when it is readable beyond its
+    owner, so a fixture that skipped the protection would be testing an
+    unstartable deployment.
+    """
+    path = tmp_path / name
     path.write_text(PASSPHRASE, encoding="utf-8")
+    set_owner_only(path)
     return path
 
 
@@ -117,8 +127,7 @@ def test_passphrase_file_flag_channel(
 ) -> None:
     # The systemd/Docker path: no TTY, empty stdin -> the --passphrase-file
     # flag is read (and overrides the config key within the file tier).
-    pp = tmp_path / "flag.secret"
-    pp.write_text(f"{PASSPHRASE}\n", encoding="utf-8")
+    pp = _passphrase_file(tmp_path, "flag.secret")
     cfg = make_config()
     cfg = dataclasses.replace(
         cfg,
@@ -150,6 +159,27 @@ def test_config_passphrase_file_channel(
     assert resolve_passphrase(cfg, None, stdin=io.StringIO("")) == PASSPHRASE
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    ["", "\n", "\r\n", "\nunrelated second line\n"],
+    ids=["bare", "echo-lf", "windows-crlf", "extra-lines"],
+)
+def test_passphrase_file_reads_exactly_the_first_line(
+    make_config: Callable[[], Config], tmp_path: Path, suffix: str
+) -> None:
+    """A terminator must never reach key derivation.
+
+    A file written by ``echo`` carries a trailing ``\\n`` and one saved by a
+    Windows editor carries ``\\r\\n``; feeding either into the KDF derives a
+    different key, so the database silently fails to open with no hint that
+    an invisible byte is the cause.
+    """
+    path = tmp_path / "pp.secret"
+    path.write_text(f"{PASSPHRASE}{suffix}", encoding="utf-8")
+    set_owner_only(path)
+    assert resolve_passphrase(make_config(), path, stdin=io.StringIO("")) == PASSPHRASE
+
+
 def test_no_channel_available_is_an_error(make_config: Callable[[], Config]) -> None:
     with pytest.raises(ServiceStartupError, match="no passphrase channel"):
         resolve_passphrase(make_config(), None, stdin=io.StringIO(""))
@@ -160,6 +190,135 @@ def test_no_channel_message_forbids_env_var(
 ) -> None:
     with pytest.raises(ServiceStartupError, match="never read from an environment"):
         resolve_passphrase(make_config(), None, stdin=io.StringIO(""))
+
+
+# --------------------------------------------------------------------------
+# Passphrase-file permission refusal (ADR-0066 decision 2)
+# --------------------------------------------------------------------------
+
+
+def _expose(path: Path) -> Path:
+    """Make a file readable beyond its owner, on either platform."""
+    if os.name == "posix":
+        path.chmod(0o644)
+    else:
+        subprocess.run(  # noqa: S603 - fixed executable, no shell
+            ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
+            capture_output=True,
+            encoding="oem",
+            errors="replace",
+            check=True,
+        )
+    return path
+
+
+def test_exposed_config_passphrase_file_refuses_startup(
+    make_config: Callable[[], Config], tmp_path: Path
+) -> None:
+    pp = _expose(_passphrase_file(tmp_path))
+    cfg = make_config()
+    cfg = dataclasses.replace(
+        cfg, service=dataclasses.replace(cfg.service, passphrase_file=pp)
+    )
+    with pytest.raises(ServiceStartupError) as excinfo:
+        resolve_passphrase(cfg, None, stdin=io.StringIO(""))
+    message = str(excinfo.value)
+    assert "accessible beyond its owner" in message
+    # A disclosed secret is not fixed by a mode bit; the message must say so.
+    assert "rotate" in message
+
+
+def test_exposed_passphrase_file_flag_refuses_startup(
+    make_config: Callable[[], Config], tmp_path: Path
+) -> None:
+    # The check lives at the read, so it covers the flag tier identically —
+    # the flag is not a way around the config key's protection.
+    pp = _expose(_passphrase_file(tmp_path, "flag.secret"))
+    with pytest.raises(ServiceStartupError, match="accessible beyond its owner"):
+        resolve_passphrase(make_config(), pp, stdin=io.StringIO(""))
+
+
+def test_refused_passphrase_file_is_never_repaired(
+    make_config: Callable[[], Config], tmp_path: Path
+) -> None:
+    pp = _expose(_passphrase_file(tmp_path))
+    with pytest.raises(ServiceStartupError):
+        resolve_passphrase(make_config(), pp, stdin=io.StringIO(""))
+    # Repairing would leave the deployment startable while the passphrase
+    # stayed disclosed — the exposure must survive to force the decision.
+    assert owner_only_exposure(pp) is not None
+
+
+def test_unread_passphrase_file_is_not_checked(
+    make_config: Callable[[], Config], tmp_path: Path
+) -> None:
+    # ADR-0039's channel order still wins: a TTY prompt never reaches the
+    # file tier, so an exposed file that is never read cannot block startup.
+    pp = _expose(_passphrase_file(tmp_path, "flag.secret"))
+    got = resolve_passphrase(make_config(), pp, stdin=_Tty(), prompt=lambda: "typed")
+    assert got == "typed"
+
+
+def test_build_runtime_repairs_every_swept_surface(
+    tmp_path: Path, empty_stdin: None
+) -> None:
+    """The tar-arrival case, across all four surfaces the sweep covers.
+
+    Each is exposed through the real ``build_runtime`` wiring rather than a
+    direct ``verify_startup_files`` call, so a dropped or swapped argument —
+    the config path or the backup directory going unchecked — fails here.
+    """
+    config = _init(tmp_path, migrate=True)
+    cfg = load_config(flag=config)
+    cfg.backup.directory.mkdir(parents=True, exist_ok=True)
+    surfaces = [
+        config,
+        cfg.database.path,
+        sidecar_path(cfg.database.path),
+        cfg.backup.directory,
+    ]
+    for surface in surfaces:
+        _expose(surface)
+        assert owner_only_exposure(surface) is not None  # the setup took hold
+
+    runtime = build_runtime(cfg, passphrase_file_flag=_passphrase_file(tmp_path))
+    try:
+        for surface in surfaces:
+            assert owner_only_exposure(surface) is None, surface
+    finally:
+        runtime.pool.close_all()
+        runtime.lock.release()
+        runtime.key.zeroize()
+
+
+def test_startup_survives_a_repair_it_cannot_apply(
+    tmp_path: Path, empty_stdin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repair the platform cannot apply must not become a lockout.
+
+    The whole point of the repair posture is that it never stands between
+    the owner and their own database, so the service still starts and the
+    finding is reported instead.
+    """
+    from healthspan import permcheck
+    from healthspan.fsperm import PermissionSetError
+
+    cfg = load_config(flag=_init(tmp_path, migrate=True))
+    pp = _passphrase_file(tmp_path)
+    _expose(cfg.database.path)
+
+    def _deny(_path: Path) -> None:
+        raise PermissionSetError("simulated read-only mount")
+
+    monkeypatch.setattr(permcheck, "set_owner_only", _deny)
+    runtime = build_runtime(cfg, passphrase_file_flag=pp)
+    try:
+        assert runtime.lock.held  # started anyway
+        assert owner_only_exposure(cfg.database.path) is not None  # still broad
+    finally:
+        runtime.pool.close_all()
+        runtime.lock.release()
+        runtime.key.zeroize()
 
 
 # --------------------------------------------------------------------------

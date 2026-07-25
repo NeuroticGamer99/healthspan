@@ -32,7 +32,15 @@ from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from healthspan import db, keychain, migrate, recovery_kit, rotation, token_bootstrap
+from healthspan import (
+    db,
+    keychain,
+    migrate,
+    permcheck,
+    recovery_kit,
+    rotation,
+    token_bootstrap,
+)
 from healthspan import tokens as tokens_module
 from healthspan.api_health import LIVENESS_PATH
 from healthspan.api_health import router as health_router
@@ -107,6 +115,14 @@ def _tty_prompt() -> str:
 
 
 def _read_passphrase_file(path: Path) -> str:
+    # The one file the platform refuses rather than repairs (ADR-0066): it
+    # holds the master passphrase in plaintext, it may belong to an OS secret
+    # facility the platform must not touch, and a secret that has been
+    # readable beyond its owner is disclosed — a quiet chmod would hide that.
+    try:
+        permcheck.refuse_if_exposed(Path(path), "passphrase file")
+    except permcheck.BroadPermissionsError as exc:
+        raise ServiceStartupError(str(exc)) from exc
     try:
         content = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
@@ -119,6 +135,10 @@ def _read_passphrase_file(path: Path) -> str:
 # --------------------------------------------------------------------------
 # Startup: lock, unlock, schema check
 # --------------------------------------------------------------------------
+
+
+def _warn_permissions(message: str) -> None:
+    _log.warning("file permissions", detail=message)
 
 
 def build_runtime(
@@ -140,6 +160,16 @@ def build_runtime(
 
     key: DbKey | None = None
     try:
+        # Before anything is read: the database, its sidecar, the backup
+        # directory, and the config file are restored to owner-only if they
+        # drifted (ADR-0066). The passphrase file is checked separately —
+        # inside resolve_passphrase, where it is refused rather than repaired.
+        permcheck.verify_startup_files(
+            config_path=cfg.path,
+            database_path=cfg.database.path,
+            backup_dir=cfg.backup.directory,
+            warn=_warn_permissions,
+        )
         for orphan in recovery_kit.sweep_orphans(cfg.database.path.parent):
             _log.warning("disposed orphaned recovery-kit plaintext", path=str(orphan))
         passphrase = resolve_passphrase(cfg, passphrase_file_flag)
