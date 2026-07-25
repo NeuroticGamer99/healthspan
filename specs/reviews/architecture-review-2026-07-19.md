@@ -69,7 +69,7 @@ ADR-0026/0029 specify the `hsp_mcpclient_…` static bearer, hashed-in-keyring v
 
 ### 3.A Phase 3.5 catalog merge needs its Proposed ADR before the work item — it collides with two Accepted decisions ⚠️ most important finding
 
-- [ ] Write the catalog-correction ADR (Phase 3.5's first work item, or before it), resolving both collisions; cite INV-7 (2.2).
+- [x] Write the catalog-correction ADR (Phase 3.5's first work item, or before it), resolving both collisions; cite INV-7 (2.2). *Resolved: [ADR-0065](../adr/0065-catalog-merge-and-removal.md) (Proposed) — in-place identity repair through ADR-0027's own designated-column declaration (supersession cannot complete a merge: superseded chain members would keep the orphan referenced and undeletable); natural-key, range-uniqueness, and draw-key collisions all refuse-and-report, since a collision may falsify the merge premise itself (ADR-0032 method variants); INV-7 cited — every step appends audit rows, none touches one.*
 
 [development-plan.md](../development-plan.md) specifies merge as "re-point every `biomarker_id`-dependent row (`lab_results`, `biomarker_aliases`, `framework_ranges`) onto a surviving row." Two problems the audit model *survives* but does not *answer*:
 

@@ -98,6 +98,7 @@ ADR-0004's "structured response" lists *rows rejected* as a success-response fie
 - Extended by: [ADR-0054](0054-biomarker-name-alias-fallback.md) — `lab_results` rows may carry `biomarker_name`, resolved before conflict detection
 - Extended by: [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md) — generalizes the import engine to catalog tables (`has_supersession`/`has_provenance` flags) and adds four catalog tables to the importable registry
 - Extended by: [ADR-0058](0058-range-comparison-implementation-decisions.md) §6 — adds `range_frameworks`/`framework_ranges` to the registry and the `nullable_key` natural-key generalization
+- Extended by: [ADR-0065](0065-catalog-merge-and-removal.md) — catalog merge: the `lab_draws` column-class declaration in §3 gains the key column `lab_id` as merge-repairable (rewritable solely inside the owner-invoked merge operation, never through import)
 - Implements: [ADR-0004](0004-data-ingestion-strategy.md) — bulk import endpoint behavior
 - Implements: [ADR-0027](0027-audit-trail-and-corrections.md) — in-transaction audit, supersession, batch-level insert audit
 - Related: [ADR-0030](0030-biomarker-identity.md) — the value model import round-trips (comparator, qualitative results)
