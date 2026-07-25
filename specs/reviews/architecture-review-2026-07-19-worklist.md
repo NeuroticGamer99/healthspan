@@ -20,7 +20,7 @@ One PR per Tier-1/2 item (each is a self-contained session), batched PRs for Tie
 | R8 | T3.1 + T3.2 | Spec/doc mechanical batch |
 | R9 | T3.3 | Code-polish batch (pool counter, `check_adr_index.py` test, liveness sweep) |
 | — | T3.4 | Not a standalone PR — rides the first Phase 3.5 migration |
-| R10 | T3.5 | ADR-0060/0061 flip sweep — last, after R3's outcome is known |
+| R10 | T3.5 | ADR-0060/0061 flip sweep — last; 0060's hold now runs through the Phase 3.5 merge WI (ADR-0065 §6) |
 
 Deliberate calls: R3 is a standalone spec-only PR (the review allows "with or before" the merge work item; *before* is better — it shapes how Phase 3.5 is sliced, and a focused ADR PR reviews better than an ADR buried in an implementation diff). R5 and R7 stay separate despite both being small — their extension ADRs are owned by different Accepted ADRs (0049 vs 0045) and don't batch. Hard ordering is only R2 → R3, plus R4 before Phase 3.5's catalog work item and Phase 4 planning; R4–R9 are otherwise independent.
 
@@ -30,7 +30,7 @@ Deliberate calls: R3 is a standalone spec-only PR (the review allows "with or be
 
 ### T1.1 — Catalog-correction ADR: merge vs. the audit model (review 3.A) ⚠️ hardest, most consequential
 
-- [ ] Write the Phase 3.5 catalog-correction Proposed ADR, resolving both collisions before the merge work item exists in code.
+- [x] Write the Phase 3.5 catalog-correction Proposed ADR, resolving both collisions before the merge work item exists in code. *Resolved: [ADR-0065](../adr/0065-catalog-merge-and-removal.md) (R3) — in-place identity repair via ADR-0027's designated-column rule; all collision surfaces (results, ranges, draws) refuse-and-report; removal blocks on observations, cascades own attributes; merged-away name auto-aliased; command surface deferred to the merge WI's ADR-0060 edit.*
 
 Why hard: it reopens the semantics of an Accepted ADR's core contract without being allowed to edit it. Must reason through (1) **supersede-vs-in-place routing** for an identity fix — ADR-0027 has exactly two categories (value corrections supersede; designated metadata columns update in place) and re-pointing `biomarker_id` is deliberately neither: supersession preserves the mistaken-identity history but bloats chains on a bulk merge, in-place declares `biomarker_id` a repairable metadata column and rewrites what the row *meant*; and (2) the **natural-key collision** — when one draw holds current results for both orphan and survivor (the very duplicate scenario motivating merge), `ux_lab_results_natural_key` forbids the re-point, and the ADR must define the outcome (refuse / supersede the orphan's result as a duplicate / merge values) or the DB defines it as a runtime `IntegrityError`. Also in scope: what merge writes to `audit_log` (per-row images vs. a batch shape — the T1.1-2026-07-06 precedent), delete's unreferenced-rows-only guarantee, and alias handling for the merged-away name.
 Sequencing: **after T2.1** (must cite INV-7); **before the Phase 3.5 merge/remove work item**. Interacts with T2.4's seed-bullet guard (the seed should exercise this tooling).
@@ -108,7 +108,7 @@ Mechanical, but deliberately scheduled: it needs a migration to ride, and Phase 
 
 ### T3.5 — Governance close-out (deliberately last)
 
-- [ ] Flip ADR-0060 and ADR-0061 → Accepted at the next lock-in sweep, index updated in the same change (review 4.D). Last for the usual reason: while Proposed they remain cheaply editable if any Tier 1/2 outcome above touches them (T1.1 is likely to lean on ADR-0060's catalog-command surface).
+- [ ] Flip ADR-0060 and ADR-0061 → Accepted at the next lock-in sweep, index updated in the same change (review 4.D). Last for the usual reason: while Proposed they remain cheaply editable if any Tier 1/2 outcome above touches them (T1.1 is likely to lean on ADR-0060's catalog-command surface). *Hold extended by R3: [ADR-0065](../adr/0065-catalog-merge-and-removal.md) §6 defers the merge/remove command surface to an ADR-0060 edit by the Phase 3.5 merge work item — keep ADR-0060 Proposed until that work item lands its surface. ADR-0061 is unaffected and may flip whenever the sweep runs.*
 
 ---
 
@@ -127,6 +127,6 @@ T2.4 (dev-plan pass: seed bullet) ──→ Phase 3.5 catalog WI
 T2.4 (dev-plan pass: 4a/4b) ──→ Phase 4 planning
 T3.1 (MCP paragraphs) ──→ Phase 4 (4b) MCP WI ──→ parked 2.4/3.E implementation
 T3.4 (draw_utc CHECK) ──→ rides first Phase 3.5 migration
-T1.1 outcome ──→ T3.5 (0060/0061 flip — keep 0060 editable until then)
+T1.1 outcome ──→ Phase 3.5 merge WI (ADR-0060 surface edit) ──→ T3.5 (0060/0061 flip)
 Phase 4 (4a) ──→ parked 3.C (snapshot transaction)
 ```

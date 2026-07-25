@@ -174,6 +174,7 @@ The full command/query split is rejected along with event sourcing. What remains
 - Con: `WHERE superseded_by IS NULL` discipline (mitigated by `*_current` views); unbounded audit growth (negligible at this volume); no stream replay (backups own recovery)
 
 ## Links
+- Extended by: [ADR-0065](0065-catalog-merge-and-removal.md) — catalog merge/removal: declares `lab_results.biomarker_id` and `lab_draws.lab_id` merge-repairable reference columns through this ADR's per-table designated-column rule
 - Resolves: [open-questions.md](../open-questions.md) — longitudinal data correction, audit trail, event sourcing, CQRS
 - Resolves: [architecture review 2026-06-10](../reviews/architecture-review-2026-06-10.md), item 3.A
 - Resolves: [architecture review 2026-07-06](../reviews/architecture-review-2026-07-06.md), item 3.A — bulk-import audit granularity (batch-level for inserts)
