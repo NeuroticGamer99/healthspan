@@ -239,7 +239,7 @@ def adr_status_breakdown() -> dict[str, int]:
             continue
         try:
             status = _adr_status(path) or "Unknown"
-        except UnicodeDecodeError, OSError:
+        except (UnicodeDecodeError, OSError):  # fmt: skip
             # A non-UTF-8 or otherwise-unreadable ADR is skipped here (dropping
             # its status bucket) rather than crashing the run -- the docstring
             # promises "Exit 0 always". The same file is also read by classify()
