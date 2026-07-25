@@ -40,6 +40,12 @@ Get-Content $path -Encoding UTF8 -Raw
 
 Never use `Get-Content -Raw` without `-Encoding UTF8` on project files, and never use `Set-Content` without `-Encoding UTF8`. The `$false` parameter to `UTF8Encoding` suppresses the BOM.
 
+## Multi-exception `except` clauses
+
+Always parenthesize — `except (ValueError, OSError):` — never PEP 758's bare-comma `except ValueError, OSError:`. The two forms are semantically identical, but the bare one visually aliases the removed Python-2 `except A, e:` (which bound the second name), so it reads as a bug to reviewers and tools alike; it has cost review attention repeatedly, once escalating to a false import-breaking blocker.
+
+`ruff format` at the pinned version **strips those parentheses back out** of a catch-only clause — a clause binding `as exc` keeps them. Add `# fmt: skip` to the `except` line to hold them, as `src/healthspan/pool.py` does. Re-check any multi-exception `except` after the formatter has run: the formatter, not the author, is what reintroduces the bare form.
+
 ## ADR governance
 
 Before creating or modifying any file in `specs/adr/`:
