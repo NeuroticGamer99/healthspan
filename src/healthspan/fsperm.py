@@ -16,6 +16,7 @@ in :mod:`healthspan.permcheck`; this module only sets and detects.
 import functools
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -110,10 +111,19 @@ def _icacls(path: Path, *args: str) -> str:
 
 
 def _acl_principals(path: Path) -> list[str]:
-    """Principals holding ACL entries on ``path``, per ``icacls`` listing.
+    """Principals *granted* access on ``path``, per the ``icacls`` listing.
 
-    Inherited and explicit entries alike — the listing does not distinguish
+    Inherited and explicit grants alike — the listing does not distinguish
     them here, and both grant real access, so both matter to the reader side.
+
+    **Denials are excluded.** ``icacls`` renders them with a ``(DENY)`` flag
+    (``Everyone:(DENY)(R)``, or ``Everyone:(I)(DENY)(R)`` when inherited) and
+    a denial narrows access rather than widening it — an owner who explicitly
+    denies a principal has *hardened* the file. Counting one as exposure
+    would refuse a passphrase file for a tightening action, and `/remove:g`
+    removes grants only: it exits 0 against a deny ACE and leaves it in
+    place, so the printed remedy could never clear the refusal it caused
+    (ADR-0066 ships no override). Verified against real ``icacls`` output.
     """
     listing = _icacls(path)
     principals: list[str] = []
@@ -122,9 +132,12 @@ def _acl_principals(path: Path) -> list[str]:
         line = raw.strip()
         if line.startswith(prefix):
             line = line[len(prefix) :].strip()
-        if ":(" not in line:
+        principal, separator, entry = line.partition(":(")
+        if not separator:
             continue
-        principals.append(line.split(":(", 1)[0].strip())
+        if "(DENY)" in f"({entry}".upper():
+            continue
+        principals.append(principal.strip())
     return principals
 
 
@@ -173,8 +186,7 @@ def owner_only_exposure(path: Path, *, acl_scan: bool = True) -> str | None:
     if not acl_scan:
         return None
     try:
-        principals = _acl_principals(path)
-        user = _current_windows_user().lower()
+        others = _offending_principals(path)
     # OSError is the probe tools themselves being unreachable — a
     # FileNotFoundError out of subprocess when icacls or whoami is not on
     # PATH. Letting it escape would abort startup with a traceback, the
@@ -182,34 +194,66 @@ def owner_only_exposure(path: Path, *, acl_scan: bool = True) -> str | None:
     # a `fmt: skip` guard per the project's multi-except convention (pool.py).
     except (PermissionSetError, OSError):  # fmt: skip
         return None
-    benign = _benign_windows_principals()
-    others = sorted(
-        {p for p in principals if p.lower() != user and p.lower() not in benign}
-    )
     return "ACL grants held by " + ", ".join(others) if others else None
 
 
+def _offending_principals(path: Path) -> list[str]:
+    """Principals on ``path``'s ACL that are neither its owner nor benign.
+
+    The single source of truth for "who should not be here": the exposure
+    message names them, and :func:`restrict_command` emits a removal for each.
+    Deriving both from one enumeration is what keeps the reported problem and
+    the printed fix from disagreeing.
+    """
+    user = _current_windows_user().lower()
+    benign = _benign_windows_principals()
+    return sorted(
+        {
+            p
+            for p in _acl_principals(path)
+            if p.lower() != user and p.lower() not in benign
+        }
+    )
+
+
 def restrict_command(path: Path) -> str | None:
-    """The command that restores owner-only protection on ``path``.
+    """The command(s) that restore owner-only protection on ``path``.
 
-    ADR-0066 ships no override for a permission refusal, so this command is
-    the owner's only route out of one — it has to run exactly as printed.
-    That rules out ``%USERNAME%`` on Windows: the variable expands in
-    ``cmd.exe`` alone, and pasting it into PowerShell hands ``icacls`` the
-    literal string. The resolved account name works in every shell.
+    ADR-0066 ships no override for a permission refusal, so this is the
+    owner's only route out of one — it has to actually clear the exposure
+    when run, and two things independently break that:
 
-    ``None`` when the command cannot be composed (the account lookup failed),
-    so the caller can fall back to prose rather than print something that
-    will not run.
+    - **``%USERNAME%``** expands in ``cmd.exe`` alone; pasted into PowerShell
+      it hands ``icacls`` a literal string it cannot map. The resolved
+      account name works in every shell.
+    - **``/inheritance:r`` removes only *inherited* entries.** An explicit
+      non-owner ACE survives it, and ``icacls`` still exits 0 — so a
+      single-command remedy reports success while leaving the file exposed,
+      and the next start refuses again with nothing left to try. This mirrors
+      :func:`set_owner_only`'s second phase, emitting one removal per
+      offending principal.
+
+    Returned as one command per line rather than joined: ``;`` chains in
+    PowerShell but not ``cmd.exe``, and the point is a paste that runs
+    anywhere. ``None`` when the commands cannot be composed (the account
+    lookup failed), so the caller can fall back to prose rather than print
+    something that will not run.
     """
     if os.name == "posix":
-        return f"chmod {'700' if path.is_dir() else '600'} {path}"
+        # Quoted for the same reason the Windows branch below quotes: the
+        # macOS default data directory is ~/Library/Application Support/…,
+        # so an unquoted path splits into three arguments and chmod either
+        # fails or hits the wrong file while the exposure survives.
+        return f"chmod {'700' if path.is_dir() else '600'} {shlex.quote(str(path))}"
     try:
         user = _current_windows_user()
-    # whoami unreachable as well as failing — the same fail-open rule.
+        others = _offending_principals(path)
+    # whoami or icacls unreachable as well as failing — the same fail-open rule.
     except (PermissionSetError, OSError):  # fmt: skip
         return None
-    return f'icacls "{path}" /inheritance:r /grant:r "{user}:(F)"'
+    lines = [f'icacls "{path}" /inheritance:r /grant:r "{user}:(F)"']
+    lines += [f'icacls "{path}" /remove:g "{_removal_target(p)}"' for p in others]
+    return "\n".join(lines)
 
 
 # Identities whose presence says nothing about exposure (ADR-0066): the two

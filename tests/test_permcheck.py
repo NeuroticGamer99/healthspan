@@ -8,6 +8,7 @@ Cross-Platform Testing).
 """
 
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -131,6 +132,31 @@ def _refuse_to_repair(_path: Path) -> None:
 
 def _always_exposed(_path: Path, *, acl_scan: bool = True) -> str | None:
     return "mode -rw-r--r--"
+
+
+def _silent_noop(_path: Path) -> None:
+    """A repair that raises nothing and changes nothing."""
+
+
+def test_repair_that_changes_nothing_does_not_claim_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Raising nothing is not the same as having worked.
+
+    An ACL edit can exit 0 and leave the entry in place. Reporting success on
+    that basis tells the owner the problem is fixed while the file stays
+    flagged, and the warning then recurs on every start — the opposite of the
+    documented "second start is silent" property.
+    """
+    path = _broad_file(tmp_path / "healthspan.db")
+    monkeypatch.setattr(permcheck, "set_owner_only", _silent_noop)
+
+    warnings: list[str] = []
+    repair_owner_only(path, "database file", warnings.append)
+
+    assert len(warnings) == 1
+    assert "did not clear it" in warnings[0]
+    assert "restricted to owner-only" not in warnings[0]  # no false success
 
 
 def test_unrepairable_file_degrades_to_a_warning(
@@ -271,6 +297,51 @@ def test_windows_detector_reports_a_foreign_principal(tmp_path: Path) -> None:
 
 
 @windows_only
+def test_windows_detector_ignores_a_denial(tmp_path: Path) -> None:
+    """Denying a principal is hardening, and must never read as exposure.
+
+    `icacls` prints `Everyone:(DENY)(R)`, which the naive `:(`-split reads as
+    a principal holding access. Treating it as exposure refuses the owner's
+    passphrase file for tightening it — and `/remove:g` removes grants only,
+    exiting 0 against a deny ACE, so the printed remedy could never clear the
+    refusal it caused. With no override (ADR-0066 §4) that is permanent.
+    """
+    path = tmp_path / "pp.secret"
+    path.write_bytes(b"a perfectly reasonable passphrase\n")
+    set_owner_only(path)
+    subprocess.run(  # noqa: S603 - fixed executable, no shell
+        ["icacls", str(path), "/deny", "*S-1-1-0:(R)"],  # noqa: S607
+        capture_output=True,
+        encoding="oem",
+        errors="replace",
+        check=True,
+    )
+    assert owner_only_exposure(path) is None
+    refuse_if_exposed(path, "passphrase file")  # must not raise
+
+
+@windows_only
+def test_windows_detector_still_reports_a_grant_beside_a_denial(
+    tmp_path: Path,
+) -> None:
+    """Skipping denials must not blind the check to a real grant."""
+    path = tmp_path / "healthspan.db"
+    path.write_bytes(b"ciphertext")
+    set_owner_only(path)
+    for flag, sid in (("/deny", "*S-1-5-32-546"), ("/grant", "*S-1-1-0:(R)")):
+        subprocess.run(  # noqa: S603 - fixed executable, no shell
+            ["icacls", str(path), flag, f"{sid}:(R)" if flag == "/deny" else sid],  # noqa: S607
+            capture_output=True,
+            encoding="oem",
+            errors="replace",
+            check=True,
+        )
+    exposure = owner_only_exposure(path)
+    assert exposure is not None
+    assert "everyone" in exposure.lower()
+
+
+@windows_only
 def test_windows_detector_ignores_system_and_administrators(tmp_path: Path) -> None:
     """The benign-set decision: members of either can rewrite any DACL.
 
@@ -361,6 +432,57 @@ def test_posix_remedy_matches_the_target_kind(tmp_path: Path) -> None:
     assert restrict_command(directory) == f"chmod 700 {directory}"
 
 
+@posix_only
+def test_posix_remedy_quotes_a_path_with_spaces(tmp_path: Path) -> None:
+    """macOS puts the data directory under ~/Library/Application Support/.
+
+    Unquoted, the shell splits that into three arguments and chmod misses
+    the file entirely while reporting nothing useful — and for a passphrase
+    file this message is the only route out of the refusal.
+    """
+    directory = tmp_path / "Application Support"
+    directory.mkdir()
+    target = directory / "healthspan.db"
+    target.write_bytes(b"ciphertext")
+
+    command = restrict_command(target)
+    assert command is not None
+    # The path survives as ONE argument through a real shell parse.
+    assert shlex.split(command) == ["chmod", "600", str(target)]
+
+
+@windows_only
+def test_windows_remedy_actually_clears_the_exposure(tmp_path: Path) -> None:
+    """Run the printed commands and prove the refusal would now pass.
+
+    Asserting the message *mentions* the account is not enough — the earlier
+    single-command form did that while leaving an explicit non-owner ACE in
+    place, and `icacls` exits 0 either way, so the owner would paste it, see
+    success, restart, and be refused again with no override to fall back on.
+    Executed through PowerShell, the shell this project assumes and the one
+    `%USERNAME%` would have failed in.
+    """
+    path = tmp_path / "pp.secret"
+    path.write_bytes(b"a perfectly reasonable passphrase\n")
+    set_owner_only(path)
+    _grant_everyone(path)  # explicit, so /inheritance:r alone will not clear it
+    assert owner_only_exposure(path) is not None
+
+    command = restrict_command(path)
+    assert command is not None
+    for line in command.splitlines():
+        result = subprocess.run(  # noqa: S603 - fixed executable, no shell
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", line],  # noqa: S607
+            capture_output=True,
+            encoding="oem",
+            errors="replace",
+            check=False,
+        )
+        assert result.returncode == 0, f"{line}\n{result.stdout}{result.stderr}"
+
+    assert owner_only_exposure(path) is None
+
+
 @windows_only
 def test_windows_remedy_names_a_resolved_account(tmp_path: Path) -> None:
     """No `%USERNAME%`: it expands in cmd.exe alone.
@@ -380,6 +502,34 @@ def test_windows_remedy_names_a_resolved_account(tmp_path: Path) -> None:
     assert "%USERNAME%" not in message
     assert _current_windows_user() in message
     assert "icacls" in message
+
+
+@windows_only
+@pytest.mark.parametrize(
+    "error",
+    [PermissionSetError("whoami exited 1"), OSError("whoami is not on PATH")],
+    ids=["lookup-failed", "lookup-missing"],
+)
+def test_windows_remedy_is_none_when_the_account_cannot_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """The composer fails open too, not just the detector.
+
+    ADR-0066 §4 has the message fall back to prose when no command can be
+    composed — which only holds if `restrict_command` itself returns None
+    instead of raising out of a refusal path. Patching the real lookup rather
+    than stubbing `restrict_command` wholesale is the point: the mocked-caller
+    test cannot reach this branch.
+    """
+    import healthspan.fsperm as fsperm_mod
+
+    path = _broad_file(tmp_path / "healthspan.db")
+
+    def _raise() -> str:
+        raise error
+
+    monkeypatch.setattr(fsperm_mod, "_current_windows_user", _raise)
+    assert restrict_command(path) is None
 
 
 def _no_command(_path: Path) -> str | None:

@@ -123,8 +123,7 @@ def test_tty_prompt_takes_precedence_over_flag(
 ) -> None:
     # ADR-0039 order: an interactive TTY prompts even if --passphrase-file is
     # set; the file tier is reached only when stdin is neither TTY nor piped.
-    pp = tmp_path / "flag.secret"
-    pp.write_text("from-the-flag\n", encoding="utf-8")
+    pp = _passphrase_file(tmp_path, "flag.secret", "from-the-flag\n")
     got = resolve_passphrase(make_config(), pp, stdin=_Tty(), prompt=lambda: "typed")
     assert got == "typed"
 

@@ -67,6 +67,8 @@ The **startup sweep** is `permcheck.verify_startup_files`, called from two place
 
 Reporting any of them would be noise that trains the owner to ignore the check. Nothing else is exempt — `Everyone`, `Authenticated Users`, `BUILTIN\Users`, and any named account are all real exposures and all reported.
 
+**Denials are not exposure.** `icacls` renders a deny ACE as `Everyone:(DENY)(R)`, which a naive parse reads as a principal holding access. A denial *narrows* access — an owner who explicitly denies a principal has hardened the file — so counting one would refuse a passphrase file for a tightening action. It would also be unfixable: `/remove:g` removes grants only and exits 0 against a deny ACE, so the printed remedy could not clear the refusal it caused, and decision 4 ships no override.
+
 They are matched by *name*, because a name is what `icacls` prints — and those names are localized, so the well-known SIDs are resolved to this machine's names once per process via `LookupAccountSidW`. The English forms stay in the set as a lookup-failure backstop; no system can host a real account literally named `NT AUTHORITY\SYSTEM`, so keeping them costs nothing.
 
 **Cost placement.** The Windows enumeration is one subprocess per path, which decides where each check runs:
@@ -79,7 +81,12 @@ They are matched by *name*, because a name is what `icacls` prints — and those
 ### 4. No override flag and no config key
 There is no `--allow-broad-permissions`, and no `[service]` key that turns the check down. The refusal message names the exact remedy — `chmod 600 <path>` on POSIX, the equivalent `icacls` line on Windows — and the rotation obligation, so the owner is never left guessing what to type.
 
-Because that message is the *only* route out of a refusal, it must run exactly as printed. The Windows line therefore interpolates the **resolved account name**, never `%USERNAME%`: the shell variable expands in `cmd.exe` alone, and pasting it into PowerShell hands `icacls` a literal string it cannot map. If the account lookup fails — the same failure that makes the check itself undeterminable — the message describes the end state in prose instead of printing a command that cannot be composed. [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) §4's posture on the liveness cap governs: a knob is not shipped speculatively, and a deployment that genuinely needs one is a revisit trigger, not a switch shipped ahead of the need. A security check whose first documented response is a bypass flag is a check that will be bypassed.
+Because that message is the *only* route out of a refusal, it must **clear the exposure when run**, which constrains it twice over on Windows:
+
+- It interpolates the **resolved account name**, never `%USERNAME%` — the shell variable expands in `cmd.exe` alone, and pasting it into PowerShell hands `icacls` a literal string it cannot map.
+- It emits **one removal per offending principal** in addition to `/inheritance:r`, mirroring `set_owner_only`'s second phase. `/inheritance:r` clears only *inherited* entries; an explicit non-owner ACE survives it and `icacls` still exits 0, so a single-command remedy would report success while leaving the file exposed and the next start refusing again. The commands are listed one per line rather than chained, because `;` runs in PowerShell but not `cmd.exe`.
+
+If the account lookup fails — the same failure that makes the check itself undeterminable — the message describes the end state in prose instead of printing a command that cannot be composed. [ADR-0049](0049-core-service-skeleton-implementation-decisions.md) §4's posture on the liveness cap governs: a knob is not shipped speculatively, and a deployment that genuinely needs one is a revisit trigger, not a switch shipped ahead of the need. A security check whose first documented response is a bypass flag is a check that will be bypassed.
 
 ### 5. Scope boundary
 Deliberately **not** checked, each with its reason:

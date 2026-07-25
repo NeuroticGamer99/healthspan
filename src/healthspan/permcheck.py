@@ -70,6 +70,17 @@ def repair_owner_only(
             f"and could not be restricted automatically: {exc}. {_remedy(path)}"
         )
         return
+    # Raising nothing is not the same as having worked: an ACL edit can exit
+    # cleanly and leave the entry in place. Re-read before claiming success,
+    # so the message is a verified fact and the documented "second start is
+    # silent" property cannot quietly become a warning on every start.
+    remaining = owner_only_exposure(path, acl_scan=acl_scan)
+    if remaining is not None:
+        warn(
+            f"{description} {path} is accessible beyond its owner ({remaining}); "
+            f"the attempted repair did not clear it. {_remedy(path)}"
+        )
+        return
     warn(
         f"{description} {path} was accessible beyond its owner ({exposure}); "
         "permissions have been restricted to owner-only. This does not undo "
@@ -133,4 +144,10 @@ def _remedy(path: Path) -> str:
             "Restrict it to its owner alone: remove inherited entries and "
             "leave a single full-control grant for your own account."
         )
+    if "\n" in command:
+        # Clearing an explicit non-owner ACE takes a removal per principal;
+        # they are listed rather than chained because `;` runs in PowerShell
+        # but not cmd.exe.
+        listed = "\n".join(f"  {line}" for line in command.splitlines())
+        return f"Restrict it by running:\n{listed}"
     return f"Restrict it with: {command}"
