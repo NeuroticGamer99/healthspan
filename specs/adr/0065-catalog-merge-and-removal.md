@@ -165,8 +165,10 @@ the lock; its report is advisory, and only the executing merge's own preflight i
 *surfaces* for those fixes do not yet exist: there is no delete or correction endpoint
 anywhere in the implemented API (merge and removal are themselves the first write endpoints
 beyond import and entry, §6). The implementing work item must therefore ship the resolution
-path its own refusal report points at — at minimum result deletion, and duplicate-draw
-cleanup for lab merges — or a dirty merge stays loudly blocked until such a surface lands.
+path its own refusal report points at — at minimum result deletion, audited
+framework-range deletion (a range collision survives any value edit, since the colliding
+key remains; only removing one row clears it), and duplicate-draw cleanup for lab
+merges — or a dirty merge stays loudly blocked until such a surface lands.
 
 One boundary is accepted rather than solved: ADR-0027 forbids deleting supersession-chain
 rows, and correction cannot move identity (that categorization is this ADR's own premise) —
