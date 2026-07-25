@@ -96,10 +96,10 @@ A `lab_draws` match is *reused* so its id stays stable and its results stay atta
 {"detail": [{"table": "lab_results", "row_index": 2, "message": "biomarker_id=99 does not exist in biomarkers"}]}
 ```
 
-`data.imported`/`data.corrected` event emission is deferred to Phase 4 with the event bus; the `audit_log` rows are the durable record until then.
+`data.imported`/`data.corrected` event emission is deferred to Phase 4a with the event bus; the `audit_log` rows are the durable record until then.
 
 ### Data query and retrieval
-The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)): generic list/get over the current-state views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)) for the import-populated tables, plus the catalog tables that make their foreign keys interpretable. All routes require scope `read`. Semantic query endpoints (biomarker history, panel by date — the MCP tool shapes in [design-rationale.md](design-rationale.md)) are deferred to Phase 4; the filters below already express them.
+The primary read path for the GUI, MCP server, and CLI. Landed in Phase 2 WI-4 ([ADR-0053](adr/0053-read-endpoint-surface-and-pagination.md)): generic list/get over the current-state views ([ADR-0027](adr/0027-audit-trail-and-corrections.md)) for the import-populated tables, plus the catalog tables that make their foreign keys interpretable. All routes require scope `read`. Semantic query endpoints (biomarker history, panel by date — the MCP tool shapes in [design-rationale.md](design-rationale.md)) are deferred to Phase 4b; the filters below already express them.
 
 | Endpoint | List filters |
 |---|---|
@@ -191,7 +191,7 @@ Defined in [observability.md](observability.md) and [ADR-0040](adr/0040-health-e
 `GET /v1/health/detail` and `GET /v1/metrics` (both `monitor`) landed in Phase 2 WI-2 with the [observability.md](observability.md) response shapes:
 
 - `/v1/health/detail` → `{"status", "version", "schema_version", "db_connected", "uptime_seconds"}`. `status` is `"healthy"` when the service is ready and the database answers `SELECT 1`, else `"unhealthy"`; `db_connected` reflects a real query through the connection pool (this endpoint is authenticated, so the O(1)-no-database rule applies only to liveness). `uptime_seconds` counts from readiness, as an integer.
-- `/v1/metrics` → `{"requests_total", "requests_by_status", "active_jobs", "db_query_count", "uptime_seconds"}`. Request counts come from ASGI middleware and include every HTTP response (liveness and denials included); `requests_by_status` keys are status-code strings. **`active_jobs` is a constant `0` until the job system lands ([ADR-0012](adr/0012-job-abstraction.md), Phase 4)** — the field ships now so the response shape is stable for monitoring clients. `db_query_count` counts SQL statements executed through the Core Service connection pool since startup.
+- `/v1/metrics` → `{"requests_total", "requests_by_status", "active_jobs", "db_query_count", "uptime_seconds"}`. Request counts come from ASGI middleware and include every HTTP response (liveness and denials included); `requests_by_status` keys are status-code strings. **`active_jobs` is a constant `0` until the job system lands ([ADR-0012](adr/0012-job-abstraction.md), Phase 4a)** — the field ships now so the response shape is stable for monitoring clients. `db_query_count` counts SQL statements executed through the Core Service connection pool since startup.
 
 `POST /v1/system/process-reports` (`supervise`, Phase 6 supervision) is not yet implemented.
 
