@@ -38,7 +38,10 @@ review lens, kept lean on purpose.
   credential storage. Flag changes that could touch one without a matching
   ADR/spec note.
 - **Python:** never PEP 758 bare-comma `except A, B:` — always parenthesize
-  exception tuples. **PowerShell:** project files must be read/written with
+  exception tuples. A one-line catch-only clause also needs `# fmt: skip`, or
+  `ruff format` strips the parens back out; a clause binding `as exc`, and one
+  long enough for the formatter to wrap, keep them unaided.
+  **PowerShell:** project files must be read/written with
   explicit BOM-free UTF-8 (`UTF8Encoding($false)`); flag `Get-Content -Raw` or
   `Set-Content` without `-Encoding UTF8`.
 - **Locale invariance.** The project is locale-invariant where it matters; flag

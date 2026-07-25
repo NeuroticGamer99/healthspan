@@ -145,7 +145,10 @@ reviews:
         hash-only credential storage — without a
         corresponding ADR or spec note. Never suggest writing personal health
         values to any path outside specs/personal/. Do NOT write PEP 758
-        bare-comma "except A, B:" — always parenthesize exception tuples.
+        bare-comma "except A, B:" — always parenthesize exception tuples. A
+        one-line catch-only clause additionally needs "# fmt: skip" or ruff
+        format strips the parens back out; a clause binding "as exc", and one
+        long enough that the formatter wraps it, keep them unaided.
 
     - path: "**/*.ps1"
       instructions: >-

@@ -44,7 +44,9 @@ Never use `Get-Content -Raw` without `-Encoding UTF8` on project files, and neve
 
 Always parenthesize — `except (ValueError, OSError):` — never PEP 758's bare-comma `except ValueError, OSError:`. The two forms are semantically identical, but the bare one visually aliases the removed Python-2 `except A, e:` (which bound the second name), so it reads as a bug to reviewers and tools alike; it has cost review attention repeatedly, once escalating to a false import-breaking blocker.
 
-`ruff format` at the pinned version **strips those parentheses back out** of a catch-only clause — a clause binding `as exc` keeps them. Add `# fmt: skip` to the `except` line to hold them, as `src/healthspan/pool.py` does. Re-check any multi-exception `except` after the formatter has run: the formatter, not the author, is what reintroduces the bare form.
+`ruff format` at the pinned version **strips those parentheses back out** of a catch-only clause that fits on one line — a clause binding `as exc` keeps them. Add `# fmt: skip` to the `except` line to hold them, as `src/healthspan/pool.py` does. Re-check any multi-exception `except` after the formatter has run: the formatter, not the author, is what reintroduces the bare form.
+
+`# fmt: skip` suits only a clause that stays on one line, because it suppresses wrapping too: a guarded line past 88 columns fails `ruff check` (E501) with no formatter fix, and the guard's own 13 characters can be what pushes it there. A longer clause needs no guard — the formatter wraps it into the parenthesized multi-line form and then leaves it alone. A trailing comma after the last exception holds that multi-line form at any length.
 
 ## ADR governance
 
