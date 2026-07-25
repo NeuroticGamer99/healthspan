@@ -6,13 +6,20 @@ removed, a single full-control grant to the current user (``icacls``, the
 supported command-line surface for DACL edits), then removal of any
 explicit grant other principals already held (some environments stamp
 SYSTEM/Administrators explicitly on new files).
+
+:func:`owner_only_exposure` is the reader half added by ADR-0066: protection
+set at creation says nothing about a file that arrived from somewhere else,
+so the startup checks re-read it. Policy — repair, refuse, or report — lives
+in :mod:`healthspan.permcheck`; this module only sets and detects.
 """
 
 import functools
 import os
 import re
+import shlex
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 # Console tools (whoami, icacls) emit the OEM code page when piped, not the
@@ -69,9 +76,10 @@ def _set_owner_only_windows(path: Path) -> None:
     # explicit grant with full control.
     _icacls(path, "/inheritance:r", "/grant:r", f"{user}:(F)")
     # /inheritance:r leaves *explicit* entries other principals may already
-    # hold; remove every grant that is not the current user's. Unmappable
+    # hold — after it, every principal the listing still reports is explicit.
+    # Remove every grant that is not the current user's; unmappable
     # logon-session pseudo-names are removed via their reconstructed SID.
-    for principal in _explicit_principals(path):
+    for principal in _acl_principals(path):
         if principal.lower() != user.lower():
             _icacls(path, "/remove:g", _removal_target(principal))
 
@@ -102,8 +110,21 @@ def _icacls(path: Path, *args: str) -> str:
     return result.stdout
 
 
-def _explicit_principals(path: Path) -> list[str]:
-    """Principals holding ACL entries on ``path``, per ``icacls`` listing."""
+def _acl_principals(path: Path) -> list[str]:
+    """Principals *granted* access on ``path``, per the ``icacls`` listing.
+
+    Inherited and explicit grants alike — the listing does not distinguish
+    them here, and both grant real access, so both matter to the reader side.
+
+    **Denials are excluded.** ``icacls`` renders them with a ``(DENY)`` flag
+    (``Everyone:(DENY)(R)``, or ``Everyone:(I)(DENY)(R)`` when inherited) and
+    a denial narrows access rather than widening it — an owner who explicitly
+    denies a principal has *hardened* the file. Counting one as exposure
+    would refuse a passphrase file for a tightening action, and `/remove:g`
+    removes grants only: it exits 0 against a deny ACE and leaves it in
+    place, so the printed remedy could never clear the refusal it caused
+    (ADR-0066 ships no override). Verified against real ``icacls`` output.
+    """
     listing = _icacls(path)
     principals: list[str] = []
     prefix = str(path)
@@ -111,9 +132,12 @@ def _explicit_principals(path: Path) -> list[str]:
         line = raw.strip()
         if line.startswith(prefix):
             line = line[len(prefix) :].strip()
-        if ":(" not in line:
+        principal, separator, entry = line.partition(":(")
+        if not separator:
             continue
-        principals.append(line.split(":(", 1)[0].strip())
+        if "(DENY)" in f"({entry}".upper():
+            continue
+        principals.append(principal.strip())
     return principals
 
 
@@ -132,3 +156,187 @@ def _current_windows_user() -> str:
     if result.returncode != 0 or not user:
         raise PermissionSetError("could not determine the current user (whoami)")
     return user
+
+
+# --------------------------------------------------------------------------
+# Reader side (ADR-0066): has a protected file drifted broader than its owner?
+# --------------------------------------------------------------------------
+
+
+def owner_only_exposure(path: Path, *, acl_scan: bool = True) -> str | None:
+    """Describe how ``path`` is reachable beyond its owner, else ``None``.
+
+    POSIX reads the mode bits. Windows mode bits carry no ACL information
+    (the reason :func:`set_owner_only` exists), so the check enumerates ACL
+    principals through ``icacls`` — one subprocess per path. Callers on a
+    per-command hot path pass ``acl_scan=False`` and let the startup sweep
+    carry the Windows depth; on POSIX the flag is inert.
+
+    A check that *cannot* run reports clean rather than exposed. The writer
+    side still enforces owner-only at creation, and a detector that failed
+    closed on an ``icacls`` hiccup would lock the owner out of their own
+    data — the failure mode ADR-0066 refuses to ship.
+    """
+    if os.name == "posix":
+        try:
+            mode = path.stat().st_mode
+        except OSError:
+            return None
+        return f"mode {stat.filemode(mode)}" if mode & 0o077 else None
+    if not acl_scan:
+        return None
+    try:
+        others = _offending_principals(path)
+    # OSError is the probe tools themselves being unreachable — a
+    # FileNotFoundError out of subprocess when icacls or whoami is not on
+    # PATH. Letting it escape would abort startup with a traceback, the
+    # fail-closed behavior the docstring above rules out. Parenthesized with
+    # a `fmt: skip` guard per the project's multi-except convention (pool.py).
+    except (PermissionSetError, OSError):  # fmt: skip
+        return None
+    return "ACL grants held by " + ", ".join(others) if others else None
+
+
+def _offending_principals(path: Path) -> list[str]:
+    """Principals on ``path``'s ACL that are neither its owner nor benign.
+
+    The single source of truth for "who should not be here": the exposure
+    message names them, and :func:`restrict_command` emits a removal for each.
+    Deriving both from one enumeration is what keeps the reported problem and
+    the printed fix from disagreeing.
+    """
+    user = _current_windows_user().lower()
+    benign = _benign_windows_principals()
+    return sorted(
+        {
+            p
+            for p in _acl_principals(path)
+            if p.lower() != user and p.lower() not in benign
+        }
+    )
+
+
+def restrict_command(path: Path) -> str | None:
+    """The command(s) that restore owner-only protection on ``path``.
+
+    ADR-0066 ships no override for a permission refusal, so this is the
+    owner's only route out of one — it has to actually clear the exposure
+    when run, and two things independently break that:
+
+    - **``%USERNAME%``** expands in ``cmd.exe`` alone; pasted into PowerShell
+      it hands ``icacls`` a literal string it cannot map. The resolved
+      account name works in every shell.
+    - **``/inheritance:r`` removes only *inherited* entries.** An explicit
+      non-owner ACE survives it, and ``icacls`` still exits 0 — so a
+      single-command remedy reports success while leaving the file exposed,
+      and the next start refuses again with nothing left to try. This mirrors
+      :func:`set_owner_only`'s second phase, emitting one removal per
+      offending principal.
+
+    Returned as one command per line rather than joined: ``;`` chains in
+    PowerShell but not ``cmd.exe``, and the point is a paste that runs
+    anywhere. ``None`` when the commands cannot be composed (the account
+    lookup failed), so the caller can fall back to prose rather than print
+    something that will not run.
+    """
+    if os.name == "posix":
+        # Quoted for the same reason the Windows branch below quotes: the
+        # macOS default data directory is ~/Library/Application Support/…,
+        # so an unquoted path splits into three arguments and chmod either
+        # fails or hits the wrong file while the exposure survives.
+        return f"chmod {'700' if path.is_dir() else '600'} {shlex.quote(str(path))}"
+    try:
+        user = _current_windows_user()
+        others = _offending_principals(path)
+    # whoami or icacls unreachable as well as failing — the same fail-open rule.
+    except (PermissionSetError, OSError):  # fmt: skip
+        return None
+    lines = [f'icacls "{path}" /inheritance:r /grant:r "{user}:(F)"']
+    lines += [f'icacls "{path}" /remove:g "{_removal_target(p)}"' for p in others]
+    return "\n".join(lines)
+
+
+# Identities whose presence says nothing about exposure (ADR-0066): the two
+# that can already take ownership and rewrite any DACL, so reporting them
+# would be noise that trains the owner to ignore the check — SYSTEM and
+# BUILTIN\Administrators — and the owner placeholders, which resolve to
+# whoever owns the object and can never name a third party. OWNER RIGHTS in
+# particular rides the ACL of ordinary files under a user profile.
+#
+# icacls prints *names*, and those names are localized, so the well-known
+# SIDs are resolved to this machine's names once per process. The English
+# forms stay in the set as a backstop for a failed lookup: no system can
+# host a real account literally named "NT AUTHORITY\SYSTEM".
+_BENIGN_WINDOWS_SIDS = (
+    "S-1-5-18",  # NT AUTHORITY\SYSTEM
+    "S-1-5-32-544",  # BUILTIN\Administrators
+    "S-1-3-4",  # OWNER RIGHTS — the object's own owner, rights made explicit
+    "S-1-3-0",  # CREATOR OWNER — inheritable placeholder for a child's creator
+)
+_BENIGN_WINDOWS_FALLBACK = (
+    "NT AUTHORITY\\SYSTEM",
+    "BUILTIN\\Administrators",
+    "OWNER RIGHTS",
+    "CREATOR OWNER",
+)
+
+
+@functools.cache
+def _benign_windows_principals() -> frozenset[str]:
+    names = {name.lower() for name in _BENIGN_WINDOWS_FALLBACK}
+    for sid in _BENIGN_WINDOWS_SIDS:
+        resolved = _account_name_for_sid(sid)
+        if resolved is not None:
+            names.add(resolved.lower())
+    return frozenset(names)
+
+
+def _account_name_for_sid(sid_text: str) -> str | None:
+    """``DOMAIN\\Name`` for a well-known SID, in the form icacls prints.
+
+    ``sys.platform`` rather than this module's usual ``os.name``: it is the
+    guard the type checker narrows on, so the Windows-only ``ctypes`` surface
+    is not analyzed on the Linux leg that runs the gate.
+    """
+    if sys.platform != "win32":  # pragma: no cover - Windows-only lookup
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    sid = ctypes.c_void_p()
+    if not advapi32.ConvertStringSidToSidW(sid_text, ctypes.byref(sid)):
+        return None
+    try:
+        # First call sizes the buffers (both counts come back set); the
+        # second fills them.
+        name_len = wintypes.DWORD(0)
+        domain_len = wintypes.DWORD(0)
+        use = wintypes.DWORD(0)
+        advapi32.LookupAccountSidW(
+            None,
+            sid,
+            None,
+            ctypes.byref(name_len),
+            None,
+            ctypes.byref(domain_len),
+            ctypes.byref(use),
+        )
+        if not name_len.value:
+            return None
+        name = ctypes.create_unicode_buffer(name_len.value)
+        domain = ctypes.create_unicode_buffer(max(domain_len.value, 1))
+        if not advapi32.LookupAccountSidW(
+            None,
+            sid,
+            name,
+            ctypes.byref(name_len),
+            domain,
+            ctypes.byref(domain_len),
+            ctypes.byref(use),
+        ):
+            return None
+    finally:
+        kernel32.LocalFree(sid)
+    return f"{domain.value}\\{name.value}" if domain.value else name.value

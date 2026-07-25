@@ -1,6 +1,7 @@
 """Test-suite bootstrap: scripts/ importability, keychain isolation, helpers."""
 
 import os
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -104,6 +105,43 @@ def write_file() -> Callable[[Path, str], Path]:
         return path
 
     return _write
+
+
+# --- Permission-exposure helpers (ADR-0066) -----------------------------------
+# Shared rather than per-module: the Windows branch encodes ADR-0066's
+# "foreign principal" semantics, so a private copy per test module would have to
+# be found and changed in lockstep whenever that set or the icacls invocation
+# moves. Three copies had already accumulated before this was centralized.
+
+
+def grant_everyone(path: Path) -> None:
+    """Give Everyone read access on Windows, as an *explicit* (uninherited) ACE.
+
+    ``S-1-1-0`` is Everyone — neither the file's owner nor one of the
+    principals ADR-0066 treats as benign, so the check must report it. Explicit
+    rather than inherited on purpose: ``/inheritance:r`` alone cannot clear it,
+    which is the case the remedy has to handle.
+    """
+    subprocess.run(  # noqa: S603 - fixed executable, no shell
+        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
+        capture_output=True,
+        encoding="oem",
+        errors="replace",
+        check=True,
+    )
+
+
+def expose_to_others(path: Path) -> Path:
+    """Make ``path`` readable beyond its owner, on either platform.
+
+    The halves are not interchangeable: POSIX carries the exposure in mode
+    bits, while Windows mode bits hold no ACL information and need a real ACE.
+    """
+    if os.name == "posix":
+        path.chmod(0o644)
+    else:
+        grant_everyone(path)
+    return path
 
 
 # --- Log-canary capture under parallel execution (ADR-0063) --------------------

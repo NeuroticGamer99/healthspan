@@ -11,6 +11,7 @@ from pathlib import Path
 
 import typer
 
+from healthspan import permcheck
 from healthspan.config import Config, ConfigError, load_config
 from healthspan.locking import InstanceLock, InstanceLockHeldError
 
@@ -35,6 +36,11 @@ def fail(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
+def warn_cli(message: str) -> None:
+    """Report a non-fatal finding on stderr, in load_config's format."""
+    typer.echo(f"warning: {message}", err=True)
+
+
 def load_config_or_exit(ctx: typer.Context) -> Config:
     try:
         return load_config(flag=state(ctx).config_flag)
@@ -52,6 +58,11 @@ def exclusive_database_access(cfg: Config) -> Generator[None]:
     a second writer risks corruption (ADR-0033/0038/0042). The advisory lock
     (ADR-0042) is the detector: acquired fail-fast before any prompt, held
     through the operation, released after.
+
+    Holding the lock is also the moment the platform takes hold of the
+    database outside the Core Service, so it is where the ADR-0066 startup
+    permission sweep runs for these commands — the same set the service
+    checks, under the same lock, before any prompt.
     """
     lock = InstanceLock(cfg.database.path)
     try:
@@ -63,6 +74,12 @@ def exclusive_database_access(cfg: Config) -> Generator[None]:
             "database; stop it first (ADR-0038/0042)."
         ) from exc
     try:
+        permcheck.verify_startup_files(
+            config_path=cfg.path,
+            database_path=cfg.database.path,
+            backup_dir=cfg.backup.directory,
+            warn=warn_cli,
+        )
         yield
     finally:
         lock.release()

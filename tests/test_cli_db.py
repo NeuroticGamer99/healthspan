@@ -3,10 +3,13 @@
 from pathlib import Path
 
 import pytest
+from conftest import expose_to_others
 from typer.testing import CliRunner
 
 from healthspan.backup import list_backups
 from healthspan.cli import app
+from healthspan.fsperm import owner_only_exposure
+from healthspan.keyparams import sidecar_path
 from healthspan.migrate import target_version
 
 runner = CliRunner()
@@ -106,3 +109,81 @@ def test_restore_latest_without_backups_fails(initialized: Path) -> None:
     result = _run(initialized, ["db", "restore", "--latest"], f"{PASSPHRASE}\n")
     assert result.exit_code == 1
     assert "no published backups" in result.output
+
+
+# --------------------------------------------------------------------------
+# Backup-archive permission verification (ADR-0066 decision 3)
+# --------------------------------------------------------------------------
+
+
+def test_restore_repairs_an_exposed_source_pair(initialized: Path) -> None:
+    """The tar-arrival case: a backup handed to restore from elsewhere.
+
+    ``db backup`` protects what it publishes, so the only way a published
+    pair is broad is that it came from somewhere the platform did not write.
+    """
+    assert _backup(initialized).exit_code == 0
+    backup = list_backups(initialized.parent / "backups")[0]
+    expose_to_others(backup)
+    expose_to_others(sidecar_path(backup))
+
+    result = _run(initialized, ["db", "restore", str(backup)], f"{PASSPHRASE}\n")
+
+    assert result.exit_code == 0, result.output
+    assert "accessible beyond its owner" in result.output
+    assert owner_only_exposure(backup) is None
+    assert owner_only_exposure(sidecar_path(backup)) is None
+
+
+def test_backup_sweeps_the_retained_archive(initialized: Path) -> None:
+    """A drifted older backup is repaired the next time the archive is written."""
+    assert _backup(initialized).exit_code == 0
+    older = list_backups(initialized.parent / "backups")[0]
+    expose_to_others(older)
+
+    result = _backup(initialized)
+
+    assert result.exit_code == 0, result.output
+    assert owner_only_exposure(older) is None
+
+
+def test_exclusive_access_repairs_every_swept_surface(initialized: Path) -> None:
+    """The sweep rides the lock, so every direct-database command carries it.
+
+    All four surfaces go through the real `exclusive_database_access` wiring:
+    a dropped config path or backup directory would survive every other test.
+    """
+    backups = initialized.parent / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    database = initialized.parent / "hs.db"
+    surfaces = [initialized, database, sidecar_path(database), backups]
+    for surface in surfaces:
+        expose_to_others(surface)
+        assert owner_only_exposure(surface) is not None  # the setup took hold
+
+    result = _run(initialized, ["db", "migrate"], f"{PASSPHRASE}\n")
+
+    assert result.exit_code == 0, result.output
+    assert "accessible beyond its owner" in result.output
+    for surface in surfaces:
+        assert owner_only_exposure(surface) is None, surface
+
+
+def test_command_runs_when_a_repair_cannot_be_applied(
+    initialized: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Degrade to a warning, not to a refusal — through a real command."""
+    from healthspan import permcheck
+    from healthspan.fsperm import PermissionSetError
+
+    def _deny(_path: Path) -> None:
+        raise PermissionSetError("simulated read-only mount")
+
+    expose_to_others(initialized.parent / "hs.db")
+    monkeypatch.setattr(permcheck, "set_owner_only", _deny)
+
+    result = _run(initialized, ["db", "migrate"], f"{PASSPHRASE}\n")
+
+    assert result.exit_code == 0, result.output
+    assert "could not be restricted automatically" in result.output
+    assert "simulated read-only mount" in result.output

@@ -81,7 +81,7 @@ Numbered, testable invariants the architecture must preserve. **Any ADR that wou
 
 **Rate limiting and audit.** Failed authentication attempts are rate-limited with bounded exponential backoff, including from localhost — keyed on (source address, advisory token-name prefix) with a per-address aggregate cap, and throttling failures only: a valid credential is never delayed, so one misconfigured client cannot lock out the other local clients (ADR-0026). Auth events (token *name*, endpoint, outcome — never token values, never health data) are recorded in an append-only audit log; all `admin`-scoped actions are always audited. See ADR-0026 and INV-7.
 
-**Config file permissions.** The TOML config file must be created with owner-read-only permissions (`chmod 600` equivalent). The platform should warn on startup if the config file has broader permissions.
+**Config file permissions.** The TOML config file must be created with owner-read-only permissions (`chmod 600` equivalent). If it is found broader on load, the platform restores owner-only protection and reports having done so ([ADR-0066](adr/0066-startup-permission-verification.md)).
 
 **No token in URLs.** Bearer tokens must only appear in the `Authorization` header, never in query strings or URL paths (where they would appear in server logs and browser history).
 
@@ -152,7 +152,14 @@ This applies to: import staging files, export staging files, database migration 
 
 **Single database owner.** Only the Core Service process holds a runtime database connection. The CLI holds a connection only for an explicitly invoked `db`/`keys` maintenance subcommand — `db migrate`, `db backup`, `db encrypt` ([ADR-0033](adr/0033-plaintext-artifact-disposal.md)), `keys change-passphrase`, `keys rotate-secret-key` — and never while Core Service is running (each of these refuses to start against a live service — [ADR-0038](adr/0038-backup-execution-and-verification.md), [ADR-0028](adr/0028-key-derivation-and-rotation.md), [ADR-0033](adr/0033-plaintext-artifact-disposal.md)). No other process accesses the database directly, and no two processes hold connections to the live file at the same time.
 
-**Database file permissions.** The SQLite file must be created with owner-read-write-only permissions (`chmod 600` equivalent). The platform should warn on startup if the database file has broader permissions.
+**Database file permissions.** The SQLite file must be created with owner-read-write-only permissions (`chmod 600` equivalent).
+
+**Startup permission verification ([ADR-0066](adr/0066-startup-permission-verification.md)).** Protection set at creation says nothing about a file that arrived from a restored archive, a cloud-sync copy, or a permissive parent directory, so the permissions are re-read wherever the platform takes hold of the database — Core Service start, and each sanctioned direct-database command. The posture is graded by what the file holds:
+
+- **Repaired in place and reported** — the database, its `.keyparams` sidecar, the backup directory, published backups (checked when a backup is written or restored), and the config file. The report states that the repair does not undo a read that already happened. A repair the platform cannot apply degrades to a warning naming the remedy; it never blocks the owner from their own data.
+- **Refused, never repaired** — the `passphrase_file`. It may belong to an OS secret facility the platform must not rewrite, and a plaintext secret that has been readable beyond its owner is disclosed; startup stops and names the rotation obligation instead of hiding the exposure behind a corrected mode bit.
+
+On POSIX the check reads mode bits. On Windows, where mode bits carry no ACL information, it enumerates ACL principals and reports any principal other than the file's owner, excluding `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators` (whose members can rewrite any DACL regardless) and the owner placeholders `OWNER RIGHTS` and `CREATOR OWNER` (which name no principal other than the owner). There is no flag or config key that disables the check.
 
 **No database credentials in logs.** The database path may appear in startup logs. Query contents and result values must not.
 
