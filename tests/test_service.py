@@ -3,7 +3,6 @@
 import dataclasses
 import io
 import os
-import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import Any
 import httpx
 import pytest
 import sqlcipher3
+from conftest import expose_to_others
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -180,9 +180,7 @@ def test_passphrase_file_reads_exactly_the_first_line(
     different key, so the database silently fails to open with no hint that
     an invisible byte is the cause.
     """
-    path = tmp_path / "pp.secret"
-    path.write_text(f"{PASSPHRASE}{suffix}", encoding="utf-8")
-    set_owner_only(path)
+    path = _passphrase_file(tmp_path, content=f"{PASSPHRASE}{suffix}")
     assert resolve_passphrase(make_config(), path, stdin=io.StringIO("")) == PASSPHRASE
 
 
@@ -203,25 +201,10 @@ def test_no_channel_message_forbids_env_var(
 # --------------------------------------------------------------------------
 
 
-def _expose(path: Path) -> Path:
-    """Make a file readable beyond its owner, on either platform."""
-    if os.name == "posix":
-        path.chmod(0o644)
-    else:
-        subprocess.run(  # noqa: S603 - fixed executable, no shell
-            ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
-            capture_output=True,
-            encoding="oem",
-            errors="replace",
-            check=True,
-        )
-    return path
-
-
 def test_exposed_config_passphrase_file_refuses_startup(
     make_config: Callable[[], Config], tmp_path: Path
 ) -> None:
-    pp = _expose(_passphrase_file(tmp_path))
+    pp = expose_to_others(_passphrase_file(tmp_path))
     cfg = make_config()
     cfg = dataclasses.replace(
         cfg, service=dataclasses.replace(cfg.service, passphrase_file=pp)
@@ -239,7 +222,7 @@ def test_exposed_passphrase_file_flag_refuses_startup(
 ) -> None:
     # The check lives at the read, so it covers the flag tier identically —
     # the flag is not a way around the config key's protection.
-    pp = _expose(_passphrase_file(tmp_path, "flag.secret"))
+    pp = expose_to_others(_passphrase_file(tmp_path, "flag.secret"))
     with pytest.raises(ServiceStartupError, match="accessible beyond its owner"):
         resolve_passphrase(make_config(), pp, stdin=io.StringIO(""))
 
@@ -247,7 +230,7 @@ def test_exposed_passphrase_file_flag_refuses_startup(
 def test_refused_passphrase_file_is_never_repaired(
     make_config: Callable[[], Config], tmp_path: Path
 ) -> None:
-    pp = _expose(_passphrase_file(tmp_path))
+    pp = expose_to_others(_passphrase_file(tmp_path))
     with pytest.raises(ServiceStartupError):
         resolve_passphrase(make_config(), pp, stdin=io.StringIO(""))
     # Repairing would leave the deployment startable while the passphrase
@@ -260,7 +243,7 @@ def test_unread_passphrase_file_is_not_checked(
 ) -> None:
     # ADR-0039's channel order still wins: a TTY prompt never reaches the
     # file tier, so an exposed file that is never read cannot block startup.
-    pp = _expose(_passphrase_file(tmp_path, "flag.secret"))
+    pp = expose_to_others(_passphrase_file(tmp_path, "flag.secret"))
     got = resolve_passphrase(make_config(), pp, stdin=_Tty(), prompt=lambda: "typed")
     assert got == "typed"
 
@@ -284,7 +267,7 @@ def test_build_runtime_repairs_every_swept_surface(
         cfg.backup.directory,
     ]
     for surface in surfaces:
-        _expose(surface)
+        expose_to_others(surface)
         assert owner_only_exposure(surface) is not None  # the setup took hold
 
     runtime = build_runtime(cfg, passphrase_file_flag=_passphrase_file(tmp_path))
@@ -311,7 +294,7 @@ def test_startup_survives_a_repair_it_cannot_apply(
 
     cfg = load_config(flag=_init(tmp_path, migrate=True))
     pp = _passphrase_file(tmp_path)
-    _expose(cfg.database.path)
+    expose_to_others(cfg.database.path)
 
     def _deny(_path: Path) -> None:
         raise PermissionSetError("simulated read-only mount")

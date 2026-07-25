@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import expose_to_others, grant_everyone
 
 from healthspan import permcheck
 from healthspan.fsperm import (
@@ -39,23 +40,7 @@ windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL b
 def _broad_file(path: Path, content: bytes = b"ciphertext") -> Path:
     """A file the platform did not create: readable beyond its owner."""
     path.write_bytes(content)
-    if os.name == "posix":
-        path.chmod(0o644)
-    else:
-        _grant_everyone(path)
-    return path
-
-
-def _grant_everyone(path: Path) -> None:
-    # S-1-1-0 is Everyone — a principal that is neither the owner nor one of
-    # the two ADR-0066 treats as benign, so it must be reported.
-    subprocess.run(  # noqa: S603 - fixed executable, no shell
-        ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
-        capture_output=True,
-        encoding="oem",
-        errors="replace",
-        check=True,
-    )
+    return expose_to_others(path)
 
 
 # --------------------------------------------------------------------------
@@ -231,7 +216,7 @@ def test_startup_sweep_covers_every_surface(tmp_path: Path) -> None:
     if os.name == "posix":
         backups.chmod(0o755)
     else:
-        _grant_everyone(backups)
+        grant_everyone(backups)
 
     warnings: list[str] = []
     verify_startup_files(
@@ -287,7 +272,7 @@ def test_windows_detector_reports_a_foreign_principal(tmp_path: Path) -> None:
     path.write_bytes(b"ciphertext")
     set_owner_only(path)
     assert owner_only_exposure(path) is None
-    _grant_everyone(path)
+    grant_everyone(path)
     exposure = owner_only_exposure(path)
     assert exposure is not None
     assert "ACL grants held by" in exposure
@@ -328,9 +313,9 @@ def test_windows_detector_still_reports_a_grant_beside_a_denial(
     path = tmp_path / "healthspan.db"
     path.write_bytes(b"ciphertext")
     set_owner_only(path)
-    for flag, sid in (("/deny", "*S-1-5-32-546"), ("/grant", "*S-1-1-0:(R)")):
+    for flag, ace in (("/deny", "*S-1-5-32-546:(R)"), ("/grant", "*S-1-1-0:(R)")):
         subprocess.run(  # noqa: S603 - fixed executable, no shell
-            ["icacls", str(path), flag, f"{sid}:(R)" if flag == "/deny" else sid],  # noqa: S607
+            ["icacls", str(path), flag, ace],  # noqa: S607
             capture_output=True,
             encoding="oem",
             errors="replace",
@@ -383,7 +368,7 @@ def test_acl_scan_can_be_skipped_on_the_hot_path(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_bytes(b"config_version = 1\n")
     set_owner_only(path)
-    _grant_everyone(path)
+    grant_everyone(path)
     assert owner_only_exposure(path) is not None
     # load_config passes acl_scan=False so no CLI invocation spawns icacls;
     # the startup sweep is where the config file gets its full-depth look.
@@ -465,7 +450,7 @@ def test_windows_remedy_actually_clears_the_exposure(tmp_path: Path) -> None:
     path = tmp_path / "pp.secret"
     path.write_bytes(b"a perfectly reasonable passphrase\n")
     set_owner_only(path)
-    _grant_everyone(path)  # explicit, so /inheritance:r alone will not clear it
+    grant_everyone(path)  # explicit, so /inheritance:r alone will not clear it
     assert owner_only_exposure(path) is not None
 
     command = restrict_command(path)
@@ -559,7 +544,12 @@ def test_unreadable_stat_reports_clean(
 ) -> None:
     path = _broad_file(tmp_path / "healthspan.db")
 
-    def _boom(_self: Path) -> os.stat_result:
+    # Accepts and ignores kwargs: this replaces Path.stat for *every* caller
+    # while installed, and Path.stat takes follow_symlinks. Without it, a
+    # future `path.stat(follow_symlinks=False)` in fsperm would raise
+    # TypeError instead of the OSError the fail-open branch handles — the test
+    # would keep passing while no longer covering the branch it names.
+    def _boom(_self: Path, **_kwargs: object) -> os.stat_result:
         raise OSError("stat failed")
 
     monkeypatch.setattr(Path, "stat", _boom)

@@ -1,10 +1,9 @@
 """CLI surface for ``db backup`` and ``db restore`` (ADR-0038)."""
 
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import expose_to_others
 from typer.testing import CliRunner
 
 from healthspan.backup import list_backups
@@ -117,21 +116,6 @@ def test_restore_latest_without_backups_fails(initialized: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def _expose(path: Path) -> Path:
-    """Make a file readable beyond its owner, on either platform."""
-    if os.name == "posix":
-        path.chmod(0o644)
-    else:
-        subprocess.run(  # noqa: S603 - fixed executable, no shell
-            ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],  # noqa: S607
-            capture_output=True,
-            encoding="oem",
-            errors="replace",
-            check=True,
-        )
-    return path
-
-
 def test_restore_repairs_an_exposed_source_pair(initialized: Path) -> None:
     """The tar-arrival case: a backup handed to restore from elsewhere.
 
@@ -140,8 +124,8 @@ def test_restore_repairs_an_exposed_source_pair(initialized: Path) -> None:
     """
     assert _backup(initialized).exit_code == 0
     backup = list_backups(initialized.parent / "backups")[0]
-    _expose(backup)
-    _expose(sidecar_path(backup))
+    expose_to_others(backup)
+    expose_to_others(sidecar_path(backup))
 
     result = _run(initialized, ["db", "restore", str(backup)], f"{PASSPHRASE}\n")
 
@@ -155,7 +139,7 @@ def test_backup_sweeps_the_retained_archive(initialized: Path) -> None:
     """A drifted older backup is repaired the next time the archive is written."""
     assert _backup(initialized).exit_code == 0
     older = list_backups(initialized.parent / "backups")[0]
-    _expose(older)
+    expose_to_others(older)
 
     result = _backup(initialized)
 
@@ -174,7 +158,7 @@ def test_exclusive_access_repairs_every_swept_surface(initialized: Path) -> None
     database = initialized.parent / "hs.db"
     surfaces = [initialized, database, sidecar_path(database), backups]
     for surface in surfaces:
-        _expose(surface)
+        expose_to_others(surface)
         assert owner_only_exposure(surface) is not None  # the setup took hold
 
     result = _run(initialized, ["db", "migrate"], f"{PASSPHRASE}\n")
@@ -195,7 +179,7 @@ def test_command_runs_when_a_repair_cannot_be_applied(
     def _deny(_path: Path) -> None:
         raise PermissionSetError("simulated read-only mount")
 
-    _expose(initialized.parent / "hs.db")
+    expose_to_others(initialized.parent / "hs.db")
     monkeypatch.setattr(permcheck, "set_owner_only", _deny)
 
     result = _run(initialized, ["db", "migrate"], f"{PASSPHRASE}\n")
