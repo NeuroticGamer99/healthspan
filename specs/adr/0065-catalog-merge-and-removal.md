@@ -157,9 +157,9 @@ write (mirroring [ADR-0004](0004-data-ingestion-strategy.md)'s collect-all-error
 validation). Two constraints keep the report the only failure mode: the executing merge's
 preflight runs under its own `BEGIN IMMEDIATE` — [ADR-0057](0057-reference-data-and-catalog-import-implementation-decisions.md)'s
 established rule that a read-then-write check is race-free only while the write lock is
-held, already implemented in the import path — and an `IntegrityError` raised by the merge
-writes regardless surfaces as this same refusal report, never as a raw error (the
-"database decides" outcome this ADR exists to eliminate). A dry-run's read may sit outside
+held, already implemented in the import path — and an `IntegrityError` that the merge's
+writes raise despite the preflight surfaces as this same refusal report, never as a raw
+database error (the "database decides" outcome this ADR exists to eliminate). A dry-run's read may sit outside
 the lock; its report is advisory, and only the executing merge's own preflight is binding. The owner resolves each pair under ADR-0027's correction and delete
 *semantics* — the colliding rows are ordinary data errors — then re-runs the merge. The
 *surfaces* for those fixes do not yet exist: there is no delete or correction endpoint
