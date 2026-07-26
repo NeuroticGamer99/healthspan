@@ -1699,18 +1699,29 @@ def _undercounted_state(age: timedelta) -> Any:
     )
 
 
-def test_the_grace_window_boundary_is_where_the_reading_flips() -> None:
+def test_the_grace_window_flips_the_reading_either_side_of_it() -> None:
     # The window is the whole mechanism, so pin both sides of it rather than
-    # only the far extremes. Strictly less-than: at exactly COMMENT_GRACE the
-    # comments are no longer considered in flight.
+    # only the far extremes. `undercounted` is the raw gap and holds either
+    # way; only `comments_pending` — the gap *plus* the window — flips.
+    #
+    # These are just-inside and just-outside, NOT the exact boundary, and the
+    # exact boundary is not testable through this fixture: the stamp is built
+    # from one `datetime.now(UTC)` and `comments_pending` evaluates against a
+    # later one, so an "exactly COMMENT_GRACE" fixture is already past the
+    # window by the elapsed delta (~0.4s when measured). Both `<` and `<=`
+    # answer False there, so such a test would assert exactly what this one
+    # does while claiming to be sharper. Pinning `<` against `<=` would mean
+    # injecting the clock into `comments_pending`, which is a production API
+    # change for a distinction worth nothing at a two-minute window sized 30x
+    # over the observed 4-second race.
     import bot_review
 
     just_inside = _undercounted_state(bot_review.COMMENT_GRACE - timedelta(seconds=5))
-    at_boundary = _undercounted_state(bot_review.COMMENT_GRACE + timedelta(seconds=1))
+    just_outside = _undercounted_state(bot_review.COMMENT_GRACE + timedelta(seconds=1))
     assert just_inside.undercounted is True
-    assert at_boundary.undercounted is True
+    assert just_outside.undercounted is True
     assert just_inside.comments_pending is True
-    assert at_boundary.comments_pending is False
+    assert just_outside.comments_pending is False
 
 
 def test_a_race_outlasting_the_grace_degrades_safely_never_to_clean(
