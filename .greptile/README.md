@@ -34,12 +34,18 @@ while staying silent on the finding nobody read.
   "fix". A re-review of a fixed commit is a deliberate spend
   (`.claude/bot-review-triage.md` §4), asked for with an `@greptileai review`
   comment.
-- **`statusCheck: false`** — for two independent reasons. It creates a GitHub
+- **`statusCheck: false`** — because Greptile's docs describe this as creating a
   status check *instead of* the summary comment, and that summary comment is the
-  completion signal `scripts/bot_review.py` polls for both outcomes; enabling
-  this would make every wait time out. It would also add a check that interacts
-  with the ADR-0045 branch ruleset, which is an architectural decision (CLAUDE.md
-  rule 1) rather than a config tweak.
+  completion signal `scripts/bot_review.py` polls for both outcomes. Enabling it
+  would make every wait time out.
+
+  Note what this key does **not** control: a `Greptile Review` check is posted on
+  every PR regardless, by the App itself — observed passing on PR #71 with this
+  set to `false`. So "it would add a new check" is *not* a reason to leave it
+  off, and the check it already posts is not in the ADR-0045 required set
+  (`ci-ok` is), so nothing here interacts with the branch ruleset today.
+  Enabling `statusCheck` later would still want checking against that ruleset,
+  but the blocking objection is the summary comment, not the check.
 
 ## The review settings
 
