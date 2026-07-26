@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +29,10 @@ from bot_review import (
     is_finding_comment,
     is_findings_review,
     is_summary_comment,
+    outstanding_findings,
     parse_ts,
     reviewed_sha,
+    reviews_by,
     run_cmd,
     same_commit,
     same_login,
@@ -1199,8 +1202,17 @@ def _pull_comment(
     }
 
 
-def _greptile_comment(body: str) -> dict[str, Any]:
-    """PR #69's summary comment: created at the first run, edited by the second."""
+def _greptile_comment(body: str, fresh: bool = False) -> dict[str, Any]:
+    """PR #69's summary comment: created at the first run, edited by the second.
+
+    ``fresh`` stamps it *now* instead. Needed by the tests about the
+    summary-before-comments race, since `comments_pending` only calls an
+    undercount "still landing" inside a two-minute grace window — a fixture
+    stamped in the past is, correctly, no longer pending.
+    """
+    if fresh:
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return _comment(5080225922, "greptile-apps[bot]", now, now, body=body)
     return _comment(
         5080225922,
         "greptile-apps[bot]",
@@ -1357,11 +1369,12 @@ def _greptile_wait(
     head: str = GREPTILE_SHA,
     timeout: int = 0,
     comments: list[dict[str, Any]] | None = None,
+    fresh: bool = False,
 ) -> int:
     """Drive cmd_wait with one summary comment, or none when body is None."""
     import bot_review
 
-    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+    posted = [] if summary_body is None else [_greptile_comment(summary_body, fresh)]
     review_comments = comments or []
 
     def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
@@ -1407,7 +1420,7 @@ def test_cmd_wait_keeps_polling_until_the_counted_comments_have_landed(
     # there hands fetch a review whose findings do not exist yet, which it then
     # reports as a count mismatch — a real alarm for a non-problem.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_wait(monkeypatch, body, comments=[]) == 1
+    assert _greptile_wait(monkeypatch, body, comments=[], fresh=True) == 1
     assert "is ready" not in capsys.readouterr().out
 
 
@@ -1469,11 +1482,12 @@ def _greptile_fetch(
     summary_body: str | None,
     comments: list[dict[str, Any]],
     head: str = GREPTILE_SHA,
+    fresh: bool = False,
 ) -> int:
     """Drive cmd_fetch with one summary comment, or none when body is None."""
     import bot_review
 
-    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+    posted = [] if summary_body is None else [_greptile_comment(summary_body, fresh)]
 
     def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
         return posted
@@ -1563,9 +1577,18 @@ def test_cmd_fetch_refuses_to_conclude_when_the_count_outruns_the_comments(
     # The summary claims one finding; the comments endpoint yields none. Neither
     # "clean" nor "here are the findings" is true, so the honest answer is to
     # refuse — an empty result is a claim, and this one contradicts the body.
+    #
+    # `fresh=True` is load-bearing, not decoration: this is the *in-grace* case,
+    # and the message it must produce ("still landing") is the opposite advice
+    # from the post-grace one. A fixture stamped in the past would silently
+    # exercise the other branch, and "only 0 were fetched" is common to both —
+    # so it would pass either way and pin neither.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_fetch(monkeypatch, body, []) == 1
-    assert "only 0 were fetched" in capsys.readouterr().err
+    assert _greptile_fetch(monkeypatch, body, [], fresh=True) == 1
+    err = capsys.readouterr().err
+    assert "only 0 were fetched" in err
+    assert "usually a review still landing" in err
+    assert "no longer in flight" not in err
 
 
 def test_wait_and_fetch_agree_when_the_two_signals_disagree(
@@ -1585,6 +1608,137 @@ def test_wait_and_fetch_agree_when_the_two_signals_disagree(
     assert "the two signals disagree" in capsys.readouterr().err
 
 
+def test_a_summary_only_finding_ends_the_wait_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Transcribed from PR #72, a fifth Greptile shape: a summary stating one
+    # finding with NO review object and NO inline comment anywhere — the
+    # finding existed only as prose. `comments_pending` modelled the ~4s
+    # summary-before-comments race as unbounded, so `wait` polled for comments
+    # that were never coming and burned its whole timeout. The comment here is
+    # old enough that the grace window has closed.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    stale_summary = _comment(
+        5085014060,
+        "greptile-apps[bot]",
+        "2020-01-01T00:00:00Z",
+        "2020-01-01T00:00:00Z",
+        body=body,
+    )
+    import bot_review
+
+    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [stale_summary]
+
+    def nothing(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def the_head(repo: str, pr: int) -> str:
+        return GREPTILE_SHA
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "pull_comments", nothing)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    monkeypatch.setattr(bot_review.time, "sleep", no_sleep)
+    since = parse_ts("2019-01-01T00:00:00Z")
+    # 0, not a timeout: there is review work, and the wait says where it lives.
+    assert bot_review.cmd_wait("o/r", 72, GREPTILE, since, 0) == 0
+    assert "1 that exist only in the summary text" in capsys.readouterr().out
+    # fetch still refuses to call it clean, naming the real cause.
+    assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
+    assert "exist only in the summary text" in capsys.readouterr().err
+
+
+def test_a_freshly_posted_undercount_is_still_waited_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The counter-case the grace window protects: a summary posted *just now*
+    # whose comments have not landed is the real 4-second race, and ending the
+    # wait there hands fetch a review whose findings do not exist yet.
+    import bot_review
+
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fresh = _comment(
+        1,
+        "greptile-apps[bot]",
+        now,
+        now,
+        body=_greptile_summary(ATTENTION_FINDINGS, fix_prompt=True),
+    )
+    state = bot_review.SummaryState(
+        comment=fresh,
+        clean=False,
+        stale=False,
+        reviewed=GREPTILE_SHA,
+        head=GREPTILE_SHA,
+        stated=1,
+        findings=[],
+        open_findings=[],
+    )
+    assert state.undercounted is True
+    assert state.comments_pending is True
+
+
+def _undercounted_state(age: timedelta) -> Any:
+    """A one-stated / zero-matched summary aged `age` behind now."""
+    import bot_review
+
+    stamp = (datetime.now(UTC) - age).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return bot_review.SummaryState(
+        comment=_comment(1, "greptile-apps[bot]", stamp, stamp, body="x"),
+        clean=False,
+        stale=False,
+        reviewed=GREPTILE_SHA,
+        head=GREPTILE_SHA,
+        stated=1,
+        findings=[],
+        open_findings=[],
+    )
+
+
+def test_the_grace_window_flips_the_reading_either_side_of_it() -> None:
+    # The window is the whole mechanism, so pin both sides of it rather than
+    # only the far extremes. `undercounted` is the raw gap and holds either
+    # way; only `comments_pending` — the gap *plus* the window — flips.
+    #
+    # These are just-inside and just-outside, NOT the exact boundary, and the
+    # exact boundary is not testable through this fixture: the stamp is built
+    # from one `datetime.now(UTC)` and `comments_pending` evaluates against a
+    # later one, so an "exactly COMMENT_GRACE" fixture is already past the
+    # window by the elapsed delta (~0.4s when measured). Both `<` and `<=`
+    # answer False there, so such a test would assert exactly what this one
+    # does while claiming to be sharper. Pinning `<` against `<=` would mean
+    # injecting the clock into `comments_pending`, which is a production API
+    # change for a distinction worth nothing at a two-minute window sized 30x
+    # over the observed 4-second race.
+    import bot_review
+
+    just_inside = _undercounted_state(bot_review.COMMENT_GRACE - timedelta(seconds=5))
+    just_outside = _undercounted_state(bot_review.COMMENT_GRACE + timedelta(seconds=1))
+    assert just_inside.undercounted is True
+    assert just_outside.undercounted is True
+    assert just_inside.comments_pending is True
+    assert just_outside.comments_pending is False
+
+
+def test_a_race_outlasting_the_grace_degrades_safely_never_to_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The window is sized from two ~4-second observations with a wide margin,
+    # but a genuine race could in principle outlast it (rate limiting, an
+    # outage). Then the reading is wrong — "structural" for something still
+    # resolving. Pin the direction that failure takes: never EXIT_CLEAN. A
+    # premature refusal costs a re-run; a premature "clean" buries a finding.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    for comments in ([], [finding]):
+        assert _greptile_fetch(monkeypatch, body, comments) != EXIT_CLEAN
+        capsys.readouterr()
+
+
 def test_a_pending_comment_is_waited_out_not_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1593,8 +1747,8 @@ def test_a_pending_comment_is_waited_out_not_failed(
     # inherit the conflict's fail-fast. Collapsing the two would undo the
     # summary-before-comments fix.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_wait(monkeypatch, body, comments=[]) == 1  # timeout, not error
-    assert _greptile_fetch(monkeypatch, body, []) == 1
+    assert _greptile_wait(monkeypatch, body, comments=[], fresh=True) == 1  # timeout
+    assert _greptile_fetch(monkeypatch, body, [], fresh=True) == 1
 
 
 def test_cmd_fetch_refuses_to_classify_when_the_two_signals_disagree(
@@ -1752,6 +1906,50 @@ def test_a_pull_request_payload_with_no_head_sha_fails_loudly(
     assert same_commit(GREPTILE_SHA, "") is False
 
 
+def test_copilots_findings_are_matched_by_its_comment_login_not_its_review_login() -> (
+    None
+):
+    # The silent-zero this field exists to stop (PR #71). Copilot authors its
+    # *reviews* as copilot-pull-request-reviewer[bot] and the comments inside
+    # them as Copilot. Matching on review_login filters out every one of its
+    # findings, and the sweep then reports "0 findings, 0 unanswered" — a merge
+    # gate that passes because it failed to look.
+    assert COPILOT.comment_login == "Copilot"
+    assert COPILOT.commenter == "Copilot"
+    assert COPILOT.commenter != COPILOT.review_login
+    finding = _pull_comment(3651510728, "Copilot", "2026-07-26T02:04:53Z")
+    assert is_finding_comment(finding, COPILOT) is True
+    # ...and the review author, which is a different account, is not a finding.
+    other = _pull_comment(
+        1, "copilot-pull-request-reviewer[bot]", "2026-07-26T02:04:53Z"
+    )
+    assert is_finding_comment(other, COPILOT) is False
+
+
+def test_the_other_bots_comment_and_review_logins_coincide() -> None:
+    # Only Copilot splits them; declaring the field for everyone would invite a
+    # copy-paste that quietly redefines whose comments count.
+    for spec in (CODERABBIT, GEMINI, GREPTILE):
+        assert spec.comment_login is None
+        assert spec.commenter == spec.review_login
+
+
+def test_a_bot_replying_to_itself_does_not_answer_its_own_finding() -> None:
+    # CodeRabbit acks threads routinely and once withdrew its own finding that
+    # way (PR #65). Counting that as triage would let a bot clear the merge
+    # gate on its own say-so — the unread review the gate exists to stop.
+    finding = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    self_ack = _pull_comment(
+        2, "coderabbitai[bot]", "2026-07-26T01:05:00Z", in_reply_to_id=1
+    )
+    assert unanswered([finding], [finding, self_ack]) == [finding]
+    # A reply from anyone else is triage.
+    human = _pull_comment(
+        3, "NeuroticGamer99", "2026-07-26T01:06:00Z", in_reply_to_id=1
+    )
+    assert unanswered([finding], [finding, self_ack, human]) == []
+
+
 def test_a_threaded_reply_marks_its_parent_answered() -> None:
     # Transcribed from PR #69: the owner's reply 3650871889 points at
     # Greptile's finding 3650858888, which is the whole record GitHub keeps of
@@ -1776,3 +1974,577 @@ def test_a_reply_to_another_bots_finding_does_not_answer_ours() -> None:
         3651082022, "NeuroticGamer99", "2026-07-25T21:29:01Z", in_reply_to_id=3651079329
     )
     assert unanswered([ours], [ours, theirs, their_reply]) == [ours]
+
+
+# --------------------------------------------------------------------------
+# `outstanding`: the merge gate, asked of every bot at once. Its whole value is
+# failing CLOSED — a gate that answers "nothing outstanding" because it looked
+# in the wrong place is worse than no gate, so these test the blocking
+# direction as hard as the passing one.
+# --------------------------------------------------------------------------
+
+
+def _outstanding(
+    monkeypatch: pytest.MonkeyPatch,
+    comments: list[dict[str, Any]],
+    reviews: list[dict[str, Any]] | None = None,
+    issues: list[dict[str, Any]] | None = None,
+) -> int:
+    """Drive cmd_outstanding.
+
+    ``issues`` defaults to a clean Greptile summary, because Greptile is
+    declared ``always_reviews`` and its absence is an alarm in its own right —
+    so a fixture that says nothing about it would otherwise fail every test for
+    a reason the test is not about.
+    """
+    import bot_review
+
+    posted_reviews = reviews or []
+    posted_issues = (
+        [
+            _comment(
+                5081386528,
+                "greptile-apps[bot]",
+                "2026-07-26T01:00:00Z",
+                "2026-07-26T01:00:00Z",
+                body=_greptile_summary(ATTENTION_CLEAN),
+            )
+        ]
+        if issues is None
+        else issues
+    )
+
+    def the_comments(repo: str, pr: int) -> list[dict[str, Any]]:
+        return comments
+
+    def the_reviews(repo: str, pr: int) -> list[dict[str, Any]]:
+        return posted_reviews
+
+    def the_issues(repo: str, pr: int) -> list[dict[str, Any]]:
+        return posted_issues
+
+    monkeypatch.setattr(bot_review, "pull_comments", the_comments)
+    monkeypatch.setattr(bot_review, "list_reviews", the_reviews)
+    monkeypatch.setattr(bot_review, "issue_comments", the_issues)
+    since = parse_ts("2026-07-26T00:00:00Z")
+    return bot_review.cmd_outstanding("o/r", 71, since)
+
+
+def test_outstanding_clears_when_every_finding_has_a_reply(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PR #71's real shape: three CodeRabbit findings and one Copilot finding,
+    # each answered by the owner.
+    comments: list[dict[str, Any]] = []
+    for n, login in (
+        (1, "coderabbitai[bot]"),
+        (2, "coderabbitai[bot]"),
+        (3, "Copilot"),
+    ):
+        comments.append(_pull_comment(n, login, "2026-07-26T01:00:00Z"))
+        comments.append(
+            _pull_comment(
+                100 + n, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=n
+            )
+        )
+    assert _outstanding(monkeypatch, comments) == EXIT_CLEAN
+    assert "NOTHING OUTSTANDING" in capsys.readouterr().out
+
+
+def test_outstanding_findings_buckets_by_bot_as_a_value() -> None:
+    # Asserted on the returned structure rather than on rendered text: which
+    # bot owns which unanswered finding is the gate's actual answer, and a
+    # substring check over the printout would pass on a cross-bot mis-bucketing
+    # that happened to print the same words somewhere else.
+    since = parse_ts("2026-07-26T00:00:00Z")
+    cr = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    cr_reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    cop = _pull_comment(3, "Copilot", "2026-07-26T01:00:00Z")
+    report = {b.key: b for b in outstanding_findings([cr, cr_reply, cop], since)}
+    assert sorted(report) == ["coderabbit", "copilot", "gemini", "greptile"]
+    assert [c["id"] for c in report["coderabbit"].findings] == [1]
+    assert report["coderabbit"].open_findings == []
+    assert [c["id"] for c in report["copilot"].open_findings] == [3]
+    assert report["gemini"].findings == []
+    assert report["greptile"].findings == []
+
+
+def test_a_finding_posted_in_the_same_second_as_the_floor_is_excluded() -> None:
+    # The floor is strict (`> since`), and both GitHub stamps and the floor
+    # cmd_request mints are second-granular — so a finding landing in the same
+    # second is dropped. Pinned here because the gate's value is not missing
+    # things: if this ever needs to become `>=`, this test is the place that
+    # says so out loud rather than a silent behaviour change.
+    since = parse_ts("2026-07-26T01:00:00Z")
+    same = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    later = _pull_comment(2, "coderabbitai[bot]", "2026-07-26T01:00:01Z")
+    assert select_finding_comments([same, later], CODERABBIT, since) == [later]
+
+
+def test_gemini_posts_its_comments_as_the_review_author() -> None:
+    # Unlike Copilot's split, this one is grounded in the code path rather than
+    # a live payload: no Gemini inline comment exists on this repo to check
+    # against. .github/scripts/gemini_review_agent.py posts a review with
+    # nested comments through `gh api .../pulls/N/reviews` under
+    # `github.token`, so both inherit github-actions[bot]. Recorded as a
+    # code-basis assumption, not an observation — if a live Gemini finding ever
+    # lands, verify it here.
+    assert GEMINI.comment_login is None
+    assert GEMINI.commenter == "github-actions[bot]"
+    finding = _pull_comment(1, "github-actions[bot]", "2026-07-26T01:00:00Z")
+    assert is_finding_comment(finding, GEMINI) is True
+
+
+def test_outstanding_says_no_findings_rather_than_nothing_outstanding(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An unreviewed PR and a cleanly-reviewed one are indistinguishable from
+    # posted comments alone. Both exit 2 — a PR whose chains were deliberately
+    # not spent must not be blocked — but the wording must not let silence read
+    # as a verdict, which is the distinction _fetch_summary_bot already makes.
+    assert _outstanding(monkeypatch, []) == EXIT_CLEAN
+    out = capsys.readouterr().out
+    assert "NO FINDINGS POSTED" in out
+    assert "NOTHING OUTSTANDING" not in out
+    assert "not evidence any bot reviewed it" in out
+
+
+def test_outstanding_blocks_on_an_unanswered_copilot_finding(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The case the old gate could not see at all: Copilot's finding is authored
+    # `Copilot`, so a sweep keyed on its review login reports zero and merges.
+    finding = _pull_comment(3651510728, "Copilot", "2026-07-26T02:04:53Z")
+    assert _outstanding(monkeypatch, [finding]) == 0
+    out = capsys.readouterr().out
+    assert "1 UNANSWERED" in out
+    assert "[copilot]" in out
+    assert "id=3651510728" in out
+
+
+def test_outstanding_blocks_when_only_the_bot_answered_itself(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    finding = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    ack = _pull_comment(
+        2, "coderabbitai[bot]", "2026-07-26T01:05:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [finding, ack]) == 0
+    assert "1 UNANSWERED" in capsys.readouterr().out
+
+
+def test_outstanding_counts_every_bot_not_just_the_one_that_reviewed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unread = _pull_comment(9, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    answered = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [unread, answered, reply]) == 0
+    out = capsys.readouterr().out
+    # Each bot is reported, so a zero is visibly a zero rather than a silence.
+    for key in ("coderabbit", "copilot", "gemini", "greptile"):
+        assert key in out
+    assert "[greptile]" in out
+
+
+def test_outstanding_ignores_findings_below_the_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _pull_comment(1, "coderabbitai[bot]", "2025-01-01T00:00:00Z")
+    assert _outstanding(monkeypatch, [stale]) == EXIT_CLEAN
+
+
+def test_outstanding_is_the_only_command_that_needs_no_bot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import bot_review
+
+    def nothing(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
+        # Greptile is `always_reviews`, so its artifact must be present or the
+        # sweep refuses on that alone — a different outcome than this test is about.
+        return [
+            _comment(
+                5081386528,
+                "greptile-apps[bot]",
+                "2026-07-26T01:00:00Z",
+                "2026-07-26T01:00:00Z",
+                body=_greptile_summary(ATTENTION_CLEAN),
+            )
+        ]
+
+    def the_repo() -> str:
+        return "o/r"
+
+    monkeypatch.setattr(bot_review, "pull_comments", nothing)
+    monkeypatch.setattr(bot_review, "list_reviews", nothing)
+    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "default_repo", the_repo)
+    argv = ["outstanding", "--pr", "71", "--since", "2026-07-26T00:00:00Z"]
+    assert bot_review.main(argv) == EXIT_CLEAN
+    # The others still must name one, and the refusal says why.
+    assert (
+        bot_review.main(["fetch", "--pr", "71", "--since", "2026-07-26T00:00:00Z"]) == 1
+    )
+    assert "needs --bot" in capsys.readouterr().err
+
+
+def _review_by(login: str, submitted: str, body: str = "") -> dict[str, Any]:
+    return {
+        "id": 4780620978,
+        "user": {"login": login},
+        "submitted_at": submitted,
+        "body": body,
+    }
+
+
+def test_a_review_whose_comments_matched_none_refuses_to_clear_the_gate(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The identity-drift alarm. A bot posted a review carrying findings, but the
+    # sweep matched zero of its comments — which means the author filter missed,
+    # not that the bot found nothing. This is the Copilot failure generalized:
+    # the next login rename would otherwise reproduce it silently.
+    review = _review_by(
+        "coderabbitai[bot]", "2026-07-26T01:00:00Z", "**Actionable comments posted: 2**"
+    )
+    assert _outstanding(monkeypatch, [], reviews=[review]) == 1
+    err = capsys.readouterr().err
+    assert "CANNOT CLEAR THE GATE" in err
+    assert "0 of its comments matched" in err
+    assert "findings this sweep could not read" in err
+
+
+def test_a_review_stating_zero_findings_is_not_an_alarm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Copilot's clean run is a review that says it generated no comments, and
+    # zero matched comments is then the correct answer, not a missed filter.
+    review = _review_by(
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-26T01:00:00Z",
+        "Copilot reviewed 3 files and generated no comments.",
+    )
+    assert _outstanding(monkeypatch, [], reviews=[review]) == EXIT_CLEAN
+
+
+def test_a_consolidated_multi_finding_comment_is_not_an_alarm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CodeRabbit has posted three findings inside ONE comment object (PR #67),
+    # so "states 3, matched 1" is a known-benign shape. Keying the alarm on a
+    # count mismatch instead of on zero-matched would block merges routinely.
+    review = _review_by(
+        "coderabbitai[bot]", "2026-07-26T01:00:00Z", "**Actionable comments posted: 3**"
+    )
+    one = _pull_comment(1, "coderabbitai[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [one, reply], reviews=[review]) == EXIT_CLEAN
+
+
+def test_greptile_leaving_no_artifact_at_all_refuses_to_clear_the_gate(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Greptile reviews every PR unasked, so its silence is never legitimate. A
+    # comments-only sweep counts that silence as zero findings and reads green —
+    # making the one bot whose absence is always anomalous the one whose absence
+    # looks cleanest.
+    assert GREPTILE.always_reviews is True
+    assert _outstanding(monkeypatch, [], issues=[]) == 1
+    err = capsys.readouterr().err
+    assert "reviews every PR unasked" in err
+    assert "Silence here is never a clean verdict" in err
+
+
+def test_a_bot_that_does_not_always_review_may_be_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The converse: an unspent CodeRabbit/Copilot chain is a legitimate state,
+    # so only the always-reviews bot's silence is an alarm.
+    for spec in (CODERABBIT, COPILOT, GEMINI):
+        assert spec.always_reviews is False
+    assert _outstanding(monkeypatch, []) == EXIT_CLEAN
+
+
+def test_copilot_cannot_answer_its_own_finding_under_either_login() -> None:
+    # It holds two identities; a single-login exclusion would let an ack under
+    # the other one count as third-party triage. Unobserved in practice — it has
+    # never been seen to ack — so this errs toward leaving a finding open, which
+    # is the safe direction for a merge gate.
+    assert COPILOT.logins == ("copilot-pull-request-reviewer[bot]", "Copilot")
+    finding = _pull_comment(1, "Copilot", "2026-07-26T01:00:00Z")
+    for ack_login in COPILOT.logins:
+        ack = _pull_comment(2, ack_login, "2026-07-26T01:05:00Z", in_reply_to_id=1)
+        assert unanswered([finding], [finding, ack]) == [finding]
+    human = _pull_comment(
+        3, "NeuroticGamer99", "2026-07-26T01:06:00Z", in_reply_to_id=1
+    )
+    assert unanswered([finding], [finding, human]) == []
+
+
+def test_single_identity_bots_report_one_login() -> None:
+    assert CODERABBIT.logins == ("coderabbitai[bot]",)
+    assert GREPTILE.logins == ("greptile-apps[bot]",)
+
+
+def test_a_usage_error_does_not_exit_with_the_clean_code() -> None:
+    # argparse exits 2 on any usage error and EXIT_CLEAN is 2, so a gate
+    # invocation that never ran — a typo'd --bot, an unquoted --since split into
+    # two argv entries, a missing --pr — would hand /squash-merge the same status
+    # as "every finding has a reply". Confirmed live against all three shapes.
+    import bot_review
+
+    for argv in (
+        ["outstanding", "--pr"],
+        ["fetch", "--bot", "nosuchbot", "--pr", "71"],
+        ["outstanding", "--pr", "71", "--since", "2026-07-26", "00:00:00Z"],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            bot_review.build_parser().parse_args(argv)
+        assert exc.value.code == 1
+        assert exc.value.code != EXIT_CLEAN
+
+
+def test_a_bots_empty_bodied_ack_review_is_not_an_unmatched_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GitHub models a bot replying to a thread as a review with an empty body,
+    # and CodeRabbit acks routinely (PR #27, three of them; PR #65, a
+    # self-withdrawal). Treating that as "a review whose comments I could not
+    # match" makes the gate cry wolf on the ordinary end state of a triaged PR.
+    ack = _review_by("coderabbitai[bot]", "2026-07-26T01:00:00Z", body="")
+    assert _outstanding(monkeypatch, [], reviews=[ack]) == EXIT_CLEAN
+
+
+def test_greptiles_empty_bodied_findings_review_still_raises_the_alarm(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The counter-case that makes the ack rule non-trivial: Greptile's findings
+    # review is empty-bodied *by design*, so suppressing every empty body would
+    # disable this check for the one bot whose findings the reviews endpoint
+    # cannot otherwise reveal. `summary_marker` is the discriminator.
+    assert GREPTILE.summary_marker is not None
+    assert CODERABBIT.summary_marker is None
+    review = {
+        "id": 4780005491,
+        "user": {"login": "greptile-apps[bot]"},
+        "submitted_at": "2026-07-26T01:00:00Z",
+        "body": "",
+    }
+    assert _outstanding(monkeypatch, [], reviews=[review]) == 1
+    assert "0 of its comments matched" in capsys.readouterr().err
+
+
+def test_a_pending_review_is_not_a_report() -> None:
+    # GitHub reports an unsubmitted (PENDING) review with a null stamp. It is
+    # not a report, so reviews_by skips it — deliberately, not incidentally.
+    since = parse_ts("2026-07-26T00:00:00Z")
+    pending = {
+        "id": 555,
+        "user": {"login": "coderabbitai[bot]"},
+        "submitted_at": None,
+        "body": "**Actionable comments posted: 2**",
+    }
+    submitted = _review_by(
+        "coderabbitai[bot]", "2026-07-26T01:00:00Z", "**Actionable comments posted: 2**"
+    )
+    assert reviews_by([pending], CODERABBIT, since) == []
+    assert reviews_by([pending, submitted], CODERABBIT, since) == [submitted]
+
+
+GEMINI_BODY_ONLY = "\n\n".join(
+    [
+        "## Antigravity Gemini review",
+        "Antigravity reviewed this PR's filtered diff and posted 0 inline finding(s).",
+        "3 finding(s) could not be anchored to a diff line and appear here instead:",
+        "- `src/a.py:1` — first\n- `src/b.py:2` — second\n- `src/c.py:3` — third",
+    ]
+)
+
+GEMINI_TRULY_CLEAN = "\n\n".join(
+    [
+        "## Antigravity Gemini review",
+        "Antigravity reviewed this PR's filtered diff and posted 0 inline finding(s).",
+        "No findings — clean per the styleguide lenses.",
+    ]
+)
+
+
+def test_body_only_findings_refuse_to_clear_the_gate(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The worst shape the sweep can meet. gemini_review_agent's HTTP-422
+    # fallback re-posts every finding into the review BODY with the inline count
+    # restated as 0, so the count says "nothing" while the body lists three.
+    # They are not comments, so they can never carry a reply and the unanswered
+    # sweep can never see them — the gate must say so rather than pass.
+    review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_BODY_ONLY)
+    assert _outstanding(monkeypatch, [], reviews=[review]) == 1
+    err = capsys.readouterr().err
+    assert "renders 3 finding(s) in its body" in err
+    assert "can never clear them" in err
+
+
+def test_body_findings_are_caught_even_when_some_comments_matched(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The mixed shape, and the ORDINARY one: gemini_review_agent posts anchored
+    # findings as real comments and unanchored ones as body bullets in the SAME
+    # review. Keying the body check on "matched nothing" — as the first version
+    # of this did — misses every mixed review, which is the common case; the
+    # all-body-only shape is only the HTTP-422 fallback.
+    body = GEMINI_BODY_ONLY.replace("posted 0 inline", "posted 2 inline").replace(
+        "3 finding(s) could not", "1 finding(s) could not"
+    )
+    # Assert the fixture is the mixed shape rather than trusting the test name:
+    # a nonzero inline count *and* a body-only remainder in the same review.
+    assert stated_count(body, GEMINI) == 2
+    assert GEMINI.body_findings is not None
+    assert GEMINI.body_findings.search(body) is not None
+    review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", body)
+    anchored = [
+        _pull_comment(n, "github-actions[bot]", "2026-07-26T01:00:00Z") for n in (1, 2)
+    ]
+    replies = [
+        _pull_comment(
+            10 + n, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=n
+        )
+        for n in (1, 2)
+    ]
+    # Both anchored findings are answered, so the unanswered sweep is satisfied
+    # — the third finding is only visible in the body.
+    assert _outstanding(monkeypatch, anchored + replies, reviews=[review]) == 1
+    assert "renders 1 finding(s) in its body" in capsys.readouterr().err
+
+
+def test_a_summary_stating_exactly_what_was_matched_does_not_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The innocent case for undercounted_summaries: stated == matched must clear,
+    # or the check would block every Greptile findings run rather than the
+    # undercounted ones.
+    summary = _comment(
+        5081386528,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        "2026-07-26T01:00:00Z",
+        body=_greptile_summary(ATTENTION_FINDINGS, fix_prompt=True),
+    )
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [finding, reply], issues=[summary]) == EXIT_CLEAN
+
+
+def test_a_review_submitted_before_the_floor_is_not_this_runs_report() -> None:
+    since = parse_ts("2026-07-26T00:00:00Z")
+    stale = _review_by("coderabbitai[bot]", "2025-01-01T00:00:00Z", "x")
+    assert reviews_by([stale], CODERABBIT, since) == []
+
+
+def test_a_genuinely_clean_gemini_review_still_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The counter-case: 0 inline with no unanchored block is a real clean run,
+    # and alarming on it would make every Gemini review block a merge.
+    review = _review_by(
+        "github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_TRULY_CLEAN
+    )
+    assert _outstanding(monkeypatch, [], reviews=[review]) == EXIT_CLEAN
+
+
+def test_the_body_findings_marker_matches_what_the_agent_writes() -> None:
+    # Cross-module contract, mirrored rather than imported (this module is
+    # stdlib-only; gemini_review_logic pulls pydantic). Same convention as the
+    # count regex and the empty-range marker.
+    from gemini_review_logic import Finding, review_body
+
+    rendered = review_body(
+        0,
+        [
+            Finding(
+                file="src/a.py",
+                line=1,
+                severity="major",
+                category="correctness",
+                description="x",
+            ),
+            Finding(
+                file="src/b.py",
+                line=2,
+                severity="minor",
+                category="style",
+                description="y",
+            ),
+        ],
+    )
+    assert GEMINI.body_findings is not None
+    found = GEMINI.body_findings.search(rendered)
+    assert found is not None
+    assert found.group(1) == "2"
+
+
+def test_a_summary_claiming_more_findings_than_were_matched_blocks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The check the per-bot `fetch --bot greptile` precondition used to make and
+    # the sweep dropped: unmatched_reviews only looks at bots that matched
+    # NOTHING, so 3-stated with 1 matched and answered would have cleared the
+    # gate with two findings never seen.
+    claims_three = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True).replace(
+        "Fix the following 1 code review", "Fix the following 3 code review"
+    )
+    summary = _comment(
+        5081386528,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        "2026-07-26T01:00:00Z",
+        body=claims_three,
+    )
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [finding, reply], issues=[summary]) == 1
+    assert "states 3 finding(s) but the sweep matched 1" in capsys.readouterr().err
+
+
+def test_one_bots_reply_does_not_answer_another_bots_finding() -> None:
+    # CodeRabbit auto-replies to findings as a matter of course — three of its
+    # own on PR #71 — and nothing stops that landing on another bot's thread.
+    # A per-spec exclusion would score it as triage; neither bot is a person
+    # who read the finding.
+    ours = _pull_comment(3651510728, "Copilot", "2026-07-26T02:04:53Z")
+    other_bot = _pull_comment(
+        999, "coderabbitai[bot]", "2026-07-26T02:10:00Z", in_reply_to_id=3651510728
+    )
+    assert unanswered([ours], [ours, other_bot]) == [ours]
+    human = _pull_comment(
+        1000, "NeuroticGamer99", "2026-07-26T02:11:00Z", in_reply_to_id=3651510728
+    )
+    assert unanswered([ours], [ours, other_bot, human]) == []
+
+
+def test_a_comment_login_that_duplicates_the_review_login_is_refused() -> None:
+    import bot_review
+
+    with pytest.raises(ValueError, match="duplicates review_login"):
+        bot_review.BotSpec(
+            key="broken",
+            review_login="x[bot]",
+            request_login=None,
+            requested_display=None,
+            trigger_body="@x review",
+            count=re.compile(r"(\d+)"),
+            clean_marker=None,
+            comment_login="X[BOT]",
+        )

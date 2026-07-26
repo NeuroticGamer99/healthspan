@@ -7,10 +7,10 @@ The shared procedure for handling an automated PR review. Used by `/coderabbit-r
 
 Greptile is the only one that reviews **unasked** — its GitHub App reviews every new PR — so it is
 also the only one whose findings can exist without anyone having decided to look at them. Collect
-it with `/greptile-review`; `/squash-merge` refuses to merge while any Greptile finding lacks a
-threaded reply. That is also why §2's "never leave a finding unanswered" is mechanically enforced
-for Greptile alone: the reply *is* the record, so an unanswered finding reads to the tooling
-exactly like one nobody ever collected.
+it with `/greptile-review`. §2's "never leave a finding unanswered" is mechanically enforced for
+**every** bot — the reply *is* the record, so an unanswered finding reads to the tooling exactly
+like one nobody ever collected — and `/squash-merge` refuses to merge while any of them lacks a
+threaded reply. See §4 for the command.
 
 **Governing principle: a bot finding is a hypothesis, not a defect.** Verify every one against the
 actual code before acting on it or replying to it. The record from PR #26 (seven findings across
@@ -110,3 +110,18 @@ reported as such rather than read as this commit's verdict; for the others, stal
 track. When every spent review is clean or triaged and the user asks for the merge, finish the
 chain with **`/squash-merge`** — it composes a clean squash message and verifies the result on
 `origin/main`.
+
+You can check §2's "never leave a finding unanswered" mechanically at any point, for every bot at
+once:
+
+```bash
+uv run python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
+```
+
+Exit 2 means nothing is unanswered; exit 0 lists what is. Exit 1 means either the sweep found a
+zero it could not prove — printed under a `CANNOT CLEAR THE GATE` banner — or it failed outright
+(`gh` auth, a timeout, a usage error), in which case there is no banner and the gate never ran.
+Both stop a merge, but only the first is a statement about the PR. `/squash-merge` runs this as a
+precondition and stops on either non-2 code. It reads the reply threads rather than your
+recollection of them, and it counts a reply from the bot itself as no reply at all — CodeRabbit
+acks threads routinely, and a bot agreeing with itself is not triage.

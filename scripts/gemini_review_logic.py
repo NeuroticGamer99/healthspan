@@ -9,9 +9,13 @@ pieces get the same unit-test discipline as ``bot_review.py``
 number, which posts successfully — no 422, no fallback, just a finding pinned
 to the wrong line.
 
-The one cross-module contract: :func:`review_body` writes the
-``posted N inline finding(s)`` marker that ``bot_review.py``'s ``gemini``
-BotSpec ``count`` regex reads back. The tests assert the two agree.
+Two cross-module contracts, both in :func:`review_body` and both read back by
+``bot_review.py``'s ``gemini`` BotSpec: the ``posted N inline finding(s)``
+marker its ``count`` regex parses, and the ``N finding(s) could not be
+anchored`` line its ``body_findings`` regex parses — the latter because a
+finding rendered in the body is not a comment, so the merge-gate sweep can
+never see a reply to it and must refuse to call such a PR clear. The tests
+assert both agree.
 """
 
 from __future__ import annotations
