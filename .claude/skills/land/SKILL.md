@@ -37,7 +37,7 @@ Walk the CLAUDE.md decision-capture routing rules (1–6) against the change. Fo
 
 ## 6. Review invocation (when warranted)
 
-If the change includes non-trivial code or spec-conformance risk and the `spec-reviewer` / `test-reviewer` agents have not already run on it, recommend running them before the commit. Note when a phase boundary or security-critical change (encryption, key derivation, tokens, process boundaries) warrants suggesting `/code-review` or `/code-review ultra` to the user — `ultra` is user-triggered and billed separately; only the user launches it.
+If the change includes non-trivial code or spec-conformance risk and the `spec-reviewer` / `test-reviewer` agents have not run on **the current diff**, recommend running them before the commit. "Have run" means on the state you are about to commit — a pass that predates an `/apply-review` round or a bot-review fix does not count, since those edit the code after the reviewers saw it (`/apply-review` step 5, `.claude/bot-review-triage.md` §3). Ask what changed since the pass rather than whether one ever happened. Note when a phase boundary or security-critical change (encryption, key derivation, tokens, process boundaries) warrants suggesting `/code-review` or `/code-review ultra` to the user — `ultra` is user-triggered and billed separately; only the user launches it.
 
 ## 7. Propose the commit message — then stop
 
