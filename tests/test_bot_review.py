@@ -8,6 +8,7 @@ to the network.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,24 +19,34 @@ from bot_review import (
     EXIT_CLEAN,
     EXIT_EMPTY_RANGE,
     BotReviewError,
+    answered_ids,
     as_page,
     comment_ts,
     count_note,
     is_clean_comment,
     is_empty_range_review,
+    is_finding_comment,
     is_findings_review,
+    is_summary_comment,
     parse_ts,
+    reviewed_sha,
     run_cmd,
+    same_commit,
     same_login,
     select_clean_comment,
     select_failed_run,
+    select_finding_comments,
     select_review,
+    select_summary_comment,
     stated_count,
+    summary_state,
+    unanswered,
 )
 
 CODERABBIT = BOTS["coderabbit"]
 COPILOT = BOTS["copilot"]
 GEMINI = BOTS["gemini"]
+GREPTILE = BOTS["greptile"]
 
 
 def _review(
@@ -1117,3 +1128,602 @@ def test_a_stalled_command_is_bounded_rather_than_hanging() -> None:
             run_cmd([sys.executable, "-c", "import time; time.sleep(30)"])
     finally:
         bot_review.COMMAND_TIMEOUT = original
+
+
+# --------------------------------------------------------------------------
+# Greptile: the run is reported through a summary *issue comment*, not through
+# the reviews endpoint. Every constant below is transcribed from a live run on
+# this repo — PR #67 (findings), #68 and #70 (clean), #69 (findings then clean).
+# --------------------------------------------------------------------------
+
+GREPTILE_SHA = "34730887dd1f57a836d0dab8c7c35c8a35c29814"
+OTHER_SHA = "bf9173dbd5fe46f065c171ef488507f4c4f7c158"
+_RETRIGGER = "https://app.greptile.com/api/retrigger?id=47296691"
+
+# The "Files Needing Attention" lines observed live. #70 ended the clean form
+# with a period; #68 continued the sentence with a trailing clause. That
+# difference is the whole reason the clean pattern matches a phrase rather than
+# a sentence.
+ATTENTION_CLEAN = "No files require special attention."
+ATTENTION_CLEAN_WITH_CLAUSE = (
+    "No files require special attention; the spec files are consistent with each other."
+)
+ATTENTION_FINDINGS = (
+    "specs/adr/0065-catalog-merge-and-removal.md §3 collision table — the "
+    "fourth preflight check should appear there."
+)
+
+
+def _greptile_summary(
+    attention: str,
+    sha: str = GREPTILE_SHA,
+    reviews: int = 1,
+    fix_prompt: bool = False,
+) -> str:
+    """A Greptile run summary in the live shape (PR #67/#68/#70)."""
+    commit_url = f"https://github.com/neuroticgamer99/healthspan/commit/{sha}"
+    prompt = (
+        "<details><summary>Prompt To Fix All With AI</summary>\n\n"
+        "Fix the following 1 code review issue. Work through them one at a "
+        "time, proposing concise fixes.\n\n</details>\n\n"
+        if fix_prompt
+        else ""
+    )
+    return (
+        "<details><summary><h3>Greptile Summary</h3></summary>\n\n"
+        "This PR does a thing.\n</details>\n\n"
+        "<h3>Confidence Score: 5/5</h3>\n\nSafe to merge.\n\n"
+        f"**Files Needing Attention:** {attention}\n\n"
+        "<!-- greptile_other_comments_section -->\n\n"
+        f"{prompt}"
+        f'<sub>Reviews ({reviews}): Last reviewed commit: ["subject"]'
+        f"({commit_url}) | [Re-trigger Greptile]({_RETRIGGER})</sub>\n"
+    )
+
+
+def _pull_comment(
+    comment_id: int,
+    login: str,
+    updated_at: str,
+    in_reply_to_id: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": comment_id,
+        "user": {"login": login},
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "in_reply_to_id": in_reply_to_id,
+        "path": "src/healthspan/fsperm.py",
+        "line": 42,
+        "body": "P2 — the printed remedy omits /remove:g.",
+    }
+
+
+def _greptile_comment(body: str) -> dict[str, Any]:
+    """PR #69's summary comment: created at the first run, edited by the second."""
+    return _comment(
+        5080225922,
+        "greptile-apps[bot]",
+        "2026-07-25T19:21:16Z",
+        "2026-07-25T21:09:13Z",
+        body=body,
+    )
+
+
+def test_a_greptile_findings_review_is_invisible_to_the_review_path() -> None:
+    # The load-bearing fact behind the whole summary_marker path: PR #67's and
+    # #69's findings reviews carry state COMMENTED and a body of length ZERO, so
+    # the discriminator every other bot relies on rejects them. Polling the
+    # reviews endpoint for Greptile finds nothing and times out on a review that
+    # completed.
+    review = _review(4778163288, "greptile-apps[bot]", "2026-07-25T03:06:12Z", body="")
+    assert is_findings_review(review, GREPTILE) is False
+
+
+@pytest.mark.parametrize(
+    "attention", [ATTENTION_CLEAN, ATTENTION_CLEAN_WITH_CLAUSE], ids=["pr70", "pr68"]
+)
+def test_the_clean_sentinel_is_a_phrase_not_a_sentence(attention: str) -> None:
+    # PR #70 wrote "...special attention." and PR #68 wrote "...special
+    # attention; the spec files are consistent with each other." A pattern
+    # anchored on the period form would have read #68 — a genuinely clean run —
+    # as findings, then triaged it against zero comments.
+    comment = _greptile_comment(_greptile_summary(attention))
+    assert is_clean_comment(comment, GREPTILE) is True
+
+
+def test_a_findings_summary_is_not_clean_but_is_still_the_summary() -> None:
+    comment = _greptile_comment(
+        _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True),
+    )
+    assert is_clean_comment(comment, GREPTILE) is False
+    # Recognizing the comment and judging its verdict are separate questions,
+    # because a findings run and a clean run both report through this comment.
+    assert is_summary_comment(comment, GREPTILE) is True
+
+
+def test_a_summary_from_another_author_is_not_the_bots() -> None:
+    comment = _comment(
+        1,
+        "not-greptile-apps[bot]",
+        "2026-07-25T23:13:06Z",
+        "2026-07-25T23:13:06Z",
+        body=_greptile_summary(ATTENTION_CLEAN),
+    )
+    assert is_summary_comment(comment, GREPTILE) is False
+
+
+def test_a_re_review_is_seen_only_through_the_edit_time() -> None:
+    # PR #69: the re-triggered review edited comment 5080225922 in place
+    # (created 19:21:16Z, updated 21:09:13Z) and posted nothing else — no new
+    # comment, no new review. Keyed on created_at, a floor stamped at the
+    # re-trigger sees no answer and times out on a completed review.
+    edited = _greptile_comment(_greptile_summary(ATTENTION_CLEAN, reviews=2))
+    since = parse_ts("2026-07-25T21:03:00Z")
+    chosen = select_summary_comment([edited], GREPTILE, since)
+    assert chosen is not None
+    assert chosen["id"] == 5080225922
+
+
+def test_reviewed_sha_is_read_out_of_the_footer() -> None:
+    assert reviewed_sha(_greptile_summary(ATTENTION_CLEAN), GREPTILE) == GREPTILE_SHA
+
+
+def test_reviewed_sha_is_anchored_to_the_footer_phrase() -> None:
+    # The narrative and the per-file table routinely link commits, on either
+    # side of the footer. The capture is anchored to "Last reviewed commit:"
+    # and bounded to that line, so none of them can be read as "the commit
+    # reviewed" — an unanchored pattern would take whichever came first.
+    stray = "See https://github.com/o/r/commit/" + "a" * 40 + " for context.\n"
+    trailing = "Earlier: https://github.com/o/r/commit/" + "b" * 40 + "\n"
+    body = stray + _greptile_summary(ATTENTION_CLEAN) + trailing
+    assert reviewed_sha(body, GREPTILE) == GREPTILE_SHA
+
+
+def test_same_commit_prefix_compares_but_refuses_a_short_abbreviation() -> None:
+    assert same_commit(GREPTILE_SHA, GREPTILE_SHA[:7]) is True
+    assert same_commit(GREPTILE_SHA, OTHER_SHA) is False
+    # Answering True on a 3-character "abbreviation" would silently disable the
+    # staleness guard for every commit sharing those characters.
+    assert same_commit(GREPTILE_SHA, GREPTILE_SHA[:3]) is False
+
+
+def test_same_commit_ignores_hex_case() -> None:
+    # Git and the GitHub UI both render abbreviated SHAs in either case, and a
+    # case-sensitive compare would report a fresh review as stale — sending the
+    # caller to re-trigger a review that had already run.
+    assert same_commit(GREPTILE_SHA, GREPTILE_SHA.upper()) is True
+
+
+def test_a_bots_reply_is_not_one_of_its_findings() -> None:
+    # These come from the pull-level endpoint, so the bot's own replies to a
+    # triage thread carry the same author as its findings. Re-triaging an
+    # "acknowledged, fixed" reply as a fresh finding is what this prevents.
+    reply = _pull_comment(
+        2, "greptile-apps[bot]", "2026-07-25T21:09:13Z", in_reply_to_id=1
+    )
+    finding = _pull_comment(3, "greptile-apps[bot]", "2026-07-25T21:09:13Z")
+    assert is_finding_comment(reply, GREPTILE) is False
+    assert is_finding_comment(finding, GREPTILE) is True
+
+
+def test_findings_from_an_earlier_run_are_excluded_by_the_floor() -> None:
+    # The review id cannot scope these (a re-review posts under no new review),
+    # so the floor is the only scoping there is.
+    since = parse_ts("2026-07-25T21:03:00Z")
+    stale = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T19:21:20Z")
+    fresh = _pull_comment(3650999999, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    selected = select_finding_comments([stale, fresh], GREPTILE, since)
+    assert [c["id"] for c in selected] == [3650999999]
+
+
+def test_findings_are_returned_oldest_first() -> None:
+    # Triage output reads top to bottom, so the order is the order the bot
+    # reported in; reversing it silently reorders the verdict table against the
+    # thread it must line up with.
+    since = parse_ts("2026-07-25T19:00:00Z")
+    later = _pull_comment(2, "greptile-apps[bot]", "2026-07-25T21:09:20Z")
+    earlier = _pull_comment(1, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    selected = select_finding_comments([later, earlier], GREPTILE, since)
+    assert [c["id"] for c in selected] == [1, 2]
+
+
+def test_greptile_is_asked_in_thread_with_its_own_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bot_review
+
+    assert GREPTILE.trigger_body == "@greptileai review"
+    assert GREPTILE.request_login is None
+    assert GREPTILE.dispatch_workflow is None
+    assert GREPTILE.review_login == "greptile-apps[bot]"
+
+    posted: list[tuple[str, ...]] = []
+
+    def fake_gh(path: str, *args: str) -> Any:
+        posted.append(args)
+        return {"id": 1, "body": "@greptileai review"}
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    assert bot_review.cmd_request("o/r", 71, GREPTILE) == 0
+    # The handle is `@greptileai`, not `@greptile`: the wrong string posts a
+    # comment that summons nothing, then buys a full poll waiting for it.
+    assert posted == [("-f", "body=@greptileai review")]
+
+
+def _greptile_wait(
+    monkeypatch: pytest.MonkeyPatch,
+    summary_body: str | None,
+    head: str = GREPTILE_SHA,
+    timeout: int = 0,
+    comments: list[dict[str, Any]] | None = None,
+) -> int:
+    """Drive cmd_wait with one summary comment, or none when body is None."""
+    import bot_review
+
+    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+    review_comments = comments or []
+
+    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
+        return posted
+
+    def the_head(repo: str, pr: int) -> str:
+        return head
+
+    def the_comments(repo: str, pr: int) -> list[dict[str, Any]]:
+        return review_comments
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    monkeypatch.setattr(bot_review, "pull_comments", the_comments)
+    monkeypatch.setattr(bot_review.time, "sleep", no_sleep)
+    since = parse_ts("2026-07-25T19:00:00Z")
+    return bot_review.cmd_wait("o/r", 69, GREPTILE, since, timeout)
+
+
+def test_cmd_wait_reports_a_clean_summary_as_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _greptile_wait(monkeypatch, _greptile_summary(ATTENTION_CLEAN)) == EXIT_CLEAN
+
+
+def test_cmd_wait_reports_a_findings_summary_as_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    assert _greptile_wait(monkeypatch, body, comments=[finding]) == 0
+
+
+def test_cmd_wait_keeps_polling_until_the_counted_comments_have_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Greptile posts its summary ~4s before the inline comments it counts (PR
+    # #67 03:06:07 -> 03:06:11; PR #69 19:21:16 -> 19:21:20). With a 30s poll,
+    # roughly one findings run in seven lands inside that window. Returning
+    # there hands fetch a review whose findings do not exist yet, which it then
+    # reports as a count mismatch — a real alarm for a non-problem.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    assert _greptile_wait(monkeypatch, body, comments=[]) == 1
+    assert "is ready" not in capsys.readouterr().out
+
+
+def test_a_clean_summary_over_an_unanswered_finding_is_not_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The gap that made the clean path the only one checking nothing: a
+    # re-review edits the summary to "no files need attention" while an
+    # untriaged finding from the first run sits above the floor. Reporting
+    # clean there is how a finding nobody read reaches a merge.
+    body = _greptile_summary(ATTENTION_CLEAN, reviews=2)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T19:21:20Z")
+    assert _greptile_wait(monkeypatch, body, comments=[finding]) == 0
+    assert "1 open finding(s)" in capsys.readouterr().out
+
+
+def test_a_clean_summary_over_an_answered_finding_is_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The other half: once the finding carries a threaded reply the triage is
+    # done, and the run is as finished as one that found nothing. Otherwise
+    # every PR that ever had a finding would block forever.
+    body = _greptile_summary(ATTENTION_CLEAN, reviews=2)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T19:21:20Z")
+    reply = _pull_comment(
+        3650871889, "NeuroticGamer99", "2026-07-25T19:29:53Z", in_reply_to_id=3650858888
+    )
+    assert _greptile_wait(monkeypatch, body, comments=[finding, reply]) == EXIT_CLEAN
+
+
+def test_a_summary_naming_a_superseded_commit_is_stale_not_ready(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The failure this exists for, observed live on PR #69: the summary said it
+    # last reviewed 72550f1 while the branch was three commits ahead. Its
+    # updated_at is newer than any floor minted at PR creation, so by timestamp
+    # alone a review of superseded code is indistinguishable from a fresh one.
+    body = _greptile_summary(ATTENTION_CLEAN, sha=OTHER_SHA)
+    assert _greptile_wait(monkeypatch, body, head=GREPTILE_SHA) == 1
+    err = capsys.readouterr().err
+    assert "STALE, not missing" in err
+    assert OTHER_SHA[:7] in err
+    assert GREPTILE_SHA[:7] in err
+
+
+def test_a_summary_naming_no_commit_is_not_treated_as_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unparsed footer is missing evidence, not evidence of staleness.
+    # Failing closed there would wedge every wait behind a reworded footer;
+    # fetch surfaces the unverified freshness instead.
+    body = _greptile_summary(ATTENTION_CLEAN).replace("Last reviewed commit:", "Ref:")
+    assert reviewed_sha(body, GREPTILE) is None
+    assert _greptile_wait(monkeypatch, body) == EXIT_CLEAN
+
+
+def _greptile_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+    summary_body: str | None,
+    comments: list[dict[str, Any]],
+    head: str = GREPTILE_SHA,
+) -> int:
+    """Drive cmd_fetch with one summary comment, or none when body is None."""
+    import bot_review
+
+    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+
+    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
+        return posted
+
+    def the_head(repo: str, pr: int) -> str:
+        return head
+
+    def the_comments(repo: str, pr: int) -> list[dict[str, Any]]:
+        return comments
+
+    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    monkeypatch.setattr(bot_review, "pull_comments", the_comments)
+    since = parse_ts("2026-07-25T19:00:00Z")
+    return bot_review.cmd_fetch("o/r", 69, GREPTILE, since)
+
+
+def test_cmd_fetch_prints_findings_read_from_the_comments_endpoint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    assert _greptile_fetch(monkeypatch, body, [finding]) == 0
+    out = capsys.readouterr().out
+    assert "1 open finding(s)" in out
+    assert "src/healthspan/fsperm.py:42" in out
+    assert "id=3650858888" in out
+    # The body's own count agrees with what was fetched, so no NOTE fires.
+    assert "NOTE:" not in out
+
+
+def test_cmd_fetch_reprints_only_what_is_still_unanswered(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Re-running fetch after triage must not re-litigate answered findings —
+    # otherwise the merge gate can never be satisfied on a PR that had any.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    reply = _pull_comment(
+        3650871889, "NeuroticGamer99", "2026-07-25T21:29:53Z", in_reply_to_id=3650858888
+    )
+    assert _greptile_fetch(monkeypatch, body, [finding, reply]) == EXIT_CLEAN
+    out = capsys.readouterr().out
+    assert "NOTHING OUTSTANDING: all 1 finding(s) have a reply." in out
+    assert "id=3650858888" not in out
+
+
+def test_cmd_fetch_reports_a_clean_summary_as_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `/squash-merge` calls fetch directly and treats exit 2 as the signal that
+    # the Greptile gate is satisfied, so this is the exit code a merge depends
+    # on — not merely wait's. A clean run has no findings to print and no
+    # review object to read, so fetch must answer from the summary alone.
+    assert _greptile_fetch(monkeypatch, _greptile_summary(ATTENTION_CLEAN), []) == (
+        EXIT_CLEAN
+    )
+
+
+def test_cmd_fetch_reports_silence_as_silence_rather_than_as_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No summary at all is the one case that must never collapse into "clean":
+    # both mean "nothing to triage", and only one of them means the code was
+    # looked at.
+    assert _greptile_fetch(monkeypatch, None, []) == 1
+    assert "not the same as a clean review" in capsys.readouterr().err
+
+
+def test_cmd_wait_times_out_plainly_when_the_bot_has_not_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The other half of the timeout contract: `/greptile-review` step 3 tells
+    # the agent to react differently to "no review arrived" than to "STALE, not
+    # missing", so the two messages must stay distinguishable. A stale summary
+    # seen earlier in the poll is what selects the second message; with nothing
+    # seen at all, it must be the first.
+    assert _greptile_wait(monkeypatch, None) == 1
+    err = capsys.readouterr().err
+    assert "no greptile findings review" in err
+    assert "STALE" not in err
+
+
+def test_cmd_fetch_refuses_to_conclude_when_the_count_outruns_the_comments(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The summary claims one finding; the comments endpoint yields none. Neither
+    # "clean" nor "here are the findings" is true, so the honest answer is to
+    # refuse — an empty result is a claim, and this one contradicts the body.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    assert _greptile_fetch(monkeypatch, body, []) == 1
+    assert "only 0 were fetched" in capsys.readouterr().err
+
+
+def test_cmd_fetch_refuses_to_classify_when_the_two_signals_disagree(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Prose says clean, the fix-prompt block says one finding. Both are
+    # drift-prone in different ways — the prose is model-written, the count
+    # comes from a configurable block — so neither gets to win by default.
+    body = _greptile_summary(ATTENTION_CLEAN, fix_prompt=True)
+    assert _greptile_fetch(monkeypatch, body, []) == 1
+    assert "the two signals disagree" in capsys.readouterr().err
+
+
+def test_a_stale_review_is_reported_but_still_triaged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Staleness is the ordinary end state of a triaged PR — the fixes a review
+    # provokes are commits made after it — so it annotates the output rather
+    # than suppressing it. The findings themselves are still real.
+    body = _greptile_summary(ATTENTION_FINDINGS, sha=OTHER_SHA, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    assert _greptile_fetch(monkeypatch, body, [finding], head=GREPTILE_SHA) == 0
+    out = capsys.readouterr().out
+    assert f"looked at {OTHER_SHA[:7]}, not the current head {GREPTILE_SHA[:7]}" in out
+    assert "id=3650858888" in out
+
+
+def test_a_clean_run_does_not_warn_that_its_count_cross_check_was_skipped(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A clean summary states no count by design and zero findings were fetched,
+    # so the two agree and there is nothing to warn about. Emitting the
+    # "cross-check skipped" NOTE on every clean run is how a NOTE becomes
+    # something people learn to scroll past.
+    assert _greptile_fetch(monkeypatch, _greptile_summary(ATTENTION_CLEAN), []) == (
+        EXIT_CLEAN
+    )
+    assert "cross-check skipped" not in capsys.readouterr().out
+
+
+def test_a_stale_review_whose_findings_are_answered_blocks_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The state every triaged PR reaches by merge time: reviewed at commit A,
+    # head is now B because the fixes landed, and every finding has a reply.
+    # A gate keyed on freshness would fire here — on 3 of the 4 live PRs — while
+    # still saying nothing about the finding nobody answered.
+    body = _greptile_summary(ATTENTION_FINDINGS, sha=OTHER_SHA, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    reply = _pull_comment(
+        3650871889, "NeuroticGamer99", "2026-07-25T21:29:53Z", in_reply_to_id=3650858888
+    )
+    assert _greptile_fetch(monkeypatch, body, [finding, reply], head=GREPTILE_SHA) == (
+        EXIT_CLEAN
+    )
+
+
+def test_cmd_fetch_flags_a_summary_whose_freshness_it_could_not_verify(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True).replace(
+        "Last reviewed commit:", "Ref:"
+    )
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    assert _greptile_fetch(monkeypatch, body, [finding]) == 0
+    assert "freshness could not be verified" in capsys.readouterr().out
+
+
+def test_the_fix_prompt_heading_is_the_only_count_greptile_states() -> None:
+    # Its review body is empty and the summary carries no "N findings" line, so
+    # the cross-check reads the heading of the fix-prompt block — present only
+    # when there are findings (PR #67).
+    findings = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    assert stated_count(findings, GREPTILE) == 1
+    # On a clean run there is no such block. An absent count is None, which
+    # count_note reports as "cross-check skipped" rather than asserting zero.
+    assert stated_count(_greptile_summary(ATTENTION_CLEAN), GREPTILE) is None
+
+
+def test_only_greptile_uses_the_summary_comment_path() -> None:
+    # The other three keep the reviews-endpoint model exactly as it was; a stray
+    # summary_marker would silently reroute their detection.
+    for spec in (CODERABBIT, COPILOT, GEMINI):
+        assert spec.summary_marker is None
+        assert spec.reviewed_commit is None
+
+
+def test_a_summary_marker_without_a_clean_marker_is_refused() -> None:
+    import bot_review
+
+    with pytest.raises(ValueError, match="summary_marker requires clean_marker"):
+        bot_review.BotSpec(
+            key="broken",
+            review_login="x[bot]",
+            request_login=None,
+            requested_display=None,
+            trigger_body="@x review",
+            count=re.compile(r"(\d+)"),
+            clean_marker=None,
+            summary_marker=re.compile(r"marker"),
+        )
+
+
+def test_a_reviewed_commit_without_a_summary_marker_is_refused() -> None:
+    import bot_review
+
+    with pytest.raises(ValueError, match="reviewed_commit requires summary_marker"):
+        bot_review.BotSpec(
+            key="broken",
+            review_login="x[bot]",
+            request_login=None,
+            requested_display=None,
+            trigger_body="@x review",
+            count=re.compile(r"(\d+)"),
+            clean_marker=re.compile(r"clean"),
+            reviewed_commit=re.compile(r"/commit/([0-9a-f]{7,40})"),
+        )
+
+
+def test_summary_state_reports_none_before_the_bot_has_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bot_review
+
+    def no_comments(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def the_head(repo: str, pr: int) -> str:
+        return GREPTILE_SHA
+
+    monkeypatch.setattr(bot_review, "issue_comments", no_comments)
+    monkeypatch.setattr(bot_review, "pull_comments", no_comments)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    since = parse_ts("2026-07-25T19:00:00Z")
+    assert summary_state("o/r", 69, GREPTILE, since) is None
+
+
+def test_a_threaded_reply_marks_its_parent_answered() -> None:
+    # Transcribed from PR #69: the owner's reply 3650871889 points at
+    # Greptile's finding 3650858888, which is the whole record GitHub keeps of
+    # a finding having been triaged.
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T19:21:20Z")
+    reply = _pull_comment(
+        3650871889, "NeuroticGamer99", "2026-07-25T19:29:53Z", in_reply_to_id=3650858888
+    )
+    assert answered_ids([finding, reply]) == {3650858888}
+    assert unanswered([finding], [finding, reply]) == []
+    # Without the reply the same finding is outstanding.
+    assert unanswered([finding], [finding]) == [finding]
+
+
+def test_a_reply_to_another_bots_finding_does_not_answer_ours() -> None:
+    # PR #69 carried CodeRabbit findings and their replies in the same payload;
+    # keying on the parent id rather than on mere presence is what keeps one
+    # bot's triage from clearing another's.
+    ours = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T19:21:20Z")
+    theirs = _pull_comment(3651079329, "coderabbitai[bot]", "2026-07-25T21:27:05Z")
+    their_reply = _pull_comment(
+        3651082022, "NeuroticGamer99", "2026-07-25T21:29:01Z", in_reply_to_id=3651079329
+    )
+    assert unanswered([ours], [ours, theirs, their_reply]) == [ours]

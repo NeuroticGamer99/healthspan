@@ -4,9 +4,13 @@
 # Teaches the reviewer this project's non-obvious conventions (see CLAUDE.md)
 # and stands its built-in linters down where CI already gates them.
 #
-# Sibling reviewer config: .gemini/styleguide.md teaches the same conventions
-# to the Antigravity SDK (Gemini) reviewer — a convention added or changed
-# here must be mirrored there, and vice versa.
+# Sibling reviewer configs teach the same conventions to the other bots:
+# .gemini/styleguide.md (the Antigravity SDK reviewer) and .greptile/
+# (config.json's scoped rules[] plus rules.md). A convention added or changed
+# here must be mirrored in both, and vice versa. The `path_filters` block below
+# is mirrored twice more — as .greptile/config.json `ignorePatterns` and as
+# scripts/gemini_review_logic.py `EXCLUDED_GLOBS` — and both copies are
+# drift-tested in tests/test_gemini_review_logic.py.
 
 language: en-US
 
@@ -69,7 +73,7 @@ reviews:
         containment lens that mirrors .gemini/styleguide.md; keep the two in
         sync. Hidden dot-paths are covered by the sibling entry below.
 
-    - path: "{.github/**,.gemini/**,.claude/**,.coderabbit.yaml,.markdownlint.yaml}"
+    - path: "{.github/**,.gemini/**,.greptile/**,.claude/**,.coderabbit.yaml,.markdownlint.yaml}"
       instructions: >-
         Personal-data containment (CLAUDE.md), hidden paths: the "**/*" entry
         above cannot reach these — CodeRabbit globs use dot:false semantics, so
@@ -119,10 +123,11 @@ reviews:
     # match dotfiles and `**` does not descend into dot-directories. These
     # literal/explicit-dot entries cover the hidden config that carries
     # decisions today — CI pinned tool versions + gates under .github/, the
-    # ADR-0062 markdownlint config, and the Gemini reviewer's styleguide under
-    # .gemini/. The reviewer configs (.coderabbit.yaml, .gemini/**) are
-    # included only so their OWN carve-out below is applied to them.
-    - path: "{.coderabbit.yaml,.markdownlint.yaml,.gemini/**,.github/**}"
+    # ADR-0062 markdownlint config, and the other reviewers' configuration under
+    # .gemini/ and .greptile/. The reviewer configs (.coderabbit.yaml,
+    # .gemini/**, .greptile/**) are included only so their OWN carve-out below
+    # is applied to them.
+    - path: "{.coderabbit.yaml,.markdownlint.yaml,.gemini/**,.greptile/**,.github/**}"
       instructions: >-
         Decision-capture routing (CLAUDE.md) for hidden config that has an
         owning ADR or is a CI gate: application config knobs/defaults route to

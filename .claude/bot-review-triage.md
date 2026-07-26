@@ -1,9 +1,16 @@
 # Bot-review triage
 
 The shared procedure for handling an automated PR review. Used by `/coderabbit-review`
-(CodeRabbit — directly or via `/ship coderabbit`), `/gemini-review` (the Antigravity SDK Gemini
-workflow — directly or via `/ship gemini`), and `/copilot-review` (GitHub Copilot). The bots are
-useful; none is trusted.
+(CodeRabbit — directly or via `/ship coderabbit`), `/greptile-review` (Greptile — directly or via
+`/ship greptile`), `/gemini-review` (the Antigravity SDK Gemini workflow — directly or via
+`/ship gemini`), and `/copilot-review` (GitHub Copilot). The bots are useful; none is trusted.
+
+Greptile is the only one that reviews **unasked** — its GitHub App reviews every new PR — so it is
+also the only one whose findings can exist without anyone having decided to look at them. Collect
+it with `/greptile-review`; `/squash-merge` refuses to merge while any Greptile finding lacks a
+threaded reply. That is also why §2's "never leave a finding unanswered" is mechanically enforced
+for Greptile alone: the reply *is* the record, so an unanswered finding reads to the tooling
+exactly like one nobody ever collected.
 
 **Governing principle: a bot finding is a hypothesis, not a defect.** Verify every one against the
 actual code before acting on it or replying to it. The record from PR #26 (seven findings across
@@ -94,8 +101,12 @@ spec-link targets), push, and only then post the "fixed in `<sha>`" replies.
 
 ## 4. After the fixes land
 
-Nothing re-reviews a push on its own — re-reviewing the new commit is a fresh run of the bot's
-own skill (`/coderabbit-review`, `/gemini-review`, or `/copilot-review`), spent deliberately. When every spent
-review is clean or triaged and the user asks for the merge, finish the chain with
-**`/squash-merge`** — it composes a clean squash message and verifies the result on
+Nothing re-reviews a push on its own — not even Greptile, whose `triggerOnUpdates` is deliberately
+`false`. Re-reviewing the new commit is a fresh run of the bot's own skill (`/coderabbit-review`,
+`/greptile-review`, `/gemini-review`, or `/copilot-review`), spent deliberately. **A review that
+ran before the fixes is stale, not clean** — it reports on code that no longer exists. Greptile
+names the commit it reviewed and `bot_review.py` checks it against the PR head, so a stale one is
+reported as such rather than read as this commit's verdict; for the others, staleness is yours to
+track. When every spent review is clean or triaged and the user asks for the merge, finish the
+chain with **`/squash-merge`** — it composes a clean squash message and verifies the result on
 `origin/main`.
