@@ -397,8 +397,9 @@ BOTS: dict[str, BotSpec] = {
         body_findings=re.compile(r"(\d+) finding\(s\) could not be anchored"),
     ),
     # Greptile is a GitHub App like CodeRabbit, but it reports through a
-    # different set of artifacts, transcribed from four live runs on this repo
-    # (PRs #67 findings, #68 clean, #69 findings-then-clean, #70 clean):
+    # different set of artifacts, transcribed from live runs on this repo
+    # (PRs #67 findings, #68 clean, #69 findings-then-clean, #70/#71 clean,
+    # #72 findings-with-no-comments):
     #
     #   findings run -> a review object (state COMMENTED, body length ZERO)
     #                   + its inline comments + a summary issue comment
@@ -407,6 +408,10 @@ BOTS: dict[str, BotSpec] = {
     #   re-review    -> the summary comment is EDITED IN PLACE. No new comment,
     #                   no new review object, and the original review's
     #                   `submitted_at` never moves.
+    #   findings, no -> a summary stating a count, with NO review object and NO
+    #   comments       inline comment: the findings are prose in the summary and
+    #                  nothing can reply to them (PR #72). This is why an
+    #                  undercount is only "still arriving" inside COMMENT_GRACE.
     #
     # So the summary comment is the only artifact present in every outcome, and
     # the only one that moves on a re-review — hence `summary_marker`. Unlike

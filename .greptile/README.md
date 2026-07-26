@@ -88,11 +88,23 @@ convention added or changed in one must be mirrored in the others.
 
 The artifacts Greptile posts are not the shape the other bots use, and
 `scripts/bot_review.py` encodes what was observed live rather than what the docs
-imply. A findings run posts a review object with an **empty body**, its inline
-comments, and a summary issue comment; a clean run posts the summary issue
-comment **only**, with no review object at all. A re-review **edits the existing
-summary comment in place** — it creates no new comment and does not move the
-review object. The summary comment is therefore the completion signal for both
-outcomes, and its footer names the commit actually reviewed, which is how a
-stale review is told from a fresh one. The full set of failure modes each rule
-prevents is documented at the `greptile` entry in `scripts/bot_review.py`.
+imply. Four shapes so far:
+
+- **Findings run** — a review object with an **empty body**, its inline
+  comments, and a summary issue comment (PRs #67, #69).
+- **Clean run** — the summary issue comment **only**, with no review object at
+  all (PRs #68, #70, #71).
+- **Re-review** — the existing summary comment **edited in place**; no new
+  comment, and the review object does not move (PRs #68, #69).
+- **Findings with no comments at all** — a summary stating a finding count, with
+  no review object *and* no inline comment; the findings exist only as prose in
+  the summary, where nothing can reply to them (PR #72).
+
+The summary comment is the only artifact present in every one of those, which is
+why it — and not the reviews endpoint — is what the tooling polls. Its footer
+names the commit actually reviewed, which is how a stale review is told from a
+fresh one. The last shape is also why a stated count exceeding the comments
+found is only treated as "still arriving" within a two-minute grace window: past
+it, the missing findings are not late, they were never comments. The full set of
+failure modes each rule prevents is documented at the `greptile` entry in
+`scripts/bot_review.py`.

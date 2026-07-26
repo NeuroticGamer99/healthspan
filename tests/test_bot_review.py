@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1577,9 +1577,18 @@ def test_cmd_fetch_refuses_to_conclude_when_the_count_outruns_the_comments(
     # The summary claims one finding; the comments endpoint yields none. Neither
     # "clean" nor "here are the findings" is true, so the honest answer is to
     # refuse — an empty result is a claim, and this one contradicts the body.
+    #
+    # `fresh=True` is load-bearing, not decoration: this is the *in-grace* case,
+    # and the message it must produce ("still landing") is the opposite advice
+    # from the post-grace one. A fixture stamped in the past would silently
+    # exercise the other branch, and "only 0 were fetched" is common to both —
+    # so it would pass either way and pin neither.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_fetch(monkeypatch, body, []) == 1
-    assert "only 0 were fetched" in capsys.readouterr().err
+    assert _greptile_fetch(monkeypatch, body, [], fresh=True) == 1
+    err = capsys.readouterr().err
+    assert "only 0 were fetched" in err
+    assert "usually a review still landing" in err
+    assert "no longer in flight" not in err
 
 
 def test_wait_and_fetch_agree_when_the_two_signals_disagree(
@@ -1671,6 +1680,52 @@ def test_a_freshly_posted_undercount_is_still_waited_out(
     )
     assert state.undercounted is True
     assert state.comments_pending is True
+
+
+def _undercounted_state(age: timedelta) -> Any:
+    """A one-stated / zero-matched summary aged `age` behind now."""
+    import bot_review
+
+    stamp = (datetime.now(UTC) - age).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return bot_review.SummaryState(
+        comment=_comment(1, "greptile-apps[bot]", stamp, stamp, body="x"),
+        clean=False,
+        stale=False,
+        reviewed=GREPTILE_SHA,
+        head=GREPTILE_SHA,
+        stated=1,
+        findings=[],
+        open_findings=[],
+    )
+
+
+def test_the_grace_window_boundary_is_where_the_reading_flips() -> None:
+    # The window is the whole mechanism, so pin both sides of it rather than
+    # only the far extremes. Strictly less-than: at exactly COMMENT_GRACE the
+    # comments are no longer considered in flight.
+    import bot_review
+
+    just_inside = _undercounted_state(bot_review.COMMENT_GRACE - timedelta(seconds=5))
+    at_boundary = _undercounted_state(bot_review.COMMENT_GRACE + timedelta(seconds=1))
+    assert just_inside.undercounted is True
+    assert at_boundary.undercounted is True
+    assert just_inside.comments_pending is True
+    assert at_boundary.comments_pending is False
+
+
+def test_a_race_outlasting_the_grace_degrades_safely_never_to_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The window is sized from two ~4-second observations with a wide margin,
+    # but a genuine race could in principle outlast it (rate limiting, an
+    # outage). Then the reading is wrong — "structural" for something still
+    # resolving. Pin the direction that failure takes: never EXIT_CLEAN. A
+    # premature refusal costs a re-run; a premature "clean" buries a finding.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    for comments in ([], [finding]):
+        assert _greptile_fetch(monkeypatch, body, comments) != EXIT_CLEAN
+        capsys.readouterr()
 
 
 def test_a_pending_comment_is_waited_out_not_failed(

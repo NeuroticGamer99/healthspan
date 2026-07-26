@@ -87,24 +87,44 @@ uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <the f
 This prints the summary comment and **the findings that have no reply yet**, with the `id` to reply
 to — answered findings are counted, not reprinted, so a re-run after triage does not re-litigate
 what you already answered. Greptile's artifacts do not match the other bots' and the script
-accounts for it — a findings run's review object has an **empty body** with everything in inline
-comments, a clean run posts no review object at all, and a re-review edits the summary comment in
-place without creating anything new. Do not re-derive any of that at the terminal;
-`scripts/bot_review.py` and its tests are the record.
+accounts for it. A findings run's review object has an **empty body** with everything in inline
+comments; a clean run posts no review object at all; a re-review edits the summary comment in place
+without creating anything new; and — PR #72 — a findings run can post **no review object and no
+inline comment either**, leaving the finding as prose in the summary. The summary comment is the
+only artifact present in every one of those, which is why it, and not the reviews endpoint, is what
+the script polls. Do not re-derive any of this at the terminal; `scripts/bot_review.py` and its
+tests are the record.
 
 Watch for the `NOTE:` lines. A count mismatch means the summary's own finding count disagrees with
 what was fetched — **investigate**, never assume which side is wrong. A freshness note means the
 summary named no commit, so staleness could not be checked at all; a staleness note means the
 review looked at an older commit, so its findings are real but the current code is unreviewed.
 
-Exit **1** covers several distinct states, so read the message rather than the code:
+Exit **1** covers several distinct states, so read the message rather than the code. The two
+commands word the no-report case differently — `wait` times out with *"no greptile findings review
+after Ns"*, `fetch` refuses with *"no greptile summary after \<floor\>"* — and both mean the same
+thing: it has not reported, which is not a clean review. Beyond that:
 
-- *"No greptile summary after …"* — it has not reported at all, which is not a clean review.
 - *"The two signals disagree"* — the summary's prose verdict and its stated finding count
   contradict each other. The prose is model-written and the count comes from a configurable block,
   so either can drift; read the summary on the PR rather than guess which to believe.
-- *"states N finding(s) but only M were fetched"* — usually transient, since Greptile posts its
-  summary about four seconds before the comments it counts. Re-run before concluding anything.
+- *"states N finding(s) but only M were fetched"* — **`fetch` only**, and it means one of two
+  things, which the message names. If it adds *"usually a review still landing — re-run"*, the
+  comments are still in flight: Greptile posts its summary about four seconds ahead of them, and a
+  re-run resolves it. If it adds *"the comments are no longer in flight … exist only in the summary
+  text"*, re-running will never help. Those findings were written as prose in the summary with no
+  comment object behind them, so nothing can be replied to and no triage will ever clear them —
+  **read the summary on the PR and answer them there**, as a PR-level comment.
+
+  That second shape is not hypothetical: Greptile did exactly this on PR #72, stating one finding
+  with no review object and no inline comment anywhere. Treating the gap as always-transient is
+  what made an earlier version of `wait` poll for comments that were never coming.
+
+**`wait` never emits either of those two messages** — do not look for them in its output. Inside
+the grace window it simply keeps polling; past it, it *succeeds* with exit **0** and says so on the
+ready line: `… is ready — N open finding(s), and M that exist only in the summary text`. That is
+the same condition, routed as work to do rather than as a refusal, because there is something to
+read. Step 4's `fetch` is where it becomes an exit 1.
 
 Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
 against the real code, reply per finding, report the verdict table, **stop for the user's go before
