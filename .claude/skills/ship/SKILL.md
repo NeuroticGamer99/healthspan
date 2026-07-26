@@ -70,13 +70,35 @@ gate.
 - Otherwise `gh pr create --base main`, with a body carrying: what landed and why, the `Decisions:`
   section, and a test plan (the gates, plus what the new tests actually cover). End with the Claude
   Code attribution line.
-- Pass the body via **`--body-file -`** with a *quoted* heredoc (`<<'EOF'` — unquoted, the shell
-  runs command substitution on every backtick and expands `$` inside the body before `gh` sees
-  it, and markdown bodies are full of backticks). `--body -` is accepted without error and sets
-  the literal string `-` as the description (it silently discarded PR #43's body, 2026-07-20).
-  Then read it back: `gh pr view --json body --jq .body` (the `--jq` unwraps the JSON envelope
-  to raw markdown — without it the escaped `{"body":"..."}` form can never match) must match the
-  composed description — a full comparison, not merely "isn't `-`", so expansion damage is
+- **Write the composed body to `<scratchpad>/pr-body.md` and pass that path** to `--body-file`
+  — the read-back in the next bullet diffs against that same file, so it has to survive the call.
+  Write it as **UTF-8 without a BOM** (the Write tool, or PowerShell's
+  `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))`):
+  PR bodies here are full of em dashes and `Set-Content` without `-Encoding UTF8` writes cp1252
+  and corrupts them silently (`CLAUDE.md`, PowerShell file encoding). Keeping
+  it on disk is what lets the read-back below be a real `diff`; a body that exists only inside a
+  heredoc can only be spot-checked, which tests the lines you thought to check rather than the
+  one that broke. If you do pipe it, `--body-file -` is the only stdin form and the heredoc
+  delimiter must be *quoted* (`<<'EOF'` — unquoted, the shell runs command substitution on every
+  backtick and expands `$` inside the body before `gh` sees it, and markdown bodies are full of
+  backticks). `--body -` is accepted without error and sets the literal string `-` as the
+  description (it silently discarded PR #43's body, 2026-07-20).
+- Then read it back and **diff it**:
+
+  ```bash
+  gh pr view --json body --jq .body > <scratchpad>/pr-body-landed.md
+
+  # Normalize both sides identically before comparing — `--jq` always appends a
+  # trailing newline and a composed file may end with none (or several), so an
+  # unnormalized diff fails on a body that landed perfectly. Same rule, and the
+  # same reason, as /squash-merge step 4.
+  printf '%s\n' "$(cat <scratchpad>/pr-body.md)"        > <scratchpad>/expected.txt
+  printf '%s\n' "$(cat <scratchpad>/pr-body-landed.md)" > <scratchpad>/landed.txt
+  diff <scratchpad>/expected.txt <scratchpad>/landed.txt
+  ```
+
+  The `--jq` unwraps the JSON envelope to raw markdown — without it the escaped `{"body":"..."}`
+  form can never match. A full comparison, not merely "isn't `-`", so shell-expansion damage is
   caught too.
 - Report the PR URL.
 

@@ -40,9 +40,16 @@ this can:
   commits have landed since. Greptile names the commit it reviewed, so that is
   checked against the PR head and a mismatch is reported as *stale*, not ready.
 
-Commands (exit 0 = findings review ready, 1 = failure or timeout,
-2 = clean review — the bot reported no findings; nothing to triage,
-3 = empty range — there was nothing to review at all; nothing to triage):
+Commands. For the per-bot commands (``request``/``wait``/``fetch``): exit 0 =
+findings review ready, 1 = failure or timeout, 2 = clean review — the bot
+reported no findings; nothing to triage, 3 = empty range — there was nothing to
+review at all; nothing to triage.
+
+``outstanding`` inverts 0 and keeps 2 narrower, because it answers a merge
+question rather than a triage one: **0 = unanswered findings exist, do not
+merge**; 1 = failure, or a zero the sweep could not prove; 2 = nothing
+outstanding. Its 2 covers two states it prints differently and never conflates
+— every finding answered, versus no bot having posted one at all:
 
 * ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
   took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
@@ -64,6 +71,11 @@ Commands (exit 0 = findings review ready, 1 = failure or timeout,
   the findings that have no threaded reply, counts the ones that do, and treats
   a review of a superseded commit as a note rather than a refusal — fix commits
   land after a review, so staleness is the ordinary end state of a triaged PR.
+* ``outstanding --pr N --since T`` — the merge gate, asked of *every* bot at
+  once (no ``--bot``): which findings on this PR still have no reply. Exit 2
+  means none do. The per-bot commands answer "did this bot report"; a merge
+  needs "is anything here unread", and those diverge precisely on the PR whose
+  review was collected but whose findings were not.
 
 ``--since`` takes an ISO-8601 timestamp; ``--since-commit SHA`` derives the
 floor from a commit in UTC, which is the safe way to recover a floor that was
@@ -85,7 +97,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 PAGE_SIZE = 100
 POLL_SECONDS = 30
@@ -152,6 +164,32 @@ class BotSpec:
     # mutually exclusive with the other two. Defaulted (unlike every field
     # above) so the specs and tests that predate it stay valid as written.
     dispatch_workflow: str | None = None
+    # The login that authors this bot's inline *comments*, when it differs from
+    # the one that authors its reviews. None means they are the same.
+    #
+    # A third identity, and the reason it exists now and did not before: this
+    # module used to reach comments only through their review's id, so it never
+    # needed a comment author at all. The gate that sweeps a PR for unanswered
+    # findings has no review id to work from, and Copilot posts its reviews as
+    # `copilot-pull-request-reviewer[bot]` while posting the comments *inside*
+    # them as `Copilot`. Filtering its findings by `review_login` therefore
+    # matches nothing and reports a confident "0 findings" — a gate that passes
+    # by failing to look, which is worse than no gate at all. Verified on PR
+    # #71, where Copilot's single finding is authored `Copilot`.
+    comment_login: str | None = None
+    # Whether this bot reviews every PR whether or not it was asked. True only
+    # for Greptile, whose GitHub App triggers on PR creation. It makes silence
+    # *anomalous* rather than merely uninformative: for every other bot, no
+    # artifact means the chain was not spent, which is a legitimate state.
+    always_reviews: bool = False
+    # Captures the number of findings this bot renders in its review *body*
+    # rather than as comment objects. Gemini does: anything it cannot anchor to
+    # a diff line becomes a bullet in the body, and its HTTP-422 fallback
+    # re-posts *every* finding that way — with the inline count restated as 0.
+    # Such findings can never carry a threaded reply, so the unanswered sweep
+    # cannot see them and must refuse to call the PR clear rather than mistake
+    # "0 inline" for "nothing found".
+    body_findings: re.Pattern[str] | None = None
     # Recognizes the "nothing to review" outcome in a *review* body (issue
     # #59) — a review stating 0 findings not because the diff was reviewed
     # and found clean, but because the range was empty (already-merged head,
@@ -186,6 +224,29 @@ class BotSpec:
     # already three commits ahead. Compared against the PR head, it turns "a
     # review exists" into "a review of *this* commit exists".
     reviewed_commit: re.Pattern[str] | None = None
+
+    @property
+    def commenter(self) -> str:
+        """The login that authors this bot's inline findings.
+
+        Distinct from :attr:`requested_display` even where the two strings
+        coincide (Copilot): one is what ``requested_reviewers`` echoes back
+        after a request, the other is what appears on a comment. Keeping them
+        separate means a change to either cannot silently redefine the other.
+        """
+        return self.comment_login or self.review_login
+
+    @property
+    def logins(self) -> tuple[str, ...]:
+        """Every account this bot speaks as, deduplicated.
+
+        One entry for most bots; two for Copilot. Used where "is this the bot
+        itself" must hold across all of its identities rather than just the one
+        that authors findings — a bot must not clear the gate by acking under
+        whichever login the filter was not watching.
+        """
+        seen = (self.review_login, self.comment_login)
+        return tuple(dict.fromkeys(login for login in seen if login))
 
     def __post_init__(self) -> None:
         # One ask channel per bot. cmd_request dispatches on trigger_body
@@ -233,11 +294,30 @@ class BotSpec:
                 f"{self.key}: reviewed_commit requires summary_marker — it is "
                 "parsed out of the summary comment"
             )
+        # comment_login exists only to record a *divergence*. Setting it to the
+        # review login is the copy-paste this class is trying to make
+        # impossible: it reads as "I checked, they differ" while meaning
+        # nothing, and the next reader has no way to tell which.
+        # Case-folded inline rather than through same_login: that helper is
+        # defined below BOTS, which is built at import time by these very
+        # constructors, so it does not exist yet when this runs.
+        if (
+            self.comment_login is not None
+            and self.comment_login.casefold() == self.review_login.casefold()
+        ):
+            raise ValueError(
+                f"{self.key}: comment_login duplicates review_login — leave it "
+                "unset unless the two accounts genuinely differ"
+            )
 
 
-# There is deliberately no *comment* author here. Comments are fetched through
-# the review's own id, so they need no author filter — which is why Copilot's
-# `Copilot` display login is only ever matched against requested_reviewers.
+# A spec needs `comment_login` only when the account that authors the bot's
+# inline comments differs from the one that authors its reviews. That was once
+# nobody: comments were reached through their review's id, which needs no author
+# filter at all. Two paths now read comments without a review id — the Greptile
+# summary model, whose re-review posts under no new review, and the `outstanding`
+# sweep, which has no single review to scope by — so the comment author became a
+# real question, and Copilot answers it differently from every other bot.
 BOTS: dict[str, BotSpec] = {
     "coderabbit": BotSpec(
         key="coderabbit",
@@ -279,6 +359,11 @@ BOTS: dict[str, BotSpec] = {
         # asserted 0 and silencing the absent-count warning (CodeRabbit, PR #63).
         count=re.compile(r"generated (?:(\d+) comments?|no(?: new)? comments)\b"),
         clean_marker=None,
+        # The third identity. Its reviews are authored by the bot login above;
+        # the comments inside them are authored `Copilot`, the same string
+        # requested_reviewers echoes back — coincidence, not a rule, so the two
+        # are declared separately (PR #71).
+        comment_login="Copilot",
     ),
     # The Antigravity SDK (Gemini) reviewer is not a GitHub App but a repo
     # workflow, so its ask channel is a workflow dispatch and its reviews are
@@ -301,6 +386,9 @@ BOTS: dict[str, BotSpec] = {
         # sync by a cross-check test, the same convention as the count regex
         # above and review_body's marker.
         empty_range_marker=re.compile(r"<!-- gemini-review: empty-diff-range -->"),
+        # Mirrors gemini_review_logic.review_body's unanchored block. Kept in
+        # sync by a cross-check test, the same convention as the count regex.
+        body_findings=re.compile(r"(\d+) finding\(s\) could not be anchored"),
     ),
     # Greptile is a GitHub App like CodeRabbit, but it reports through a
     # different set of artifacts, transcribed from four live runs on this repo
@@ -354,6 +442,8 @@ BOTS: dict[str, BotSpec] = {
         reviewed_commit=re.compile(
             r"Last reviewed commit:[^\n]*?/commit/([0-9a-f]{7,40})"
         ),
+        # The only bot here that is never legitimately unspent.
+        always_reviews=True,
     ),
 }
 
@@ -579,36 +669,68 @@ def is_finding_comment(comment: Comment, spec: BotSpec) -> bool:
     The ``in_reply_to_id`` check drops the bot's replies to a triage thread,
     which are authored by the same login and would otherwise be re-triaged as
     fresh findings on the next run.
+
+    The author matched is :attr:`BotSpec.commenter`, **not** ``review_login``.
+    For Copilot those differ, and matching the review's author here filters out
+    every one of its findings — then answers "none outstanding" with complete
+    confidence (PR #71).
     """
-    if not same_login(_login_of(comment), spec.review_login):
+    if not same_login(_login_of(comment), spec.commenter):
         return False
     return comment.get("in_reply_to_id") in (None, 0)
 
 
-def answered_ids(comments: list[Comment]) -> set[int]:
-    """Ids of comments that already carry a threaded reply.
+def answered_ids(comments: list[Comment], not_by: tuple[str, ...] = ()) -> set[int]:
+    """Ids of comments that carry a threaded reply, ignoring self-replies.
 
-    A reply — the owner's or another bot's — sets ``in_reply_to_id`` to the
-    comment it answers, and that is the entire record GitHub keeps of a finding
-    having been triaged. Verified on PRs #67 and #69, where the owner's replies
-    point at Greptile's findings exactly this way.
+    A reply sets ``in_reply_to_id`` to the comment it answers, and that is the
+    entire record GitHub keeps of a finding having been triaged. Verified on
+    PRs #67 and #69, where the owner's replies point at the bot's findings
+    exactly this way.
+
+    ``not_by`` excludes replies from the finding's own author. A bot answering
+    itself is not triage: CodeRabbit acks threads routinely and once withdrew
+    its own finding that way (PR #65), and counting that as "answered" would let
+    a bot clear the merge gate on its own say-so, which is exactly the review
+    nobody read that the gate exists to stop.
+
+    Callers pass every login belonging to *any* bot, not just the one whose
+    finding is being judged. Two reasons, and the second is the load-bearing
+    one: Copilot holds two logins and an ack under the unwatched one would slip
+    through; and a reply from a *different* bot is no more triage than a
+    self-ack, since neither is a person having read the finding. CodeRabbit
+    auto-replies to findings as a matter of course — three of its own on PR #71
+    — and nothing stops that landing on another bot's thread, where a
+    per-spec exclusion would score it as answered.
     """
     ids: set[int] = set()
     for comment in comments:
         parent = comment.get("in_reply_to_id")
-        if parent:
-            ids.add(int(str(parent)))
+        if not parent:
+            continue
+        if any(same_login(_login_of(comment), login) for login in not_by):
+            continue
+        ids.add(int(str(parent)))
     return ids
 
 
-def unanswered(findings: list[Comment], comments: list[Comment]) -> list[Comment]:
-    """The findings with no threaded reply — the ones that still need triage.
+def bot_logins() -> tuple[str, ...]:
+    """Every login any configured bot speaks as."""
+    return tuple(
+        dict.fromkeys(login for spec in BOTS.values() for login in spec.logins)
+    )
+
+
+def unanswered(
+    findings: list[Comment], comments: list[Comment], spec: BotSpec
+) -> list[Comment]:
+    """The findings with no reply from anyone but the bot itself.
 
     This, not the freshness of the review, is what "is there outstanding review
     work" means. A PR that took fix commits *after* its review is the normal end
     state of triage, not an anomaly; a finding nobody answered is the anomaly.
     """
-    already = answered_ids(comments)
+    already = answered_ids(comments, not_by=bot_logins())
     return [f for f in findings if int(str(f.get("id", 0))) not in already]
 
 
@@ -889,9 +1011,13 @@ def pull_comments(repo: str, pr: int) -> list[Comment]:
     """Every review comment on the PR, across all reviews.
 
     The deliberately unscoped fetch that :func:`review_comments` exists to
-    avoid — used only by a ``summary_marker`` bot, whose findings cannot be
-    reached through a review id (a re-review posts under no new review), and
-    scoped instead by author and floor in :func:`select_finding_comments`.
+    avoid. Two callers need it, both because they have no single review id to
+    scope by: a ``summary_marker`` bot, whose re-review posts under no new
+    review, and :func:`cmd_outstanding`, which asks about every bot at once.
+    Scoping is restored by author and floor in :func:`select_finding_comments`
+    — which is why an author filter that matches nothing is a silent
+    catastrophe here rather than a mild bug, and why :func:`unmatched_reviews`
+    cross-checks it against the reviews endpoint.
     """
     raw = gh_all(f"repos/{repo}/pulls/{pr}/comments")
     return [cast("Comment", c) for c in raw if isinstance(c, dict)]
@@ -1215,7 +1341,7 @@ def summary_state(
         head=head,
         stated=stated_count(body, spec),
         findings=findings,
-        open_findings=unanswered(findings, posted),
+        open_findings=unanswered(findings, posted, spec),
     )
 
 
@@ -1464,12 +1590,323 @@ def cmd_fetch(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
     return EXIT_EMPTY_RANGE if empty_range else 0
 
 
+@dataclass(frozen=True)
+class BotFindings:
+    """One bot's findings on a PR, and the subset still lacking a reply."""
+
+    key: str
+    findings: list[Comment]
+    open_findings: list[Comment]
+
+
+def outstanding_findings(comments: list[Comment], since: datetime) -> list[BotFindings]:
+    """Split one pull-level comment fetch across every bot.
+
+    Pure, and returns the buckets rather than printing them, so a caller — or a
+    test — can assert *which* bot owns *which* unanswered finding rather than
+    grep the rendered output for a substring.
+    """
+    report: list[BotFindings] = []
+    for key, spec in sorted(BOTS.items()):
+        found = select_finding_comments(comments, spec, since)
+        report.append(
+            BotFindings(
+                key=key, findings=found, open_findings=unanswered(found, comments, spec)
+            )
+        )
+    return report
+
+
+def reviews_by(reviews: list[Review], spec: BotSpec, since: datetime) -> list[Review]:
+    """This bot's reviews submitted after ``since``, whatever their body.
+
+    Unlike :func:`select_review` this does not require a non-empty body, because
+    the question here is "did this bot report at all" rather than "is there a
+    findings review to triage" — and Greptile's findings review has an empty
+    body by design.
+
+    A review with no ``submitted_at`` is a *pending* one — drafted and never
+    submitted, which GitHub reports as a null stamp. It is not a report and is
+    skipped deliberately rather than incidentally; a bot has never been seen to
+    leave one.
+    """
+    found: list[Review] = []
+    for review in reviews:
+        if not same_login(_login_of(review), spec.review_login):
+            continue
+        stamp = str(review.get("submitted_at") or "")
+        if stamp and parse_ts(stamp) > since:
+            found.append(review)
+    return found
+
+
+def unmatched_reviews(
+    report: list[BotFindings], reviews: list[Review], since: datetime
+) -> list[str]:
+    """Bots that posted a review but whose comments the sweep matched none of.
+
+    The identity-drift alarm. A review carrying findings always carries the
+    comments that hold them, so matching *zero* of them while a review exists
+    means the author filter missed — the Copilot failure this branch fixes,
+    which would silently recur the next time a bot renames a login or adds one.
+
+    Deliberately keyed on **zero** matched rather than on a count mismatch.
+    CodeRabbit has consolidated three findings into one comment object (PR #67),
+    so "stated 3, matched 1" is a known-benign shape; refusing on it would block
+    merges routinely. Zero-matched-despite-a-review has no such benign form —
+    except a review that states zero findings, which is Copilot's clean run and
+    is excluded here.
+    """
+    alarms: list[str] = []
+    for bot in report:
+        if bot.findings:
+            continue
+        spec = BOTS[bot.key]
+        for review in reviews_by(reviews, spec, since):
+            body = str(review.get("body") or "")
+            # An empty-bodied review is how GitHub models a bot *replying* to a
+            # thread, and CodeRabbit acks routinely — so for most bots that is
+            # not a report and must not raise the alarm. The exception is a
+            # summary-comment bot: Greptile's findings review is empty-bodied by
+            # design, and suppressing it here would disable this check for the
+            # one bot whose findings it cannot otherwise see. `is_findings_review`
+            # is deliberately not reused: it would collapse both cases the wrong
+            # way, which is exactly the mistake this comment exists to prevent.
+            if not body.strip() and spec.summary_marker is None:
+                continue
+            stated = stated_count(body, spec)
+            if stated == 0:
+                continue  # a review that says it found nothing, and did
+            alarms.append(
+                f"{bot.key}: review {review.get('id')} exists "
+                f"({'no count stated' if stated is None else f'states {stated}'})"
+                f" but 0 of its comments matched author {spec.commenter!r} — "
+                "the filter, not the bot, is probably wrong"
+            )
+    return alarms
+
+
+def body_only_findings(
+    report: list[BotFindings], reviews: list[Review], since: datetime
+) -> list[str]:
+    """Reviews that put findings in the body, where no reply can reach them.
+
+    Runs for **every** bot regardless of how many of its comments matched, which
+    is what separates it from :func:`unmatched_reviews`. Gemini's ordinary path
+    posts anchored findings as real comments *and* unanchored ones as body
+    bullets **in the same review** (`gemini_review_agent.py`, `review_body(
+    len(anchored), unanchored)`) — so a review with two answered comments can
+    still carry a third finding the sweep can never see. Keying this on
+    "matched nothing" would miss exactly that mixed shape, and the mixed shape
+    is the common one; the all-body-only case is only the HTTP-422 fallback.
+
+    A body-only finding is not a comment object, so it can never carry a
+    threaded reply and no amount of triage will clear it. The sweep's contract
+    does not reach it, and saying so is the only honest answer available.
+    """
+    alarms: list[str] = []
+    for bot in report:
+        spec = BOTS[bot.key]
+        if spec.body_findings is None:
+            continue
+        for review in reviews_by(reviews, spec, since):
+            found = spec.body_findings.search(str(review.get("body") or ""))
+            if found and int(found.group(1)):
+                alarms.append(
+                    f"{bot.key}: review {review.get('id')} renders "
+                    f"{found.group(1)} finding(s) in its body rather than as "
+                    "comments. They cannot carry a reply, so this sweep can "
+                    "never clear them — read the review itself"
+                )
+    return alarms
+
+
+def undercounted_summaries(
+    report: list[BotFindings], issue_comments_: list[Comment], since: datetime
+) -> list[str]:
+    """Summary-comment bots whose stated count exceeds what the sweep matched.
+
+    Restores a check the per-bot ``fetch --bot greptile`` precondition used to
+    perform and the sweep otherwise drops: `unmatched_reviews` only looks at
+    bots that matched *nothing*, so a summary claiming three findings while one
+    comment matched — and that one answered — would clear the gate with two
+    never seen. The count lives in the summary comment, which the reviews
+    endpoint does not carry.
+
+    **Why this alarms on a count mismatch when :func:`unmatched_reviews`
+    deliberately does not.** That one refuses to, because CodeRabbit is known to
+    consolidate several findings into one comment object (PR #67), making
+    "stated 3, matched 1" a routine benign shape for it. No such batching has
+    been observed for Greptile — both its findings runs posted exactly one
+    comment per stated finding — but "not observed" across two runs is thin
+    evidence, so this errs toward stopping rather than passing and says which
+    of the two causes it cannot distinguish. If Greptile turns out to batch,
+    this will fire on a clean PR and should be re-keyed to zero-matched like
+    its sibling.
+    """
+    alarms: list[str] = []
+    for bot in report:
+        spec = BOTS[bot.key]
+        if spec.summary_marker is None:
+            continue
+        summary = select_summary_comment(issue_comments_, spec, since)
+        if summary is None:
+            continue
+        stated = stated_count(str(summary.get("body") or ""), spec)
+        if stated is not None and stated > len(bot.findings):
+            alarms.append(
+                f"{bot.key}: its summary states {stated} finding(s) but the "
+                f"sweep matched {len(bot.findings)} — either "
+                f"{stated - len(bot.findings)} were never seen and their "
+                "replies cannot have been checked, or it batched several into "
+                "one comment (unobserved for this bot). Read the summary"
+            )
+    return alarms
+
+
+def silent_always_reviewers(
+    report: list[BotFindings],
+    reviews: list[Review],
+    issue_comments_: list[Comment],
+    since: datetime,
+) -> list[str]:
+    """Bots that always review, yet left no artifact on this PR at all.
+
+    Greptile's App reviews every non-draft PR unasked, so its silence is never
+    legitimate — it means the App did not run, or ran and its output was not
+    found. Under a comments-only sweep that silence contributes zero findings
+    and reads as green, which makes the one bot whose absence is always
+    anomalous the one whose absence looks cleanest.
+    """
+    alarms: list[str] = []
+    for bot in report:
+        spec = BOTS[bot.key]
+        if not spec.always_reviews or bot.findings:
+            continue
+        if reviews_by(reviews, spec, since):
+            continue
+        if select_summary_comment(issue_comments_, spec, since) is not None:
+            continue
+        alarms.append(
+            f"{bot.key}: reviews every PR unasked, but posted no review and no "
+            "summary comment since the floor — it did not run, or its output "
+            "was not found. Silence here is never a clean verdict."
+        )
+    return alarms
+
+
+def cmd_outstanding(repo: str, pr: int, since: datetime) -> int:
+    """Report every bot finding on this PR that still has no reply.
+
+    The merge gate, asked of *all* reviewers rather than one. It exists because
+    the per-bot chains answer "did this bot report" while a merge needs "is
+    anything on this PR unread" — and the two diverge exactly when it matters,
+    on a PR whose review was collected but whose findings were not.
+
+    Three fetches, not one: the comments carry the findings and the replies
+    that resolve them, but a sweep that reads *only* comments cannot tell "no
+    findings" from "findings I failed to match", and those differ by exactly
+    the identity drift `comment_login` exists to absorb. The reviews endpoint
+    and — for a bot that always reviews — the issue comments are what make a
+    zero provable rather than merely reported.
+    """
+    comments = pull_comments(repo, pr)
+    reviews = list_reviews(repo, pr)
+    report = outstanding_findings(comments, since)
+    for bot in report:
+        print(
+            f"{bot.key:<11} {len(bot.findings):>3} finding(s) since the floor, "
+            f"{len(bot.open_findings):>3} unanswered"
+        )
+    found = sum(len(b.findings) for b in report)
+    still_open = sum(len(b.open_findings) for b in report)
+
+    # The four detectors are additive and may double-report: a Greptile review
+    # that matched nothing while its summary states a count trips both
+    # unmatched_reviews and undercounted_summaries. That is deliberate — each
+    # states a different true fact about the same PR, and suppressing one to
+    # tidy the output would drop evidence a human is about to act on. None can
+    # mask another; any non-empty list blocks.
+    unprovable = unmatched_reviews(report, reviews, since)
+    unprovable += body_only_findings(report, reviews, since)
+    # Fetched when some bot's evidence lives in an issue comment rather than in
+    # a review — a summary-comment bot's stated count, or an always-reviews
+    # bot's proof of having run. The guard names that dependency rather than a
+    # bot: if no spec declares either property the fetch is skipped *and* so are
+    # the two checks that need it, which is correct degradation rather than a
+    # check that quietly stops applying.
+    if any(s.summary_marker is not None or s.always_reviews for s in BOTS.values()):
+        issues = issue_comments(repo, pr)
+        unprovable += undercounted_summaries(report, issues, since)
+        unprovable += silent_always_reviewers(report, reviews, issues, since)
+    if unprovable:
+        print("\nCANNOT CLEAR THE GATE:", file=sys.stderr)
+        for line in unprovable:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            "\nThese are not 'no findings' — they are findings this sweep could "
+            "not read.\nA zero it cannot prove must not clear a merge.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not found:
+        # Distinct from "all answered" on purpose. This command reads *posted*
+        # comments, so a PR nobody reviewed and a PR reviewed clean look
+        # identical here, and only one of them is safe to merge quietly.
+        # Saying "nothing outstanding" for both is how silence gets read as a
+        # verdict — the mistake this module refuses everywhere else.
+        print(
+            "\nNO FINDINGS POSTED: no bot has left a finding on this PR since "
+            "the floor.\nThat is not evidence any bot reviewed it — an unspent "
+            "chain and a clean\nrun are indistinguishable here. Confirm which "
+            "reviewers actually ran."
+        )
+        return EXIT_CLEAN
+    if not still_open:
+        print(f"\nNOTHING OUTSTANDING: all {found} finding(s) have a reply.")
+        return EXIT_CLEAN
+
+    print(f"\n{still_open} UNANSWERED finding(s) — a merge would bury them:")
+    for bot in report:
+        for comment in bot.open_findings:
+            line = comment.get("line") or comment.get("original_line")
+            print(
+                f"  [{bot.key}] {comment.get('path')}:{line} "
+                f"[id={comment.get('id')}]\n    {comment.get('html_url')}"
+            )
+    return 0
+
+
+class _Parser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` whose usage errors do not look like a clean run.
+
+    argparse exits **2** on any usage error, and 2 is ``EXIT_CLEAN`` here. So a
+    gate invocation that never ran at all — a missing ``--pr`` value, a typo'd
+    ``--bot``, an ISO-8601 ``--since`` pasted unquoted and split into two argv
+    entries — hands its caller the same status as "every finding has a reply",
+    and `/squash-merge` merges. That is the worst failure this module can have:
+    silent, and triggered by a typo in a command the skills tell a human to
+    copy and paste.
+
+    Usage errors exit 1 instead, which every caller already treats as stop.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        print(f"error: {message}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         description=(__doc__ or "").splitlines()[0],
     )
-    parser.add_argument("command", choices=("request", "wait", "fetch"))
-    parser.add_argument("--bot", required=True, choices=sorted(BOTS))
+    parser.add_argument("command", choices=("request", "wait", "fetch", "outstanding"))
+    # Not required at this level: `outstanding` sweeps every bot, so naming one
+    # would be meaningless there. main() enforces it for the other commands,
+    # which lets the error say *why* rather than just "expected --bot".
+    parser.add_argument("--bot", default=None, choices=sorted(BOTS))
     parser.add_argument("--pr", required=True, type=int)
     parser.add_argument("--repo", default=None, help="owner/name; detected by default")
     parser.add_argument("--since", default=None, help="ISO-8601 review floor")
@@ -1521,14 +1958,20 @@ def use_utf8_io() -> None:
 def main(argv: list[str] | None = None) -> int:
     use_utf8_io()
     args = build_parser().parse_args(argv)
-    spec = BOTS[str(args.bot)]
+    command = str(args.command)
     try:
         repo = str(args.repo) if args.repo else default_repo()
         pr = int(cast("int", args.pr))
-        if args.command == "request":
+        if command == "outstanding":
+            return cmd_outstanding(repo, pr, resolve_since(args))
+        bot = cast("str | None", args.bot)
+        if bot is None:
+            raise BotReviewError(f"{command} needs --bot; only outstanding sweeps all")
+        spec = BOTS[bot]
+        if command == "request":
             return cmd_request(repo, pr, spec)
         since = resolve_since(args)
-        if args.command == "wait":
+        if command == "wait":
             run_id = cast("int | None", args.run)
             return cmd_wait(
                 repo, pr, spec, since, int(cast("int", args.timeout)), run_id

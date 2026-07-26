@@ -23,11 +23,11 @@ Greptile has not spent any.
 What automatic review does create is the risk of a finding nobody collects.
 That is closed on the tooling side, not by suppressing the review:
 `/greptile-review` collects it, and `/squash-merge` refuses to merge while any
-Greptile finding lacks a threaded reply. The gate is keyed on unanswered
-findings rather than on the review's freshness, because fix commits land *after*
-a review by definition — a triaged PR reaches merge time with the review one or
-more commits behind, and a freshness gate would fire on that ordinary end state
-while staying silent on the finding nobody read.
+bot's finding — Greptile's included — lacks a threaded reply. The gate is keyed
+on unanswered findings rather than on the review's freshness, because fix
+commits land *after* a review by definition: a triaged PR reaches merge time
+with the review one or more commits behind, and a freshness gate would fire on
+that ordinary end state while staying silent on the finding nobody read.
 
 - **`triggerOnUpdates: false`** — set explicitly although it is also the
   default, because it is a *choice*, not a limitation someone should later

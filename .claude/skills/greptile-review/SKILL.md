@@ -97,10 +97,14 @@ what was fetched — **investigate**, never assume which side is wrong. A freshn
 summary named no commit, so staleness could not be checked at all; a staleness note means the
 review looked at an older commit, so its findings are real but the current code is unreviewed.
 
-If it exits **1** saying the signals disagree, do not guess. That means the summary's prose verdict
-and its stated finding count contradict each other — the prose is model-written and the count comes
-from a configurable block, so either can drift — and the honest answer is to read the summary on
-the PR yourself.
+Exit **1** covers several distinct states, so read the message rather than the code:
+
+- *"No greptile summary after …"* — it has not reported at all, which is not a clean review.
+- *"The two signals disagree"* — the summary's prose verdict and its stated finding count
+  contradict each other. The prose is model-written and the count comes from a configurable block,
+  so either can drift; read the summary on the PR rather than guess which to believe.
+- *"states N finding(s) but only M were fetched"* — usually transient, since Greptile posts its
+  summary about four seconds before the comments it counts. Re-run before concluding anything.
 
 Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
 against the real code, reply per finding, report the verdict table, **stop for the user's go before

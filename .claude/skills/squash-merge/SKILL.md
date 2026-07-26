@@ -1,6 +1,6 @@
 ---
 name: squash-merge
-description: Squash-merge the current branch's PR with a clean composed commit message — gates verified green, body passed via --body-file -, result read back from origin/main. Use when the user asks to merge after reviews are clean.
+description: Squash-merge the current branch's PR with a clean composed commit message — gates verified green, no bot finding left unanswered, body written to a file and passed via --body-file <path>, result diffed against origin/main. Use when the user asks to merge after reviews are clean.
 ---
 
 # /squash-merge — merge the PR with a clean squash message
@@ -24,31 +24,50 @@ step that fails.
   *pending* — that is not green; watch in the background (`gh pr checks <N> --watch`,
   `run_in_background: true`) and merge only when everything has passed. A red check stops the
   merge outright.
-- **Spent bot reviews complete and triaged**: every finding from a review chain that *was* run
-  has a threaded reply per `.claude/bot-review-triage.md`, and each spent chain's latest run is
-  clean or fully triaged against the latest pushed commit. An unanswered finding — or a review
-  that was requested/triggered and has not answered yet — stops the merge. A PR whose review
-  chains were deliberately not spent (reviews are opt-in per PR) has nothing to wait for: state
-  plainly that no bot reviewed it and merge on the user's explicit say-so.
-- **No Greptile finding is unanswered**: Greptile is *not* opt-in — its App reviews every PR on
-  creation — so unlike the others it is never legitimately unspent, and a PR can reach this step
-  carrying findings nobody asked for and nobody read. Check with the PR's `createdAt` as the floor,
-  so the whole PR's history is in scope:
+- **No bot finding is unanswered** — run this, do not eyeball it. The PR's `createdAt` is the
+  floor, so every round of every reviewer is in scope:
 
   ```bash
-  uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <PR createdAt>
+  uv run python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
   ```
 
-  **Exit 2 clears this gate** — either the run was clean, or every finding it posted already has a
-  threaded reply. **Exit 0 stops the merge**: it lists findings with no reply, which is the exact
-  thing this gate exists to catch. Exit 1 means the signals disagreed and no verdict is available;
-  read the PR before deciding.
+  **Exit 2 clears this gate**: every finding any bot posted has a threaded reply from someone
+  other than the bot itself. **Exit 0 stops the merge** — it prints each unanswered finding with
+  its path, id and URL, which is exactly what this gate exists to catch. **Exit 1 also stops it** —
+  read the output to know which kind. Under a `CANNOT CLEAR THE GATE` banner the sweep found a
+  zero it could not *prove*: a bot posted a review but none of its comments matched the author
+  filter, a summary states more findings than were matched, a bot renders findings in its review
+  body where no reply can reach them, or a bot that reviews every PR left no artifact at all.
+  Those are findings the sweep could not read, not findings that do not exist. **Without** the
+  banner, exit 1 is an ordinary failure — `gh` auth, a network timeout, a usage error — and the
+  gate simply did not run. Both stop the merge; only one is about the PR. It reports every bot
+  including the ones that found nothing, so a zero is visibly a zero rather than a silence.
 
-  A `NOTE:` saying the review looked at an older commit is **not** a blocker. Fix commits land
-  after a review by definition, so a triaged PR reaches this step stale as a matter of course; it
-  only means Greptile has not seen the final state. Re-trigger via `/greptile-review` step 2 if you
-  want a verdict on the merged code, but do not treat it as an unmet precondition. Do not treat the
-  mere presence of a Greptile summary comment as evidence anyone read it.
+  This sweeps *posted comments*, which bounds what it can prove. It answers "is any finding
+  unread"; it cannot answer "did the review I asked for ever arrive", because a review still in
+  flight has posted nothing to find. When every bot reports zero findings the command says
+  `NO FINDINGS POSTED` rather than `NOTHING OUTSTANDING`, precisely because an unspent chain and
+  a clean run are indistinguishable from the comments alone.
+
+- **Every review that was triggered has answered.** This is a separate precondition and it is
+  yours to track, not the sweep's. A chain that was requested and is still pending stops the
+  merge; a chain deliberately not spent has nothing to wait for (reviews are opt-in per PR, and
+  Greptile is never legitimately unspent since its App reviews every PR unasked) — say plainly
+  which reviewers ran and merge on the user's explicit say-so.
+
+  **Do not delegate this to `gh pr checks`.** Its coverage is partial and bot-specific: CodeRabbit
+  posts a commit *status*, Copilot and Greptile post *check-runs*, and Gemini posts nothing at all
+  — its workflow is dispatched against `main` (ADR-0064), so its run is associated with the
+  default branch rather than the PR head and can never appear in the PR's checks. A green check
+  list is not evidence that a requested review landed.
+
+  Judgment still belongs to `.claude/bot-review-triage.md`; the sweep only proves nothing was
+  *silently* skipped.
+
+  **Staleness is not a blocker.** Fix commits land after a review by definition, so a triaged PR
+  reaches this step with its reviews a commit or two behind. That means the merged code may not
+  have been reviewed, which is worth saying out loud; it is not an unmet precondition. Re-trigger
+  a lens if you want a verdict on the final state.
 - The user has asked for the merge in this session. `/ship` and `/copilot-review` never merge;
   neither does this skill uninvited.
 
@@ -88,32 +107,70 @@ jumbled together with "address review" fixups. Always replace it:
 
 ## 3. Merge
 
+**Write the composed body to a file first**, then pass that path — do not pipe it in from a
+heredoc. `--body-file` takes a real path as happily as `-`, and keeping the composed text on disk
+is what makes step 4's comparison an actual diff instead of a spot-check. A body that exists only
+inside a heredoc cannot be compared against what landed without retyping it, which compares your
+memory rather than your message.
+
 ```bash
-gh pr merge <N> --squash --delete-branch --subject "<subject>" --body-file - <<'EOF'
-<composed body>
-EOF
+msg=<scratchpad>/squash-body.txt   # write the composed body here first
+gh pr merge <N> --squash --delete-branch --subject "<subject>" --body-file "$msg"
 ```
 
-**`--body-file -` is the only stdin form, and the heredoc delimiter must be quoted** (`<<'EOF'`
-— unquoted, the shell runs command substitution on backticks and expands `$` inside the
-message). `--body -` is accepted without error and sets the literal one-character string `-` as
-the commit body — `gh` does not follow `git commit -F -` conventions. This exact mistake shipped PR #43's squash commit (`97e43ce`, 2026-07-20) with a
-body of "`-`", and the same flag pair exists on `gh pr create` (see `/ship`, which carries the
-same rule for PR bodies).
+**Write that file as UTF-8 without a BOM** — use the Write tool, or PowerShell's
+`[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))`.
+Every commit message in this repo is full of em dashes, and `Set-Content` without `-Encoding UTF8`
+writes cp1252 and corrupts them silently (`CLAUDE.md`, PowerShell file encoding). `gh` ships
+whatever bytes the file holds, and the damage is unrecoverable afterwards: step 4 forbids
+force-pushing `main` to repair a bad message.
+
+If you do pipe it, **`--body-file -` is the only stdin form and the heredoc delimiter must be
+quoted** (`<<'EOF'` — unquoted, the shell runs command substitution on backticks and expands `$`
+inside the message). `--body -` is accepted without error and sets the literal one-character
+string `-` as the commit body — `gh` does not follow `git commit -F -` conventions. This exact
+mistake shipped PR #43's squash commit (`97e43ce`, 2026-07-20) with a body of "`-`", and the same
+flag pair exists on `gh pr create` (see `/ship`, which carries the same rule for PR bodies).
 
 ## 4. Verify — mandatory
 
-A zero exit is not a clean merge; refresh the tracking ref (do not trust `gh pr merge` to have
-fast-forwarded it — that behavior is incidental, not guaranteed) and read the state back:
+A zero exit is not a clean merge. Refresh the tracking ref (do not trust `gh pr merge` to have
+fast-forwarded it — that behavior is incidental, not guaranteed), then compare the **whole
+message, subject included**, against the expected form built from the same file you merged with:
 
 ```bash
 git fetch origin main
-git log --format=%B -1 origin/main
+{ printf '%s\n\n' "<subject>"; cat <scratchpad>/squash-body.txt; } > <scratchpad>/expected.raw
+git log --format=%B -1 origin/main                                > <scratchpad>/landed.raw
+
+# Normalize BOTH sides identically before comparing: `$(cat …)` drops every
+# trailing newline and `printf '%s\n'` puts exactly one back. Without this the
+# diff fails on a merge that landed perfectly — `git log %B` appends a newline
+# and a composed file may end with none (or several), and the step's own stated
+# tolerance ("trailing whitespace is the only permitted difference") would then
+# be contradicted by the command enforcing it.
+for f in expected landed; do
+  printf '%s\n' "$(cat <scratchpad>/$f.raw)" > <scratchpad>/$f.txt
+done
+diff <scratchpad>/expected.txt <scratchpad>/landed.txt
 ```
 
-must show the composed subject and body — compare ignoring trailing whitespace (`%B` appends a
-trailing newline, and GitHub may normalize trailing blank lines), but every content line must
-match; this read-back is what caught `97e43ce`. `origin/main` is the authoritative check. Then
+Verified against a real commit in both failure shapes — a body file with no
+final newline and one with extra trailing blanks — and confirmed still to catch
+a wrong subject and an altered body line.
+
+A body-only comparison leaves the subject unverified, and the subject is the line carrying the
+`(#<N>)` reference and the one most likely to be retyped by hand.
+
+**Diff it; do not spot-check it.** Comparing a few phrases proves the phrases you thought of
+survived, which is the weaker half — the failure mode is a line you did *not* think to check.
+Trailing whitespace is the only permitted difference (`%B` appends a newline and GitHub may
+normalize trailing blanks); every content line must match. This read-back is what caught
+`97e43ce`. `origin/main` is the authoritative check.
+
+When a claim was corrected during the branch, also assert the **superseded wording is absent** —
+`grep -c` on the old string must be `0`. A diff proves the new text landed; only this proves the
+text it replaced did not survive alongside it. Then
 sync local `main` explicitly rather than trusting gh's incidental fast-forward:
 
 ```bash
