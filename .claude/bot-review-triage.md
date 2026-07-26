@@ -98,8 +98,8 @@ to trust the next one).
 fixes are not. When the go comes, the sequence is **fix → gates → reviewer rounds until they
 settle → gates again if those rounds edited anything → push → replies**. "Gates" is the full
 `/land`/`/ship` set, including `uv run python scripts/check_spec_links.py`, since Markdown edits
-outside `specs/` can break spec-link targets. The replies come last so the "fixed in `<sha>`"
-each one carries names the commit that survived every round.
+outside `specs/` can break spec-link targets. The replies come last so each "fixed in `<sha>`"
+reply names the commit that survived every round.
 
 **The reviewer rounds in that sequence are not optional, and their position in it is the point.**
 §4's "stale, not clean" cuts both ways: a bot fix diverges the reviewed state from the landed
@@ -109,7 +109,7 @@ it. If you run them after the push instead, the replies name a commit the next r
 tooling. Let them default to the whole branch rather than scoping them to the fix; the
 interactions between a fix and the code already on the branch are what the re-run is for.
 `/apply-review` step 5 has the rest of the rule — the recursion, its stopping condition, and the
-gate re-run a settled loop triggers; it applies here unchanged.
+gate re-run that a settled loop triggers; it applies here unchanged.
 
 ## 4. After the fixes land
 
