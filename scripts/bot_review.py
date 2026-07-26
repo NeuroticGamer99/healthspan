@@ -96,7 +96,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, NoReturn, cast
 
 PAGE_SIZE = 100
@@ -126,6 +126,12 @@ EXIT_EMPTY_RANGE = 3
 # a run that has not appeared within this window is not coming.
 DISPATCH_POLL_SECONDS = 5
 DISPATCH_CONFIRM_TIMEOUT = 120
+# How long after a summary comment its counted inline comments may still be
+# in flight. Measured at ~4s (Greptile, PRs #67 and #69); two minutes is
+# generous by more than an order of magnitude. Past it, comments that have not
+# arrived are not late — they do not exist, and the summary is the only place
+# those findings were ever written (PR #72).
+COMMENT_GRACE = timedelta(minutes=2)
 
 
 @dataclass(frozen=True)
@@ -721,14 +727,17 @@ def bot_logins() -> tuple[str, ...]:
     )
 
 
-def unanswered(
-    findings: list[Comment], comments: list[Comment], spec: BotSpec
-) -> list[Comment]:
-    """The findings with no reply from anyone but the bot itself.
+def unanswered(findings: list[Comment], comments: list[Comment]) -> list[Comment]:
+    """The findings with no reply from anyone but a bot.
 
     This, not the freshness of the review, is what "is there outstanding review
     work" means. A PR that took fix commits *after* its review is the normal end
     state of triage, not an anomaly; a finding nobody answered is the anomaly.
+
+    Takes no spec on purpose: the exclusion spans **every** bot, so there is
+    nothing per-bot to pass. It briefly did take one, which promised per-spec
+    filtering the body had stopped doing (Greptile, PR #72) — a signature that
+    advertises a knob with no wire behind it is worse than none.
     """
     already = answered_ids(comments, not_by=bot_logins())
     return [f for f in findings if int(str(f.get("id", 0))) not in already]
@@ -1279,15 +1288,30 @@ class SummaryState:
         return None
 
     @property
-    def comments_pending(self) -> bool:
-        """Whether the summary counts findings the comments endpoint lacks.
-
-        Transient by nature: Greptile posts the summary about four seconds
-        before the inline comments it counts (PRs #67 and #69), so this
-        resolves itself on the next poll. ``wait`` keeps polling; ``fetch``,
-        which gets one look, refuses to conclude.
-        """
+    def undercounted(self) -> bool:
+        """Whether the summary counts findings the comments endpoint lacks."""
         return bool(self.stated and len(self.findings) < self.stated)
+
+    @property
+    def comments_pending(self) -> bool:
+        """Whether those missing comments are plausibly *still arriving*.
+
+        Greptile posts its summary about four seconds before the inline
+        comments it counts (PRs #67 and #69), so a gap seen inside that window
+        resolves itself on the next poll and ``wait`` should keep polling.
+
+        The window is what makes this safe, and its absence was a live hang:
+        on PR #72 Greptile stated one finding and posted **no** review object
+        and **no** inline comment at all — the finding existed only as prose in
+        the summary. Modelling a four-second race as unbounded meant ``wait``
+        polled for comments that were never coming and would have burned its
+        whole timeout. Past the grace period the same gap means something
+        else entirely — findings that live only in the summary, which can never
+        carry a reply — and that is a conclusion, not a reason to wait.
+        """
+        if not self.undercounted:
+            return False
+        return (datetime.now(UTC) - comment_ts(self.comment)) < COMMENT_GRACE
 
     @property
     def contradiction(self) -> str | None:
@@ -1299,15 +1323,27 @@ class SummaryState:
         """
         if self.signals_conflict is not None:
             return self.signals_conflict
+        if not self.undercounted:
+            return None
+        gap = (
+            f"the summary states {self.stated} finding(s) but only {len(self.findings)}"
+        )
         if self.comments_pending:
             return (
-                f"the summary states {self.stated} finding(s) but only "
-                f"{len(self.findings)} were fetched. Greptile posts its summary "
-                "a few seconds before the inline comments (4s on PRs #67 and "
-                "#69), so this is usually a review still landing — re-run "
-                "rather than concluding it is clean."
+                f"{gap} were fetched. Greptile posts its summary a few seconds "
+                "before the inline comments (4s on PRs #67 and #69), so this is "
+                "usually a review still landing — re-run rather than concluding "
+                "it is clean."
             )
-        return None
+        # Past the grace window the gap is structural, not a race. Still a
+        # refusal rather than a pass: the missing findings were written
+        # somewhere no reply can reach, so no triage will ever clear them and
+        # reporting the PR clean would bury them.
+        return (
+            f"{gap} were fetched, and the comments are no longer in flight. "
+            "Those findings exist only in the summary text, where nothing can "
+            "reply to them — read the summary on the PR and answer them there."
+        )
 
 
 def summary_state(
@@ -1341,7 +1377,7 @@ def summary_state(
         head=head,
         stated=stated_count(body, spec),
         findings=findings,
-        open_findings=unanswered(findings, posted, spec),
+        open_findings=unanswered(findings, posted),
     )
 
 
@@ -1406,11 +1442,17 @@ def cmd_wait(
                 # landed, which it then reports as a count mismatch — a real
                 # alarm for a non-problem. Keep polling until they are there.
                 elif not state.comments_pending:
+                    summary_only = ""
+                    if state.undercounted and state.stated is not None:
+                        missing = state.stated - len(state.findings)
+                        summary_only = (
+                            f", and {missing} that exist only in the summary text"
+                        )
                     print(
                         f"{spec.key} findings summary {state.comment.get('id')} "
                         f"(updated {state.comment.get('updated_at')}, reviewed "
                         f"{_short(state.reviewed)}) is ready — "
-                        f"{len(state.open_findings)} open finding(s)"
+                        f"{len(state.open_findings)} open finding(s){summary_only}"
                     )
                     return 0
         else:
@@ -1611,7 +1653,7 @@ def outstanding_findings(comments: list[Comment], since: datetime) -> list[BotFi
         found = select_finding_comments(comments, spec, since)
         report.append(
             BotFindings(
-                key=key, findings=found, open_findings=unanswered(found, comments, spec)
+                key=key, findings=found, open_findings=unanswered(found, comments)
             )
         )
     return report

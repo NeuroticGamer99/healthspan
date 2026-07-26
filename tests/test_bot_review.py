@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1201,8 +1202,17 @@ def _pull_comment(
     }
 
 
-def _greptile_comment(body: str) -> dict[str, Any]:
-    """PR #69's summary comment: created at the first run, edited by the second."""
+def _greptile_comment(body: str, fresh: bool = False) -> dict[str, Any]:
+    """PR #69's summary comment: created at the first run, edited by the second.
+
+    ``fresh`` stamps it *now* instead. Needed by the tests about the
+    summary-before-comments race, since `comments_pending` only calls an
+    undercount "still landing" inside a two-minute grace window — a fixture
+    stamped in the past is, correctly, no longer pending.
+    """
+    if fresh:
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return _comment(5080225922, "greptile-apps[bot]", now, now, body=body)
     return _comment(
         5080225922,
         "greptile-apps[bot]",
@@ -1359,11 +1369,12 @@ def _greptile_wait(
     head: str = GREPTILE_SHA,
     timeout: int = 0,
     comments: list[dict[str, Any]] | None = None,
+    fresh: bool = False,
 ) -> int:
     """Drive cmd_wait with one summary comment, or none when body is None."""
     import bot_review
 
-    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+    posted = [] if summary_body is None else [_greptile_comment(summary_body, fresh)]
     review_comments = comments or []
 
     def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
@@ -1409,7 +1420,7 @@ def test_cmd_wait_keeps_polling_until_the_counted_comments_have_landed(
     # there hands fetch a review whose findings do not exist yet, which it then
     # reports as a count mismatch — a real alarm for a non-problem.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_wait(monkeypatch, body, comments=[]) == 1
+    assert _greptile_wait(monkeypatch, body, comments=[], fresh=True) == 1
     assert "is ready" not in capsys.readouterr().out
 
 
@@ -1471,11 +1482,12 @@ def _greptile_fetch(
     summary_body: str | None,
     comments: list[dict[str, Any]],
     head: str = GREPTILE_SHA,
+    fresh: bool = False,
 ) -> int:
     """Drive cmd_fetch with one summary comment, or none when body is None."""
     import bot_review
 
-    posted = [] if summary_body is None else [_greptile_comment(summary_body)]
+    posted = [] if summary_body is None else [_greptile_comment(summary_body, fresh)]
 
     def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
         return posted
@@ -1587,6 +1599,80 @@ def test_wait_and_fetch_agree_when_the_two_signals_disagree(
     assert "the two signals disagree" in capsys.readouterr().err
 
 
+def test_a_summary_only_finding_ends_the_wait_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Transcribed from PR #72, a fifth Greptile shape: a summary stating one
+    # finding with NO review object and NO inline comment anywhere — the
+    # finding existed only as prose. `comments_pending` modelled the ~4s
+    # summary-before-comments race as unbounded, so `wait` polled for comments
+    # that were never coming and burned its whole timeout. The comment here is
+    # old enough that the grace window has closed.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    stale_summary = _comment(
+        5085014060,
+        "greptile-apps[bot]",
+        "2020-01-01T00:00:00Z",
+        "2020-01-01T00:00:00Z",
+        body=body,
+    )
+    import bot_review
+
+    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [stale_summary]
+
+    def nothing(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def the_head(repo: str, pr: int) -> str:
+        return GREPTILE_SHA
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "pull_comments", nothing)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    monkeypatch.setattr(bot_review.time, "sleep", no_sleep)
+    since = parse_ts("2019-01-01T00:00:00Z")
+    # 0, not a timeout: there is review work, and the wait says where it lives.
+    assert bot_review.cmd_wait("o/r", 72, GREPTILE, since, 0) == 0
+    assert "1 that exist only in the summary text" in capsys.readouterr().out
+    # fetch still refuses to call it clean, naming the real cause.
+    assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
+    assert "exist only in the summary text" in capsys.readouterr().err
+
+
+def test_a_freshly_posted_undercount_is_still_waited_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The counter-case the grace window protects: a summary posted *just now*
+    # whose comments have not landed is the real 4-second race, and ending the
+    # wait there hands fetch a review whose findings do not exist yet.
+    import bot_review
+
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fresh = _comment(
+        1,
+        "greptile-apps[bot]",
+        now,
+        now,
+        body=_greptile_summary(ATTENTION_FINDINGS, fix_prompt=True),
+    )
+    state = bot_review.SummaryState(
+        comment=fresh,
+        clean=False,
+        stale=False,
+        reviewed=GREPTILE_SHA,
+        head=GREPTILE_SHA,
+        stated=1,
+        findings=[],
+        open_findings=[],
+    )
+    assert state.undercounted is True
+    assert state.comments_pending is True
+
+
 def test_a_pending_comment_is_waited_out_not_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1595,8 +1681,8 @@ def test_a_pending_comment_is_waited_out_not_failed(
     # inherit the conflict's fail-fast. Collapsing the two would undo the
     # summary-before-comments fix.
     body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
-    assert _greptile_wait(monkeypatch, body, comments=[]) == 1  # timeout, not error
-    assert _greptile_fetch(monkeypatch, body, []) == 1
+    assert _greptile_wait(monkeypatch, body, comments=[], fresh=True) == 1  # timeout
+    assert _greptile_fetch(monkeypatch, body, [], fresh=True) == 1
 
 
 def test_cmd_fetch_refuses_to_classify_when_the_two_signals_disagree(
@@ -1790,12 +1876,12 @@ def test_a_bot_replying_to_itself_does_not_answer_its_own_finding() -> None:
     self_ack = _pull_comment(
         2, "coderabbitai[bot]", "2026-07-26T01:05:00Z", in_reply_to_id=1
     )
-    assert unanswered([finding], [finding, self_ack], CODERABBIT) == [finding]
+    assert unanswered([finding], [finding, self_ack]) == [finding]
     # A reply from anyone else is triage.
     human = _pull_comment(
         3, "NeuroticGamer99", "2026-07-26T01:06:00Z", in_reply_to_id=1
     )
-    assert unanswered([finding], [finding, self_ack, human], CODERABBIT) == []
+    assert unanswered([finding], [finding, self_ack, human]) == []
 
 
 def test_a_threaded_reply_marks_its_parent_answered() -> None:
@@ -1807,9 +1893,9 @@ def test_a_threaded_reply_marks_its_parent_answered() -> None:
         3650871889, "NeuroticGamer99", "2026-07-25T19:29:53Z", in_reply_to_id=3650858888
     )
     assert answered_ids([finding, reply]) == {3650858888}
-    assert unanswered([finding], [finding, reply], GREPTILE) == []
+    assert unanswered([finding], [finding, reply]) == []
     # Without the reply the same finding is outstanding.
-    assert unanswered([finding], [finding], GREPTILE) == [finding]
+    assert unanswered([finding], [finding]) == [finding]
 
 
 def test_a_reply_to_another_bots_finding_does_not_answer_ours() -> None:
@@ -1821,7 +1907,7 @@ def test_a_reply_to_another_bots_finding_does_not_answer_ours() -> None:
     their_reply = _pull_comment(
         3651082022, "NeuroticGamer99", "2026-07-25T21:29:01Z", in_reply_to_id=3651079329
     )
-    assert unanswered([ours], [ours, theirs, their_reply], GREPTILE) == [ours]
+    assert unanswered([ours], [ours, theirs, their_reply]) == [ours]
 
 
 # --------------------------------------------------------------------------
@@ -2131,11 +2217,11 @@ def test_copilot_cannot_answer_its_own_finding_under_either_login() -> None:
     finding = _pull_comment(1, "Copilot", "2026-07-26T01:00:00Z")
     for ack_login in COPILOT.logins:
         ack = _pull_comment(2, ack_login, "2026-07-26T01:05:00Z", in_reply_to_id=1)
-        assert unanswered([finding], [finding, ack], COPILOT) == [finding]
+        assert unanswered([finding], [finding, ack]) == [finding]
     human = _pull_comment(
         3, "NeuroticGamer99", "2026-07-26T01:06:00Z", in_reply_to_id=1
     )
-    assert unanswered([finding], [finding, human], COPILOT) == []
+    assert unanswered([finding], [finding, human]) == []
 
 
 def test_single_identity_bots_report_one_login() -> None:
@@ -2375,11 +2461,11 @@ def test_one_bots_reply_does_not_answer_another_bots_finding() -> None:
     other_bot = _pull_comment(
         999, "coderabbitai[bot]", "2026-07-26T02:10:00Z", in_reply_to_id=3651510728
     )
-    assert unanswered([ours], [ours, other_bot], COPILOT) == [ours]
+    assert unanswered([ours], [ours, other_bot]) == [ours]
     human = _pull_comment(
         1000, "NeuroticGamer99", "2026-07-26T02:11:00Z", in_reply_to_id=3651510728
     )
-    assert unanswered([ours], [ours, other_bot, human], COPILOT) == []
+    assert unanswered([ours], [ours, other_bot, human]) == []
 
 
 def test_a_comment_login_that_duplicates_the_review_login_is_refused() -> None:
