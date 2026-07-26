@@ -1126,19 +1126,23 @@ class SummaryState:
     open_findings: list[Comment]
 
     @property
-    def contradiction(self) -> str | None:
-        """Why this summary cannot be classified, if it cannot.
+    def signals_conflict(self) -> str | None:
+        """Set when the two verdict signals disagree irreconcilably.
 
-        Two signals say whether a run found anything, and they are independent:
-        the prose marker ("No files require special attention") and the stated
-        count ("Fix the following N code review issue"). Neither is a fixed
-        template — the first is model-written prose, proven variable when PR #68
-        appended a clause to it, and the second comes from the fix-prompt block,
-        which is a *configurable* feature (`fixWithAI`). Trusting either alone
-        makes a config or wording change classify every findings run as clean,
-        silently. So they must agree, and a caller that cannot classify says so
-        instead of guessing — the one outcome worse than either answer is a
-        confident wrong one.
+        Two independent signals say whether a run found anything: the prose
+        marker ("No files require special attention") and the stated count
+        ("Fix the following N code review issue"). Neither is a fixed template —
+        the first is model-written prose, proven variable when PR #68 appended a
+        clause to it, and the second comes from the fix-prompt block, which is a
+        *configurable* feature (`fixWithAI`). Trusting either alone makes a
+        config or wording change classify every findings run as clean, silently.
+        So they must agree, and a caller that cannot classify says so instead of
+        guessing — the one outcome worse than either answer is a confident wrong
+        one.
+
+        Kept separate from :attr:`comments_pending` because the two want
+        opposite handling: no amount of waiting resolves this one, so ``wait``
+        must fail on it rather than poll.
         """
         if self.clean and self.stated:
             return (
@@ -1146,7 +1150,30 @@ class SummaryState:
                 "finding(s) — the two signals disagree, so this run cannot be "
                 "classified. Read the summary on the PR before concluding."
             )
-        if self.stated and len(self.findings) < self.stated:
+        return None
+
+    @property
+    def comments_pending(self) -> bool:
+        """Whether the summary counts findings the comments endpoint lacks.
+
+        Transient by nature: Greptile posts the summary about four seconds
+        before the inline comments it counts (PRs #67 and #69), so this
+        resolves itself on the next poll. ``wait`` keeps polling; ``fetch``,
+        which gets one look, refuses to conclude.
+        """
+        return bool(self.stated and len(self.findings) < self.stated)
+
+    @property
+    def contradiction(self) -> str | None:
+        """Why a single-shot caller cannot classify this summary, if it cannot.
+
+        Composes both causes for ``fetch``. ``wait`` deliberately does not use
+        this: it must distinguish the conflict it should fail on from the race
+        it should wait out.
+        """
+        if self.signals_conflict is not None:
+            return self.signals_conflict
+        if self.comments_pending:
             return (
                 f"the summary states {self.stated} finding(s) but only "
                 f"{len(self.findings)} were fetched. Greptile posts its summary "
@@ -1229,11 +1256,22 @@ def cmd_wait(
             if state is not None and state.stale:
                 stale = state
             elif state is not None:
+                # Signals that disagree end the wait *here*, with the same
+                # verdict and message `fetch` would give. Reporting "ready" and
+                # letting fetch refuse would make the two commands contradict
+                # each other about the same state, and send a caller to triage
+                # a run neither of them can classify.
+                conflict = state.signals_conflict
+                if conflict is not None:
+                    print(f"error: {conflict}", file=sys.stderr)
+                    return 1
                 # Clean means clean *and* nothing left open: a run that reports
                 # no files needing attention can still sit above an untriaged
                 # finding from an earlier run, and ending the wait there is how
-                # a finding nobody read reaches a merge.
-                if state.clean and not state.open_findings and not state.stated:
+                # a finding nobody read reaches a merge. (A clean summary that
+                # also stated a count was refused above, so `clean` here already
+                # implies no stated count.)
+                if state.clean and not state.open_findings:
                     print(_clean_verdict(spec, state.comment))
                     return EXIT_CLEAN
                 # The summary is posted a few seconds before the inline
@@ -1241,7 +1279,7 @@ def cmd_wait(
                 # that window hands `fetch` a review whose findings have not
                 # landed, which it then reports as a count mismatch — a real
                 # alarm for a non-problem. Keep polling until they are there.
-                elif not (state.stated and len(state.findings) < state.stated):
+                elif not state.comments_pending:
                     print(
                         f"{spec.key} findings summary {state.comment.get('id')} "
                         f"(updated {state.comment.get('updated_at')}, reviewed "

@@ -1568,6 +1568,35 @@ def test_cmd_fetch_refuses_to_conclude_when_the_count_outruns_the_comments(
     assert "only 0 were fetched" in capsys.readouterr().err
 
 
+def test_wait_and_fetch_agree_when_the_two_signals_disagree(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The invariant whose absence was the bug (Copilot, PR #71): wait reported
+    # "ready" (0) on a state fetch then refused to classify (1), so the two
+    # commands contradicted each other about the same summary and a caller was
+    # sent to triage a run neither could read. Waiting cannot resolve a clean
+    # marker sitting beside a stated count — unlike a pending comment — so the
+    # wait must end here rather than poll.
+    body = _greptile_summary(ATTENTION_CLEAN, fix_prompt=True)
+    finding = _pull_comment(3650858888, "greptile-apps[bot]", "2026-07-25T21:09:10Z")
+    assert _greptile_wait(monkeypatch, body, comments=[finding]) == 1
+    assert "the two signals disagree" in capsys.readouterr().err
+    assert _greptile_fetch(monkeypatch, body, [finding]) == 1
+    assert "the two signals disagree" in capsys.readouterr().err
+
+
+def test_a_pending_comment_is_waited_out_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The other side of that split: a stated count the comments have not caught
+    # up with IS resolvable by waiting, so it must keep polling rather than
+    # inherit the conflict's fail-fast. Collapsing the two would undo the
+    # summary-before-comments fix.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    assert _greptile_wait(monkeypatch, body, comments=[]) == 1  # timeout, not error
+    assert _greptile_fetch(monkeypatch, body, []) == 1
+
+
 def test_cmd_fetch_refuses_to_classify_when_the_two_signals_disagree(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
