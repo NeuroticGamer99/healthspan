@@ -33,8 +33,14 @@
     {
       "id": "security-invariants",
       "rule": "Flag changes that could touch the invariants table in specs/security.md without a corresponding ADR or spec note: INV-1 key confinement, INV-2 no plugin code in the Core Service, INV-3 plugin-tier credentials, INV-4 data-only plugin influence, INV-5 named/scoped/revocable credentials, INV-6 source-data purity, INV-7 append-only audit surfaces, INV-8 hash-only credential storage.",
-      "scope": ["src/**/*.py", "scripts/**/*.py", ".github/**"],
+      "scope": ["**/*.py", ".github/**"],
       "severity": "high"
+    },
+    {
+      "id": "locale-invariance",
+      "rule": "The project is locale-invariant where it matters, and this is a settled convention rather than an open question: storage and wire formats are locale-neutral (ISO-8601 UTC timestamps, dot-decimal numbers, UCUM unit strings), and machine-readable fields — status codes, enum values, structured error fields — are the contract while English free text is presentation only. See specs/api-reference.md 'Locale invariance' and the Product Scope entry in specs/open-questions.md. Flag locale-dependent parsing or formatting introduced without a note: a bare float() on text that came from an external export, system-locale number or date formatting on a value the API speaks in dot-decimal, or keying on a localized display name where the format offers a stable identifier.",
+      "scope": ["**/*.py", ".github/**"],
+      "severity": "medium"
     },
     {
       "id": "no-bare-comma-except",

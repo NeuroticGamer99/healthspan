@@ -154,6 +154,16 @@ reviews:
         one-line catch-only clause additionally needs "# fmt: skip" or ruff
         format strips the parens back out; a clause binding "as exc", and one
         long enough that the formatter wraps it, keep them unaided.
+        Locale invariance is a settled convention (specs/api-reference.md
+        "Locale invariance"; the Product Scope entry in
+        specs/open-questions.md), not an open question: storage and wire
+        formats are locale-neutral — ISO-8601 UTC, dot-decimal numbers, UCUM
+        unit strings — and machine-readable fields are the contract while
+        English free text is presentation only. Flag locale-dependent parsing
+        or formatting introduced without a note: a bare float() on external
+        export text, system-locale number/date formatting on a value the API
+        speaks in dot-decimal, or keying on a localized display name where a
+        stable identifier exists.
 
     - path: "**/*.ps1"
       instructions: >-

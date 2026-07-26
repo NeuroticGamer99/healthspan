@@ -1703,6 +1703,26 @@ def test_summary_state_reports_none_before_the_bot_has_answered(
     assert summary_state("o/r", 69, GREPTILE, since) is None
 
 
+def test_a_pull_request_payload_with_no_head_sha_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The staleness guard is only as good as the head it compares against.
+    # Returning "" instead of raising would be worse than useless: same_commit
+    # refuses a comparison narrower than seven characters, so an empty head
+    # makes *every* review — however fresh — read as stale, and the caller is
+    # sent to re-trigger a review that already ran.
+    import bot_review
+
+    def headless(path: str, *args: str) -> Any:
+        return {"number": 71, "head": {}}
+
+    monkeypatch.setattr(bot_review, "gh", headless)
+    with pytest.raises(BotReviewError, match="could not read the head SHA"):
+        bot_review.pr_head_sha("o/r", 71)
+    # The consequence the raise prevents, stated as the assertion it rests on.
+    assert same_commit(GREPTILE_SHA, "") is False
+
+
 def test_a_threaded_reply_marks_its_parent_answered() -> None:
     # Transcribed from PR #69: the owner's reply 3650871889 points at
     # Greptile's finding 3650858888, which is the whole record GitHub keeps of
