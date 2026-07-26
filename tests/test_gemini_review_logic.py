@@ -10,6 +10,7 @@ is_excluded opens the review (public PR comments) to a sensitive path.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -566,16 +567,22 @@ def test_the_pull_request_ref_is_only_ever_fetched() -> None:
 
 
 # --------------------------------------------------------------------------
-# EXCLUDED_GLOBS mirrors .coderabbit.yaml path_filters — mechanized, not
-# comment-enforced: this list is a containment boundary (it gates what the
-# agent may read and post publicly), so drift must show up red
+# The exclusion list has THREE copies — EXCLUDED_GLOBS here, .coderabbit.yaml
+# path_filters, and .greptile/config.json ignorePatterns — in three different
+# glob dialects, because each reviewer defines its own. It is a containment
+# boundary (it gates what a reviewer may read and quote into a public PR
+# comment), so drift must show up red rather than depend on someone noticing
+# one line. Each copy is checked against the CodeRabbit one, which is the
+# oldest and carries the rationale.
 # --------------------------------------------------------------------------
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-def test_excluded_globs_match_coderabbit_path_filters() -> None:
-    config = (Path(__file__).resolve().parent.parent / ".coderabbit.yaml").read_text(
-        encoding="utf-8"
-    )
+
+def _coderabbit_path_filters() -> list[str]:
+    """The `path_filters` entries, hand-parsed (the project declares no YAML
+    parser — the workflow scan above hand-matches text for the same reason)."""
+    config = (REPO_ROOT / ".coderabbit.yaml").read_text(encoding="utf-8")
     entries: list[str] = []
     in_filters = False
     for raw in config.splitlines():
@@ -588,6 +595,29 @@ def test_excluded_globs_match_coderabbit_path_filters() -> None:
                 break  # the block ends at the first non-list line
             entries.append(line[2:].strip().strip('"'))
     assert entries, "path_filters block not found in .coderabbit.yaml"
+    return entries
+
+
+def test_greptile_ignore_patterns_match_coderabbit_path_filters() -> None:
+    entries = _coderabbit_path_filters()
+    config = json.loads((REPO_ROOT / ".greptile" / "config.json").read_text("utf-8"))
+    raw = config["ignorePatterns"]
+    # Greptile's schema defines this key as a newline-separated *string* in
+    # .gitignore syntax. A list is valid JSON, reads naturally, and is silently
+    # ignored by the reviewer — which would drop every exclusion while leaving
+    # the config looking correct.
+    assert isinstance(raw, str), "ignorePatterns must be a newline-separated string"
+    patterns = {line.strip() for line in str(raw).splitlines() if line.strip()}
+    # Normalize CodeRabbit's forms to .gitignore syntax: strip the negation, and
+    # the any-depth `**/` prefix (a gitignore pattern containing no slash
+    # already matches at any depth); a `/**` subtree suffix becomes the
+    # trailing-slash directory form.
+    normalized = {e.lstrip("!").removeprefix("**/").removesuffix("**") for e in entries}
+    assert patterns == normalized
+
+
+def test_excluded_globs_match_coderabbit_path_filters() -> None:
+    entries = _coderabbit_path_filters()
     # Normalize CodeRabbit's `!**/X/**` forms to the fnmatch forms used here:
     # strip the negation and the any-depth prefix; `/**` suffix -> `/*`
     # (fnmatch `*` crosses `/`, so `X/*` already covers the whole subtree).

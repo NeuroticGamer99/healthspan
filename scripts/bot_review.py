@@ -1,4 +1,4 @@
-"""Request, await, and fetch automated PR reviews (CodeRabbit, Copilot, Gemini).
+"""Request, await, fetch automated PR reviews (CodeRabbit, Copilot, Gemini, Greptile).
 
 The glue the `/ship` and `/copilot-review` skills used to carry as shell
 one-liners. It lives here because every rule it encodes is a fact about a live
@@ -29,6 +29,16 @@ this can:
   therefore polls a clean PR to its timeout (PR #29, 2026-07-17), and the
   timeout message then sends a human to discover manually what the API had
   already said.
+* **Re-reviews that move nothing.** Greptile goes further: its findings review
+  has an *empty body*, and a re-review edits its summary comment in place
+  without resubmitting the review or posting a new comment. Both its outcomes
+  are therefore read from that one summary comment, never from the reviews
+  endpoint — which a re-review leaves frozen at the original ``submitted_at``.
+* **Reviews of the wrong commit.** A bot that reviews on PR creation and then
+  stays quiet leaves a report that no timestamp can distinguish from a fresh
+  one: the summary is newer than any floor minted at PR creation, however many
+  commits have landed since. Greptile names the commit it reviewed, so that is
+  checked against the PR head and a mismatch is reported as *stale*, not ready.
 
 Commands (exit 0 = findings review ready, 1 = failure or timeout,
 2 = clean review — the bot reported no findings; nothing to triage,
@@ -40,14 +50,20 @@ Commands (exit 0 = findings review ready, 1 = failure or timeout,
   ``@coderabbitai review`` trigger comment; Gemini (the Antigravity SDK
   workflow, ``.github/workflows/gemini-review.yml``) is asked by dispatching
   that workflow and confirming a run actually started — the dispatch endpoint
-  answers 204 whether or not a run will ever exist. All paths stamp the floor
-  *before* asking and print it on success, so the caller never mints one; a
-  failed ask prints no floor, because there is nothing to wait on.
+  answers 204 whether or not a run will ever exist. Greptile is asked with its
+  own ``@greptileai review`` trigger comment — needed only for a *re*-review,
+  since the App reviews new PRs on its own. All paths stamp the floor *before*
+  asking and print it on success, so the caller never mints one; a failed ask
+  prints no floor, because there is nothing to wait on.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
   clean-run summary lands. For a dispatch bot, ``--run ID`` (the id request
   printed) makes a failed workflow run end the wait immediately — that run
   was the only thing that could have posted the review.
 * ``fetch --bot B --pr N --since T`` — print that review and its own comments.
+  For a summary-comment bot this answers "is anything outstanding": it prints
+  the findings that have no threaded reply, counts the ones that do, and treats
+  a review of a superseded commit as a note rather than a refusal — fix commits
+  land after a review, so staleness is the ordinary end state of a triaged PR.
 
 ``--since`` takes an ISO-8601 timestamp; ``--since-commit SHA`` derives the
 floor from a commit in UTC, which is the safe way to recover a floor that was
@@ -79,7 +95,10 @@ DEFAULT_TIMEOUT = 1800
 COMMAND_TIMEOUT = 120
 # `wait`/`fetch` exit status for "the bot ran and found nothing". Distinct from
 # 0 so a caller never runs a findings triage against a review that does not
-# exist, and from 1 so a clean run is never reported as a failure.
+# exist, and from 1 so a clean run is never reported as a failure. For a
+# summary-comment bot `fetch` widens this to "nothing outstanding" — a run whose
+# findings all carry a threaded reply is as done as one that found none, and the
+# question a merge gate asks is whether anything is unanswered.
 EXIT_CLEAN = 2
 # `wait`/`fetch` exit status for "there was nothing to review" (issue #59) —
 # an empty diff range, not a reviewed-and-clean one. Distinct from EXIT_CLEAN:
@@ -144,6 +163,29 @@ class BotSpec:
     # review already passed `is_findings_review`, i.e. only for a bot whose
     # empty-range case still posts a nonempty-body review.
     empty_range_marker: re.Pattern[str] | None = None
+    # Recognizes this bot's own summary *issue comment* (Greptile). Setting it
+    # switches the bot onto a different detection model entirely: the summary
+    # comment — not the reviews endpoint — is what marks a run complete, and
+    # `clean_marker` then classifies that one comment as clean or findings.
+    #
+    # Greptile needs this because all three assumptions the review-object path
+    # rests on are false for it. Its findings review carries an EMPTY body, so
+    # `is_findings_review` rejects it; a re-review EDITS the summary comment in
+    # place and never resubmits the review, so `submitted_at` stays behind the
+    # floor forever; and its findings live in inline comments rather than in a
+    # body there is none of. A reviews-endpoint poller therefore times out on a
+    # review that completed — the same silent failure `clean_marker` already
+    # encodes for CodeRabbit, one step further along.
+    summary_marker: re.Pattern[str] | None = None
+    # Captures the commit SHA the summary comment reports it last reviewed.
+    # Only meaningful alongside `summary_marker`. This is a freshness signal no
+    # timestamp can give: a bot that reviews on PR creation and then stays quiet
+    # leaves a summary comment whose `updated_at` is newer than any floor minted
+    # at PR creation, even after three more commits have landed. Observed live
+    # on PR #69 — the footer read `Reviews (1) … 72550f1` while the branch was
+    # already three commits ahead. Compared against the PR head, it turns "a
+    # review exists" into "a review of *this* commit exists".
+    reviewed_commit: re.Pattern[str] | None = None
 
     def __post_init__(self) -> None:
         # One ask channel per bot. cmd_request dispatches on trigger_body
@@ -174,6 +216,22 @@ class BotSpec:
             raise ValueError(
                 f"{self.key}: dispatch_workflow is mutually exclusive with the "
                 "other ask channels — set exactly one"
+            )
+        # A summary-comment bot classifies that one comment as clean or
+        # findings, so without a clean_marker every run would read as findings
+        # and a clean PR would be "triaged" against zero comments.
+        if self.summary_marker is not None and self.clean_marker is None:
+            raise ValueError(
+                f"{self.key}: summary_marker requires clean_marker — the "
+                "summary comment is the only thing that says which verdict it is"
+            )
+        # reviewed_commit is read out of the summary comment's footer; without
+        # a summary comment to read there is nothing for it to match against,
+        # and a staleness guard that never runs is worse than none at all.
+        if self.reviewed_commit is not None and self.summary_marker is None:
+            raise ValueError(
+                f"{self.key}: reviewed_commit requires summary_marker — it is "
+                "parsed out of the summary comment"
             )
 
 
@@ -243,6 +301,59 @@ BOTS: dict[str, BotSpec] = {
         # sync by a cross-check test, the same convention as the count regex
         # above and review_body's marker.
         empty_range_marker=re.compile(r"<!-- gemini-review: empty-diff-range -->"),
+    ),
+    # Greptile is a GitHub App like CodeRabbit, but it reports through a
+    # different set of artifacts, transcribed from four live runs on this repo
+    # (PRs #67 findings, #68 clean, #69 findings-then-clean, #70 clean):
+    #
+    #   findings run -> a review object (state COMMENTED, body length ZERO)
+    #                   + its inline comments + a summary issue comment
+    #   clean run    -> the summary issue comment ONLY; `pulls/N/reviews` and
+    #                   `pulls/N/comments` both come back empty
+    #   re-review    -> the summary comment is EDITED IN PLACE. No new comment,
+    #                   no new review object, and the original review's
+    #                   `submitted_at` never moves.
+    #
+    # So the summary comment is the only artifact present in every outcome, and
+    # the only one that moves on a re-review — hence `summary_marker`. Unlike
+    # every other bot here, Greptile is also asked for nothing at PR creation:
+    # the App reviews new PRs on its own (`.greptile/README.md` explains why that
+    # is kept), and `trigger_body` is for re-reviews only.
+    "greptile": BotSpec(
+        key="greptile",
+        review_login="greptile-apps[bot]",
+        request_login=None,
+        requested_display=None,
+        trigger_body="@greptileai review",
+        # The one count Greptile states anywhere. Its review body is empty and
+        # the summary comment has no "N findings" line; this sentence heads the
+        # "Prompt To Fix All With AI" block, which appears only when there are
+        # findings. Basis is thin on purpose-visible grounds — exactly ONE
+        # observed findings summary (PR #67, "Fix the following 1 code review
+        # issue") — but the failure is benign: an unmatched pattern makes
+        # `stated_count` return None, which `count_note` reports as "cross-check
+        # skipped" rather than asserting a wrong count.
+        count=re.compile(r"Fix the following (\d+) code review issue"),
+        # Deliberately NOT anchored to a full sentence. PR #70 wrote "No files
+        # require special attention." and PR #68 wrote "No files require special
+        # attention; the spec files are consistent with each other." — the
+        # trailing clause is free prose. A period-anchored pattern would have
+        # missed #68 and reported a clean run as findings, then triaged it
+        # against zero comments.
+        clean_marker=re.compile(r"No files require special attention"),
+        # An HTML marker rather than the visible "Greptile Summary" heading:
+        # both appear in all four observed bodies, but the HTML one is written
+        # for machines and survives the section toggles in `.greptile/config.json`
+        # that could restyle the heading. Same reasoning as CodeRabbit's
+        # auto-generated-comment marker above.
+        summary_marker=re.compile(r"<!-- greptile_other_comments_section -->"),
+        # The footer, one line: `Reviews (N): Last reviewed commit:
+        # ["<subject>"](https://github.com/<owner>/<repo>/commit/<sha>) |
+        # [Re-trigger Greptile](...)`. Bounded to a single line so the capture
+        # cannot wander into an unrelated commit link elsewhere in the summary.
+        reviewed_commit=re.compile(
+            r"Last reviewed commit:[^\n]*?/commit/([0-9a-f]{7,40})"
+        ),
     ),
 }
 
@@ -398,6 +509,131 @@ def select_clean_comment(
     if not candidates:
         return None
     return max(candidates, key=comment_ts)
+
+
+def is_summary_comment(comment: Comment, spec: BotSpec) -> bool:
+    """Whether this issue comment is the bot's own per-run summary.
+
+    Recognizing the summary *without* regard to its verdict is the point: for a
+    ``summary_marker`` bot this comment is the completion signal for a findings
+    run and a clean run alike, and :func:`is_clean_comment` then says which.
+    """
+    if spec.summary_marker is None:
+        return False
+    if not same_login(_login_of(comment), spec.review_login):
+        return False
+    return bool(spec.summary_marker.search(str(comment.get("body") or "")))
+
+
+def select_summary_comment(
+    comments: list[Comment], spec: BotSpec, since: datetime
+) -> Comment | None:
+    """The newest run summary this bot posted or edited after ``since``.
+
+    Compared on :func:`comment_ts` (``updated_at``) rather than creation, which
+    is what makes a re-review visible at all: Greptile rewrites this one comment
+    in place, so on any PR past its first review the creation time predates
+    every floor.
+    """
+    candidates = [
+        comment
+        for comment in comments
+        if is_summary_comment(comment, spec) and comment_ts(comment) > since
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=comment_ts)
+
+
+def reviewed_sha(body: str, spec: BotSpec) -> str | None:
+    """The commit the summary says it last reviewed, if it names one."""
+    if spec.reviewed_commit is None:
+        return None
+    found = spec.reviewed_commit.search(body)
+    return found.group(1) if found else None
+
+
+def same_commit(left: str, right: str) -> bool:
+    """Whether two commit-ish hex strings denote the same commit.
+
+    Prefix-compared on the shorter of the two, because the summary footer's
+    link length is the bot's choice and not a contract; requiring 40 characters
+    on both sides would turn a shortened SHA into a permanent false "stale".
+    Below seven characters nothing is compared — an abbreviation that short is
+    not evidence of anything, and answering ``True`` there would silently
+    disable the staleness guard.
+    """
+    width = min(len(left), len(right))
+    if width < 7:
+        return False
+    return left[:width].casefold() == right[:width].casefold()
+
+
+def is_finding_comment(comment: Comment, spec: BotSpec) -> bool:
+    """Whether this review comment is one of the bot's own top-level findings.
+
+    Two filters, each removing a different impostor. The author check drops
+    everyone else's comments, since these come from the pull-level endpoint
+    rather than from one review's own — the review id cannot be used for
+    scoping here, because a Greptile re-review posts under no new review at all.
+    The ``in_reply_to_id`` check drops the bot's replies to a triage thread,
+    which are authored by the same login and would otherwise be re-triaged as
+    fresh findings on the next run.
+    """
+    if not same_login(_login_of(comment), spec.review_login):
+        return False
+    return comment.get("in_reply_to_id") in (None, 0)
+
+
+def answered_ids(comments: list[Comment]) -> set[int]:
+    """Ids of comments that already carry a threaded reply.
+
+    A reply — the owner's or another bot's — sets ``in_reply_to_id`` to the
+    comment it answers, and that is the entire record GitHub keeps of a finding
+    having been triaged. Verified on PRs #67 and #69, where the owner's replies
+    point at Greptile's findings exactly this way.
+    """
+    ids: set[int] = set()
+    for comment in comments:
+        parent = comment.get("in_reply_to_id")
+        if parent:
+            ids.add(int(str(parent)))
+    return ids
+
+
+def unanswered(findings: list[Comment], comments: list[Comment]) -> list[Comment]:
+    """The findings with no threaded reply — the ones that still need triage.
+
+    This, not the freshness of the review, is what "is there outstanding review
+    work" means. A PR that took fix commits *after* its review is the normal end
+    state of triage, not an anomaly; a finding nobody answered is the anomaly.
+    """
+    already = answered_ids(comments)
+    return [f for f in findings if int(str(f.get("id", 0))) not in already]
+
+
+def select_finding_comments(
+    comments: list[Comment], spec: BotSpec, since: datetime
+) -> list[Comment]:
+    """This bot's top-level findings after ``since``, oldest first.
+
+    The floor is the only scoping available (see :func:`is_finding_comment`), so
+    an earlier run's findings are excluded by time. **What happens when a
+    re-review re-reports the same finding has not been observed** — no live
+    re-review has produced findings on this repo, only findings-then-clean. If
+    the bot edits its existing comments instead of posting new ones, the edited
+    ``updated_at`` brings them back in; if it silently leaves them, the summary's
+    stated count will exceed what is fetched and :func:`count_note` says so.
+    Either way the disagreement is reported rather than resolved by guessing.
+    """
+    return sorted(
+        (
+            comment
+            for comment in comments
+            if is_finding_comment(comment, spec) and comment_ts(comment) > since
+        ),
+        key=comment_ts,
+    )
 
 
 Run = dict[str, Any]
@@ -649,6 +885,31 @@ def issue_comments(repo: str, pr: int) -> list[Comment]:
     return [cast("Comment", c) for c in raw if isinstance(c, dict)]
 
 
+def pull_comments(repo: str, pr: int) -> list[Comment]:
+    """Every review comment on the PR, across all reviews.
+
+    The deliberately unscoped fetch that :func:`review_comments` exists to
+    avoid — used only by a ``summary_marker`` bot, whose findings cannot be
+    reached through a review id (a re-review posts under no new review), and
+    scoped instead by author and floor in :func:`select_finding_comments`.
+    """
+    raw = gh_all(f"repos/{repo}/pulls/{pr}/comments")
+    return [cast("Comment", c) for c in raw if isinstance(c, dict)]
+
+
+def pr_head_sha(repo: str, pr: int) -> str:
+    """The PR's current head commit — what a fresh review must have reviewed."""
+    pull = cast("dict[str, Any] | None", gh(f"repos/{repo}/pulls/{pr}"))
+    head = cast("dict[str, Any]", (pull or {}).get("head") or {})
+    sha = str(head.get("sha") or "")
+    if not sha:
+        raise BotReviewError(
+            f"could not read the head SHA of {repo}#{pr} — refusing to check "
+            "review freshness against nothing"
+        )
+    return sha
+
+
 def workflow_runs(repo: str, workflow: str) -> list[Run]:
     """The workflow's dispatch runs, newest first (one page).
 
@@ -836,6 +1097,143 @@ def _clean_verdict(spec: BotSpec, comment: Comment) -> str:
     )
 
 
+def _short(sha: str | None) -> str:
+    return sha[:7] if sha else "unknown"
+
+
+@dataclass(frozen=True)
+class SummaryState:
+    """What a ``summary_marker`` bot's latest summary comment says about a run.
+
+    ``stale`` is deliberately *not* "the summary is old". It means the summary
+    names a commit that is not this PR's head — i.e. the bot has reported, but
+    on different code. That case is indistinguishable from a fresh review by
+    timestamp alone, which is the whole reason this type exists.
+    """
+
+    comment: Comment
+    # The summary's *own* prose verdict — the clean marker is present. Never
+    # sufficient on its own: see `contradiction` below.
+    clean: bool
+    stale: bool
+    reviewed: str | None
+    head: str
+    # The count the summary claims, if it states one at all.
+    stated: int | None
+    # This bot's top-level findings above the floor, and the subset still
+    # lacking a threaded reply.
+    findings: list[Comment]
+    open_findings: list[Comment]
+
+    @property
+    def signals_conflict(self) -> str | None:
+        """Set when the two verdict signals disagree irreconcilably.
+
+        Two independent signals say whether a run found anything: the prose
+        marker ("No files require special attention") and the stated count
+        ("Fix the following N code review issue"). Neither is a fixed template —
+        the first is model-written prose, proven variable when PR #68 appended a
+        clause to it, and the second comes from the fix-prompt block, which is a
+        *configurable* feature (`fixWithAI`). Trusting either alone makes a
+        config or wording change classify every findings run as clean, silently.
+        So they must agree, and a caller that cannot classify says so instead of
+        guessing — the one outcome worse than either answer is a confident wrong
+        one.
+
+        Kept separate from :attr:`comments_pending` because the two want
+        opposite handling: no amount of waiting resolves this one, so ``wait``
+        must fail on it rather than poll.
+        """
+        if self.clean and self.stated:
+            return (
+                f"the summary reads clean but also states {self.stated} "
+                "finding(s) — the two signals disagree, so this run cannot be "
+                "classified. Read the summary on the PR before concluding."
+            )
+        return None
+
+    @property
+    def comments_pending(self) -> bool:
+        """Whether the summary counts findings the comments endpoint lacks.
+
+        Transient by nature: Greptile posts the summary about four seconds
+        before the inline comments it counts (PRs #67 and #69), so this
+        resolves itself on the next poll. ``wait`` keeps polling; ``fetch``,
+        which gets one look, refuses to conclude.
+        """
+        return bool(self.stated and len(self.findings) < self.stated)
+
+    @property
+    def contradiction(self) -> str | None:
+        """Why a single-shot caller cannot classify this summary, if it cannot.
+
+        Composes both causes for ``fetch``. ``wait`` deliberately does not use
+        this: it must distinguish the conflict it should fail on from the race
+        it should wait out.
+        """
+        if self.signals_conflict is not None:
+            return self.signals_conflict
+        if self.comments_pending:
+            return (
+                f"the summary states {self.stated} finding(s) but only "
+                f"{len(self.findings)} were fetched. Greptile posts its summary "
+                "a few seconds before the inline comments (4s on PRs #67 and "
+                "#69), so this is usually a review still landing — re-run "
+                "rather than concluding it is clean."
+            )
+        return None
+
+
+def summary_state(
+    repo: str, pr: int, spec: BotSpec, since: datetime
+) -> SummaryState | None:
+    """Read this bot's latest run summary, or ``None`` if it has not reported.
+
+    Reads the findings alongside it, deliberately: the summary is prose the
+    model wrote, and the comments endpoint is the ground truth about what was
+    actually posted. Classifying a run without consulting both means the clean
+    path — the one that ends a triage — is the only path that checks nothing.
+
+    A summary that names no commit is *not* treated as stale: an unparsed
+    footer is missing evidence, not evidence of staleness, and failing closed
+    there would wedge every wait behind a reworded footer. Callers surface that
+    case instead (``fetch`` prints a freshness-unverified note).
+    """
+    comment = select_summary_comment(issue_comments(repo, pr), spec, since)
+    if comment is None:
+        return None
+    body = str(comment.get("body") or "")
+    reviewed = reviewed_sha(body, spec)
+    head = pr_head_sha(repo, pr) if spec.reviewed_commit is not None else ""
+    posted = pull_comments(repo, pr)
+    findings = select_finding_comments(posted, spec, since)
+    return SummaryState(
+        comment=comment,
+        clean=spec.clean_marker is not None and bool(spec.clean_marker.search(body)),
+        stale=reviewed is not None and not same_commit(reviewed, head),
+        reviewed=reviewed,
+        head=head,
+        stated=stated_count(body, spec),
+        findings=findings,
+        open_findings=unanswered(findings, posted),
+    )
+
+
+def _timeout_message(spec: BotSpec, timeout: int, stale: SummaryState | None) -> str:
+    if stale is not None:
+        return (
+            f"TIMEOUT: {spec.key} has reported on this PR, but its summary "
+            f"last reviewed {_short(stale.reviewed)} while the head is "
+            f"{_short(stale.head)} — the review is STALE, not missing. Nothing "
+            "has looked at the current commit; ask for a re-review rather than "
+            "reading the existing summary as this commit's verdict."
+        )
+    return (
+        f"TIMEOUT: no {spec.key} findings review after {timeout}s. "
+        "Silence is not a clean review — check the PR before concluding."
+    )
+
+
 def cmd_wait(
     repo: str,
     pr: int,
@@ -845,64 +1243,184 @@ def cmd_wait(
     run_id: int | None = None,
 ) -> int:
     deadline = time.monotonic() + timeout
+    stale: SummaryState | None = None
     while True:
-        # Findings first, every iteration: a review after the floor always
-        # outranks a clean summary, so a walkthrough edit racing its own
-        # review's submission cannot misreport a findings run as clean.
-        review = select_review(list_reviews(repo, pr), spec, since)
-        if review is not None:
-            if is_empty_range_review(review, spec):
+        if spec.summary_marker is not None:
+            # This bot's whole signal is the summary comment — the reviews
+            # endpoint does not move on a re-review and its findings review
+            # carries an empty body, so neither can be polled. A stale summary
+            # is not an answer: keep waiting, but remember it, because "the bot
+            # reviewed an older commit" is a far more useful timeout than "no
+            # review arrived".
+            state = summary_state(repo, pr, spec, since)
+            if state is not None and state.stale:
+                stale = state
+            elif state is not None:
+                # Signals that disagree end the wait *here*, with the same
+                # verdict and message `fetch` would give. Reporting "ready" and
+                # letting fetch refuse would make the two commands contradict
+                # each other about the same state, and send a caller to triage
+                # a run neither of them can classify.
+                conflict = state.signals_conflict
+                if conflict is not None:
+                    print(f"error: {conflict}", file=sys.stderr)
+                    return 1
+                # Clean means clean *and* nothing left open: a run that reports
+                # no files needing attention can still sit above an untriaged
+                # finding from an earlier run, and ending the wait there is how
+                # a finding nobody read reaches a merge. (A clean summary that
+                # also stated a count was refused above, so `clean` here already
+                # implies no stated count.)
+                if state.clean and not state.open_findings:
+                    print(_clean_verdict(spec, state.comment))
+                    return EXIT_CLEAN
+                # The summary is posted a few seconds before the inline
+                # comments it counts (4s on PRs #67 and #69). Returning inside
+                # that window hands `fetch` a review whose findings have not
+                # landed, which it then reports as a count mismatch — a real
+                # alarm for a non-problem. Keep polling until they are there.
+                elif not state.comments_pending:
+                    print(
+                        f"{spec.key} findings summary {state.comment.get('id')} "
+                        f"(updated {state.comment.get('updated_at')}, reviewed "
+                        f"{_short(state.reviewed)}) is ready — "
+                        f"{len(state.open_findings)} open finding(s)"
+                    )
+                    return 0
+        else:
+            # Findings first, every iteration: a review after the floor always
+            # outranks a clean summary, so a walkthrough edit racing its own
+            # review's submission cannot misreport a findings run as clean.
+            review = select_review(list_reviews(repo, pr), spec, since)
+            if review is not None:
+                if is_empty_range_review(review, spec):
+                    print(
+                        f"{spec.key} review {review.get('id')} "
+                        f"({review.get('submitted_at')}) reports nothing to "
+                        "review — no diff was ever reviewed. Not a clean review, "
+                        "not findings; nothing to triage."
+                    )
+                    return EXIT_EMPTY_RANGE
                 print(
-                    f"{spec.key} review {review.get('id')} "
-                    f"({review.get('submitted_at')}) reports nothing to "
-                    "review — no diff was ever reviewed. Not a clean review, "
-                    "not findings; nothing to triage."
+                    f"{spec.key} findings review {review.get('id')} "
+                    f"({review.get('submitted_at')}) is ready"
                 )
-                return EXIT_EMPTY_RANGE
-            print(
-                f"{spec.key} findings review {review.get('id')} "
-                f"({review.get('submitted_at')}) is ready"
-            )
-            return 0
-        if spec.clean_marker is not None:
-            comment = select_clean_comment(issue_comments(repo, pr), spec, since)
-            if comment is not None:
-                print(_clean_verdict(spec, comment))
-                return EXIT_CLEAN
-        # A workflow-based bot can fail without posting anything; its run's
-        # conclusion says so long before the poll times out. Checked after the
-        # review lookups so a posted review always outranks a red run. With
-        # --run (the id request confirmed and printed), exactly that run is
-        # polled — no timestamps to skew, no neighbouring PR's run to match;
-        # without it (a recovered floor), fall back to the PR-title-filtered
-        # scan of the runs list.
-        if spec.dispatch_workflow is not None:
-            if run_id is not None:
-                run = workflow_run(repo, run_id)
-                failed = run if run_has_failed(run) else None
-            else:
-                runs = workflow_runs(repo, spec.dispatch_workflow)
-                failed = select_failed_run(runs, since, pr)
-            if failed is not None:
-                print(
-                    f"FAILED: {spec.dispatch_workflow} run {failed.get('id')} "
-                    f"concluded {str(failed.get('conclusion'))!r} without "
-                    "posting a review — check the run's logs. Silence is not "
-                    "a clean review.",
-                    file=sys.stderr,
-                )
-                return 1
+                return 0
+            if spec.clean_marker is not None:
+                comment = select_clean_comment(issue_comments(repo, pr), spec, since)
+                if comment is not None:
+                    print(_clean_verdict(spec, comment))
+                    return EXIT_CLEAN
+            # A workflow-based bot can fail without posting anything; its run's
+            # conclusion says so long before the poll times out. Checked after
+            # the review lookups so a posted review always outranks a red run.
+            # With --run (the id request confirmed and printed), exactly that
+            # run is polled — no timestamps to skew, no neighbouring PR's run to
+            # match; without it (a recovered floor), fall back to the
+            # PR-title-filtered scan of the runs list.
+            if spec.dispatch_workflow is not None:
+                if run_id is not None:
+                    run = workflow_run(repo, run_id)
+                    failed = run if run_has_failed(run) else None
+                else:
+                    runs = workflow_runs(repo, spec.dispatch_workflow)
+                    failed = select_failed_run(runs, since, pr)
+                if failed is not None:
+                    print(
+                        f"FAILED: {spec.dispatch_workflow} run "
+                        f"{failed.get('id')} concluded "
+                        f"{str(failed.get('conclusion'))!r} without posting a "
+                        "review — check the run's logs. Silence is not a clean "
+                        "review.",
+                        file=sys.stderr,
+                    )
+                    return 1
         if time.monotonic() >= deadline:
-            print(
-                f"TIMEOUT: no {spec.key} findings review after {timeout}s. "
-                "Silence is not a clean review — check the PR before concluding.",
-                file=sys.stderr,
-            )
+            print(_timeout_message(spec, timeout, stale), file=sys.stderr)
             return 1
         time.sleep(POLL_SECONDS)
 
 
+def _fetch_summary_bot(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
+    """``fetch`` for a bot whose run is reported through a summary comment.
+
+    Answers one question: **is there review work outstanding on this PR?** So
+    the exit codes are about open findings rather than about the summary's
+    prose — ``EXIT_CLEAN`` when nothing is unanswered (whether because the run
+    was clean or because every finding already has a reply), ``0`` when
+    something needs triage, and ``1`` when the signals disagree badly enough
+    that no honest answer exists.
+
+    Staleness is reported, never fatal: it is the ordinary end state of a
+    triaged PR, since the fixes a review provokes are commits made after it.
+    """
+    state = summary_state(repo, pr, spec, since)
+    if state is None:
+        print(
+            f"no {spec.key} summary after {since.isoformat()} — "
+            "that is not the same as a clean review",
+            file=sys.stderr,
+        )
+        return 1
+    blocked = state.contradiction
+    if blocked is not None:
+        print(f"error: {blocked}", file=sys.stderr)
+        return 1
+
+    body = str(state.comment.get("body") or "")
+    print(f"=== {spec.key} summary comment {state.comment.get('id')} ===")
+    print(f"reviewed:  {state.reviewed[:7] if state.reviewed else 'not stated'}")
+    print(f"updated:   {state.comment.get('updated_at')}")
+    if state.reviewed is None:
+        print(
+            "NOTE: the summary names no reviewed commit — freshness could not "
+            "be verified. Confirm it reviewed the current head before triaging."
+        )
+    elif state.stale:
+        # Reported, not refused. Fix commits land *after* a review — that is
+        # what triaging findings produces — so on any PR that took review
+        # fixes, head has moved past the reviewed commit by merge time.
+        # Refusing there would fire on the ordinary end state of every
+        # reviewed PR while saying nothing about the case that matters,
+        # which is a finding nobody answered.
+        print(
+            f"NOTE: this review looked at {_short(state.reviewed)}, not the "
+            f"current head {_short(state.head)}. Anything it reported still "
+            "stands, but nothing has reviewed the current code — re-trigger if "
+            "you need a verdict on it."
+        )
+    # Skipped when there is nothing to cross-check: a clean run states no count
+    # *by design*, and zero fetched findings agrees with it. Printing the
+    # "cross-check skipped" warning on every clean run is how a NOTE becomes
+    # something people learn to scroll past.
+    if state.stated is not None or state.findings:
+        note = count_note(state.stated, len(state.findings))
+        if note:
+            print(f"NOTE: {note}")
+
+    if not state.open_findings:
+        answered = len(state.findings)
+        print()
+        print(
+            _clean_verdict(spec, state.comment)
+            if state.clean
+            else f"NOTHING OUTSTANDING: all {answered} finding(s) have a reply."
+        )
+        return EXIT_CLEAN
+
+    print()
+    print(body)
+    print(f"=== {len(state.open_findings)} open finding(s) since the floor ===")
+    for comment in state.open_findings:
+        line = comment.get("line") or comment.get("original_line")
+        print(f"\n--- {comment.get('path')}:{line} [id={comment.get('id')}] ---")
+        print(comment.get("body"))
+    return 0
+
+
 def cmd_fetch(repo: str, pr: int, spec: BotSpec, since: datetime) -> int:
+    if spec.summary_marker is not None:
+        return _fetch_summary_bot(repo, pr, spec, since)
     review = select_review(list_reviews(repo, pr), spec, since)
     if review is None:
         # Same precedence as cmd_wait: only after establishing that no

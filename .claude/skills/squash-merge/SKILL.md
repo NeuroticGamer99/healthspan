@@ -6,7 +6,8 @@ description: Squash-merge the current branch's PR with a clean composed commit m
 # /squash-merge — merge the PR with a clean squash message
 
 The last step of the chain: `/land` → `/ship` → the review chains the user chose to spend
-(`/coderabbit-review`, `/copilot-review` — reviews are opt-in per PR) → `/squash-merge`. Invoking
+(`/coderabbit-review`, `/copilot-review` — reviews are opt-in per PR, except Greptile, which
+reviews every PR unasked and is collected with `/greptile-review`) → `/squash-merge`. Invoking
 it is the user's approval to merge — but never past a red or pending gate. Stop and report at any
 step that fails.
 
@@ -29,6 +30,25 @@ step that fails.
   that was requested/triggered and has not answered yet — stops the merge. A PR whose review
   chains were deliberately not spent (reviews are opt-in per PR) has nothing to wait for: state
   plainly that no bot reviewed it and merge on the user's explicit say-so.
+- **No Greptile finding is unanswered**: Greptile is *not* opt-in — its App reviews every PR on
+  creation — so unlike the others it is never legitimately unspent, and a PR can reach this step
+  carrying findings nobody asked for and nobody read. Check with the PR's `createdAt` as the floor,
+  so the whole PR's history is in scope:
+
+  ```bash
+  uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <PR createdAt>
+  ```
+
+  **Exit 2 clears this gate** — either the run was clean, or every finding it posted already has a
+  threaded reply. **Exit 0 stops the merge**: it lists findings with no reply, which is the exact
+  thing this gate exists to catch. Exit 1 means the signals disagreed and no verdict is available;
+  read the PR before deciding.
+
+  A `NOTE:` saying the review looked at an older commit is **not** a blocker. Fix commits land
+  after a review by definition, so a triaged PR reaches this step stale as a matter of course; it
+  only means Greptile has not seen the final state. Re-trigger via `/greptile-review` step 2 if you
+  want a verdict on the merged code, but do not treat it as an unmet precondition. Do not treat the
+  mere presence of a Greptile summary comment as evidence anyone read it.
 - The user has asked for the merge in this session. `/ship` and `/copilot-review` never merge;
   neither does this skill uninvited.
 

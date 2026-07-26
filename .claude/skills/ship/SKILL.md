@@ -11,10 +11,14 @@ Runs after `/land` has surveyed the change, run the gates, and proposed a commit
 Takes an optional reviewer argument choosing which bot chain to spend on this PR — reviews are
 opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every PR:
 
-- **`/ship`** — ship only. Nothing reviews automatically (`auto_review.enabled: false`); after
-  reporting the PR URL, remind the user of the reviewer chains they can spend: the two reliable
-  lenses `/coderabbit-review` and `/copilot-review`, a local `/code-review`, and — only if
-  explicitly asked — the best-effort `/gemini-review` (see below).
+- **`/ship`** — ship only. **Greptile is the exception to "nothing reviews unasked": its GitHub
+  App reviews every new PR on its own**, so opening a PR always starts one. After reporting the PR
+  URL, say that Greptile is already reviewing and offer `/greptile-review` to collect it, then
+  remind the user of the chains they can additionally spend: the two reliable lenses
+  `/coderabbit-review` and `/copilot-review`, a local `/code-review`, and — only if explicitly
+  asked — the best-effort `/gemini-review` (see below). Do not wait for anything here.
+- **`/ship greptile`** — ship, then run the **`/greptile-review`** chain (step 4) to collect the
+  review the PR creation already started. No trigger is posted; the chain begins at the wait.
 - **`/ship coderabbit`** — ship, then run the **`/coderabbit-review`** chain (step 4).
 - **`/ship gemini`** — ship, then run the **`/gemini-review`** chain (step 4). **Best-effort, not a
   routine chain member** (demoted 2026-07-24): on the free tier it usually fails without producing a
@@ -78,9 +82,14 @@ gate.
 
 ## 4. The chosen reviewer chain
 
-Bare `/ship` ends at step 3: report the PR URL and the reviewer chains available. **Do not wait
-for a review** — since `auto_review.enabled: false`, no review is coming unasked, and waiting for
-one polls a silent PR to a 30-minute timeout.
+Bare `/ship` ends at step 3: report the PR URL, note that Greptile is already reviewing, and list
+the chains available. **Do not wait for anything** — `/ship greptile` is how the user asks for the
+Greptile wait, and no *other* review is coming unasked (`auto_review.enabled: false`), so waiting
+for one polls a silent PR to a 30-minute timeout.
+
+`/ship greptile`: continue with the **`/greptile-review`** skill, **skipping its step 2** — the
+review was triggered by opening the PR, and posting `@greptileai review` on top of it would ask
+twice for the same thing. Use the PR's `createdAt` as the floor, wait, then fetch and triage.
 
 `/ship coderabbit`: continue with the **`/coderabbit-review`** skill from its step 2 — it posts
 the `@coderabbitai review` trigger through `scripts/bot_review.py request` (which stamps and

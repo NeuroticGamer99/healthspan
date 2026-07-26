@@ -2,10 +2,11 @@
 
 Prompt input for the opt-in Antigravity SDK reviewer
 (`.github/workflows/gemini-review.yml`, driven by `/gemini-review`). Sibling
-config: `.coderabbit.yaml` teaches the same conventions to CodeRabbit — a
-convention added or changed here must be mirrored there, and vice versa.
-Authoritative sources are `CLAUDE.md` and `specs/`; this file is the distilled
-review lens, kept lean on purpose.
+configs: `.coderabbit.yaml` teaches the same conventions to CodeRabbit, and
+`.greptile/` (scoped `rules[]` in `config.json`, plus `rules.md`) teaches them
+to Greptile — a convention added or changed here must be mirrored in both, and
+vice versa. Authoritative sources are `CLAUDE.md` and `specs/`; this file is the
+distilled review lens, kept lean on purpose.
 
 ## What to review for
 

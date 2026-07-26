@@ -1,0 +1,58 @@
+{
+  "strictness": 1,
+  "commentTypes": ["logic", "syntax", "info"],
+  "triggerOnUpdates": false,
+  "statusCheck": false,
+  "ignorePatterns": "*.db\n*.db-shm\n*.db-wal\n*.db.lock\n*.sqlite*\n*recovery-kit*\nexports/\nexport/\ndata/\n__pycache__/\n.venv/\npytest-output.log\nparallel-output.log\ncanary-logs/\nspecs/personal/\n",
+  "instructions": "This is a local-first, single-owner health-data platform: one loopback service, one owner, no multi-tenancy. Judge correctness, concurrency and performance findings at that scale and threat model, and say which you are applying rather than assuming a hostile multi-user deployment. The authoritative sources are CLAUDE.md and specs/; .greptile/rules.md is the distilled review lens and the scoped entries in rules[] are its mechanized half. Reviews on this repository are PUBLIC: when a rule asks you to flag personal health data, report only the path and the data category and never quote, copy, or echo the value, its provenance, or any identifying detail into a review comment.",
+  "rules": [
+    {
+      "id": "personal-data-containment",
+      "rule": "specs/personal/ is the ONLY location in this repository where personal health values, lab results, diagnoses, medications, clinical history, or the provenance/sequence of the owner's actual records may appear. Flag any such content anywhere else — including test fixtures, code comments, scripts, skill prose and docs. Report only the path and the data category; never quote, copy, or echo the actual values, provenance, or identifying details into the review comment, because reviews on this public repository are world-readable. Never suggest writing personal health values or identifying information to any path outside specs/personal/.",
+      "scope": ["**/*", ".github/**", ".claude/**", ".gemini/**", ".greptile/**"],
+      "severity": "high"
+    },
+    {
+      "id": "adr-governance",
+      "rule": "Accepted ADRs are immutable historical records. The only permitted in-place edits to an Accepted ADR are correcting its Status field to 'Superseded by ADR-XXXX' and adding a navigation link in its Links section. A decision change must be a NEW superseding ADR; an addition must be a NEW extending ADR. Flag any other content change to an Accepted ADR. Exception (CLAUDE.md rule 5): fixing a typo or a broken link in place is permitted — do not flag those. Any ADR addition, status change or title change must also update the Index table in specs/adr/README.md; flag it if it does not.",
+      "scope": ["specs/adr/**"],
+      "severity": "high"
+    },
+    {
+      "id": "adr-status-annotations",
+      "rule": "Inline ADR status annotations in prose — the '(ADR-0055, Proposed)' form — are point-in-time by design: they record the status when the sentence was written and are deliberately not kept in sync. The authoritative status is the ADR's own Status field and the specs/adr/README.md index. Flag edits that 'chase' such an annotation to a new status; do not flag the stale annotations themselves.",
+      "scope": ["specs/**"],
+      "severity": "low"
+    },
+    {
+      "id": "decision-capture",
+      "rule": "A design decision surfaced during implementation must be recorded in its owning document layer in the same change — architectural (new dependency, process, component, scope, table, or anything touching a security invariant or an Accepted ADR) to a new Proposed ADR; API surface (endpoint paths, request/response shapes, error formats, status codes, scope declarations, MCP tool signatures) to specs/api-reference.md; schema shapes to specs/data-model.md; config knobs and defaults to the owning ADR; deliberately deferred questions to specs/open-questions.md. A design decision that exists only in code is a spec bug. Flag new endpoints, response or error shapes, schema columns, or config defaults that carry no matching spec or ADR update.",
+      "scope": ["**/*.py", "**/*.md", "**/*.toml", "**/*.yaml", "**/*.yml", "**/*.json", ".github/**"],
+      "severity": "medium"
+    },
+    {
+      "id": "security-invariants",
+      "rule": "Flag changes that could touch the invariants table in specs/security.md without a corresponding ADR or spec note: INV-1 key confinement, INV-2 no plugin code in the Core Service, INV-3 plugin-tier credentials, INV-4 data-only plugin influence, INV-5 named/scoped/revocable credentials, INV-6 source-data purity, INV-7 append-only audit surfaces, INV-8 hash-only credential storage.",
+      "scope": ["**/*.py", ".github/**"],
+      "severity": "high"
+    },
+    {
+      "id": "locale-invariance",
+      "rule": "The project is locale-invariant where it matters, and this is a settled convention rather than an open question: storage and wire formats are locale-neutral (ISO-8601 UTC timestamps, dot-decimal numbers, UCUM unit strings), and machine-readable fields — status codes, enum values, structured error fields — are the contract while English free text is presentation only. See specs/api-reference.md 'Locale invariance' and the Product Scope entry in specs/open-questions.md. Flag locale-dependent parsing or formatting introduced without a note: a bare float() on text that came from an external export, system-locale number or date formatting on a value the API speaks in dot-decimal, or keying on a localized display name where the format offers a stable identifier.",
+      "scope": ["**/*.py", ".github/**"],
+      "severity": "medium"
+    },
+    {
+      "id": "no-bare-comma-except",
+      "rule": "Never write PEP 758's bare-comma multi-exception clause 'except ValueError, OSError:'. Always parenthesize: 'except (ValueError, OSError):'. The two are semantically identical, but the bare form visually aliases the removed Python-2 'except A, e:' (which bound the second name), so it reads as a bug to reviewers and tools alike. A one-line catch-only clause additionally needs a '# fmt: skip' guard or 'ruff format' strips the parentheses back out; a clause binding 'as exc' keeps them unaided, and so does a clause long enough that the formatter wraps it into multi-line form. Do not suggest adding '# fmt: skip' to a clause that would then exceed 88 columns — that fails ruff check with E501 and has no formatter fix.",
+      "scope": ["**/*.py"],
+      "severity": "high"
+    },
+    {
+      "id": "powershell-utf8",
+      "rule": "PowerShell that reads or writes project files must use explicit UTF-8: for writes the BOM-free .NET pattern [System.IO.File]::WriteAllText with UTF8Encoding($false), for reads Get-Content -Encoding UTF8 -Raw. Note that '-Encoding UTF8' is NOT BOM-free on Windows PowerShell 5.1 (it is on PowerShell 7+). The repository contains multibyte Unicode — em dashes, box-drawing characters, arrows — that the default Windows-1252 encoding corrupts silently. Flag Get-Content -Raw or Set-Content used on a project file without explicit UTF-8.",
+      "scope": ["**/*.ps1"],
+      "severity": "medium"
+    }
+  ]
+}
