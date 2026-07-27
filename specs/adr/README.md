@@ -119,3 +119,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0064](0064-reviewer-workflow-trust-boundary.md) | Reviewer Workflows Execute Only Default-Branch Code (extends ADR-0045) | Proposed |
 | [ADR-0065](0065-catalog-merge-and-removal.md) | Catalog Merge and Removal Semantics | Proposed |
 | [ADR-0066](0066-startup-permission-verification.md) | Startup Permission Verification for the Database, Sidecar, and Passphrase File (extends ADR-0049) | Proposed |
+| [ADR-0067](0067-unrepliable-finding-acknowledgement.md) | PR-Level Acknowledgement Clears Unrepliable Bot Findings | Proposed |

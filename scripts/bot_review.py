@@ -75,7 +75,10 @@ outstanding. Its 2 covers two states it prints differently and never conflates
   once (no ``--bot``): which findings on this PR still have no reply. Exit 2
   means none do. The per-bot commands answer "did this bot report"; a merge
   needs "is anything here unread", and those diverge precisely on the PR whose
-  review was collected but whose findings were not.
+  review was collected but whose findings were not. A finding that never was a
+  comment object — Greptile summary prose, a Gemini body bullet — can take no
+  threaded reply at all; for those the gate instead credits a PR-level
+  acknowledgement comment naming the artifact (ADR-0067, :func:`acknowledged`).
 
 ``--since`` takes an ISO-8601 timestamp; ``--since-commit SHA`` derives the
 floor from a commit in UTC, which is the safe way to recover a floor that was
@@ -97,7 +100,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 
 PAGE_SIZE = 100
 POLL_SECONDS = 30
@@ -719,7 +722,7 @@ def answered_ids(comments: list[Comment], not_by: tuple[str, ...] = ()) -> set[i
         parent = comment.get("in_reply_to_id")
         if not parent:
             continue
-        if any(same_login(_login_of(comment), login) for login in not_by):
+        if _authored_by_any(comment, not_by):
             continue
         ids.add(int(str(parent)))
     return ids
@@ -730,6 +733,112 @@ def bot_logins() -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(login for spec in BOTS.values() for login in spec.logins)
     )
+
+
+# The acknowledgement reference (ADR-0067): `Acknowledges <bot> (summary|review)
+# <id>`, matched case-insensitively but only when it OWNS ITS WHOLE LINE. Both
+# anchors are load-bearing, not tidiness: the gate's own refusal messages print
+# the exact reference to post — so nobody composes it from memory — which means
+# a valid reference sits verbatim inside the banner, and a comment merely
+# *quoting* that banner (pasting the stderr line to ask about the blocker) must
+# not clear the very alarm it is asking about. A leading `^` alone proved
+# insufficient: a hard-wrapped paste can land `Acknowledges` at a line start
+# with the banner's trailing quote still on the line, and `\s+` separators span
+# newlines, so the tokens matched across the wrap. Hence horizontal-only
+# separators (`[^\S\n]`, which also absorbs a CRLF body's `\r`) and a tail
+# anchor; one trailing period is tolerated because that is how prose ends, but
+# any other trailing content — the banner's closing quote, `(ADR-0067)` —
+# disqualifies the line. Deliberately narrow beyond that too: no other
+# punctuation, no synonym verbs — a reference that fails to parse fails
+# *closed*, blocking the merge until the comment is corrected, which is the
+# safe direction for a gate.
+ACK_REFERENCE = re.compile(
+    r"^Acknowledges[^\S\n]+([A-Za-z0-9][A-Za-z0-9-]*)"
+    r"[^\S\n]+(summary|review)[^\S\n]+(\d+)[^\S\n]*\.?[^\S\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _created_ts(comment: Comment) -> datetime:
+    """When an issue comment was originally posted, as an instant.
+
+    The deliberate opposite of :func:`comment_ts`: ``created_at``, falling back
+    to ``updated_at`` only if it is absent. An acknowledgement is a decision
+    made at posting time, so a later edit — a typo fix, an added link — must
+    not re-date it: with ``updated_at``, editing a stale ack after a re-review
+    had invalidated it would revive the old decision against prose it never
+    read. The artifact side of the comparison stays on :func:`comment_ts`,
+    where the in-place edit is exactly the signal.
+    """
+    raw = comment.get("created_at") or comment.get("updated_at") or ""
+    return parse_ts(str(raw))
+
+
+def _authored_by_any(comment: Comment, logins: tuple[str, ...]) -> bool:
+    """Whether the comment's author is any of the given logins."""
+    return any(same_login(_login_of(comment), login) for login in logins)
+
+
+def acknowledged(
+    issue_comments_: list[Comment],
+    spec: BotSpec,
+    kind: Literal["summary", "review"],
+    artifact_id: int,
+    artifact_at: datetime,
+) -> bool:
+    """Whether a person has acknowledged an artifact no reply can reach.
+
+    Some findings never exist as comment objects — Greptile has left a finding
+    only as prose in its summary comment (PR #72), and Gemini renders
+    unanchorable findings as bullets in its review body — so the threaded reply
+    that normally records triage is physically impossible, and the gate used to
+    block on them forever. The acknowledgement (ADR-0067) is the PR-level
+    equivalent of that reply, credited only when all three conditions hold,
+    each closing a distinct hole:
+
+    * **An explicit reference naming this artifact, owning its whole line** —
+      bot key, kind, and id all matching. The id requirement is what stops a
+      passing "LGTM" from clearing a real gap, and the line ownership (both
+      anchors, no newline-spanning separators) is what stops a comment
+      *quoting* the gate's banner — which prints a valid reference — from
+      clearing the alarm it quotes, even when a hard wrap lands the reference
+      at a line start.
+    * **A non-bot author** — the same exclusion :func:`answered_ids` applies
+      through ``not_by``, spanning every configured bot's every login. A bot
+      must never ack itself, and neither a second identity nor a *different*
+      bot is a person having read the finding.
+    * **Posted after the artifact** — an ack cannot answer prose that had not
+      been written. *Posted* means ``created_at`` (:func:`_created_ts`):
+      editing an ack neither re-dates nor revives it. The artifact side is
+      :func:`comment_ts` (``updated_at``) — a Greptile re-review edits the
+      summary *in place*, which moves that stamp past every earlier ack and
+      deliberately invalidates them. New prose is a new decision.
+
+    The reference is checked first because it is the only selective condition:
+    author and timestamp are parsed only for a comment that claims to be an
+    acknowledgement, so one unparseable stamp on an unrelated human comment
+    cannot crash the whole gate (``parse_ts`` raises on garbage by design).
+
+    ``kind`` is ``"summary"`` for a summary issue comment, ``"review"`` for a
+    review whose body carries the findings; ``Literal`` so a misspelled kind is
+    a type error at the call site rather than an artifact that silently becomes
+    permanently unclearable again.
+    """
+    exclude = bot_logins()
+    for comment in issue_comments_:
+        if not any(
+            found.group(1).casefold() == spec.key.casefold()
+            and found.group(2).casefold() == kind
+            and int(found.group(3)) == artifact_id
+            for found in ACK_REFERENCE.finditer(str(comment.get("body") or ""))
+        ):
+            continue
+        if _authored_by_any(comment, exclude):
+            continue
+        if _created_ts(comment) <= artifact_at:
+            continue
+        return True
+    return False
 
 
 def unanswered(findings: list[Comment], comments: list[Comment]) -> list[Comment]:
@@ -1342,12 +1451,15 @@ class SummaryState:
             )
         # Past the grace window the gap is structural, not a race. Still a
         # refusal rather than a pass: the missing findings were written
-        # somewhere no reply can reach, so no triage will ever clear them and
-        # reporting the PR clean would bury them.
+        # somewhere no threaded reply can reach, and reporting the PR clean
+        # would bury them. The merge gate credits a PR-level acknowledgement
+        # instead (ADR-0067); this triage-time message routes the reader there.
         return (
             f"{gap} were fetched, and the comments are no longer in flight. "
-            "Those findings exist only in the summary text, where nothing can "
-            "reply to them — read the summary on the PR and answer them there."
+            "Those findings exist only in the summary text, where no threaded "
+            "reply can reach them — read the summary on the PR and answer "
+            "them there, in a PR-level comment carrying the ADR-0067 "
+            "acknowledgement reference (.claude/bot-review-triage.md §2)."
         )
 
 
@@ -1688,7 +1800,10 @@ def reviews_by(reviews: list[Review], spec: BotSpec, since: datetime) -> list[Re
 
 
 def unmatched_reviews(
-    report: list[BotFindings], reviews: list[Review], since: datetime
+    report: list[BotFindings],
+    reviews: list[Review],
+    issue_comments_: list[Comment],
+    since: datetime,
 ) -> list[str]:
     """Bots that posted a review but whose comments the sweep matched none of.
 
@@ -1703,12 +1818,35 @@ def unmatched_reviews(
     merges routinely. Zero-matched-despite-a-review has no such benign form —
     except a review that states zero findings, which is Copilot's clean run and
     is excluded here.
+
+    For a ``summary_marker`` bot only, an acknowledgement of its **summary**
+    clears this alarm too (ADR-0067). That bot's findings review carries an
+    empty body by design, so the shape "review object present, zero comments"
+    is also what a findings run whose comments never land looks like — PR #72
+    one step over — and the artifact a person reads and answers is the summary
+    either way. Demanding a second ack naming a body-less review would be
+    ceremony without content, and leaving this alarm unclearable would rebuild
+    the permanent block ADR-0067 removes, one detector to the left. For every
+    other bot no ack is honored here: zero-matched means the *filter* missed,
+    and no PR-level comment can make unread comment objects read.
     """
     alarms: list[str] = []
     for bot in report:
         if bot.findings:
             continue
         spec = BOTS[bot.key]
+        summary = (
+            select_summary_comment(issue_comments_, spec, since)
+            if spec.summary_marker is not None
+            else None
+        )
+        summary_acked = summary is not None and acknowledged(
+            issue_comments_,
+            spec,
+            "summary",
+            int(str(summary.get("id", 0))),
+            comment_ts(summary),
+        )
         for review in reviews_by(reviews, spec, since):
             body = str(review.get("body") or "")
             # An empty-bodied review is how GitHub models a bot *replying* to a
@@ -1724,17 +1862,36 @@ def unmatched_reviews(
             stated = stated_count(body, spec)
             if stated == 0:
                 continue  # a review that says it found nothing, and did
+            if summary_acked:
+                continue
+            # The remedy carries the literal reference, like its sibling
+            # alarms: a reference composed from memory and mistyped fails
+            # closed with no hint of the typo, and this alarm can fire alone —
+            # a summary stating no count leaves undercounted_summaries silent,
+            # so nothing else would print the string (ADR-0067's invariant).
+            remedy = ""
+            if summary is not None:
+                remedy = (
+                    "; if its findings exist only as prose in the summary, "
+                    "answering that summary clears this too — a PR-level "
+                    "comment carrying its own line "
+                    f"'Acknowledges {bot.key} summary "
+                    f"{int(str(summary.get('id', 0)))}' (ADR-0067)"
+                )
             alarms.append(
                 f"{bot.key}: review {review.get('id')} exists "
                 f"({'no count stated' if stated is None else f'states {stated}'})"
                 f" but 0 of its comments matched author {spec.commenter!r} — "
-                "the filter, not the bot, is probably wrong"
+                f"the filter, not the bot, is probably wrong{remedy}"
             )
     return alarms
 
 
 def body_only_findings(
-    report: list[BotFindings], reviews: list[Review], since: datetime
+    report: list[BotFindings],
+    reviews: list[Review],
+    issue_comments_: list[Comment],
+    since: datetime,
 ) -> list[str]:
     """Reviews that put findings in the body, where no reply can reach them.
 
@@ -1748,8 +1905,14 @@ def body_only_findings(
     is the common one; the all-body-only case is only the HTTP-422 fallback.
 
     A body-only finding is not a comment object, so it can never carry a
-    threaded reply and no amount of triage will clear it. The sweep's contract
-    does not reach it, and saying so is the only honest answer available.
+    threaded reply and threaded triage can never credit an answer to it. This
+    detector once concluded from that fact that *nothing* could clear it — a
+    considered position, and wrong one step further out: the triage procedure
+    already prescribed answering such findings in a PR-level comment, so the
+    gate was blocking forever on PRs whose findings had been answered in the
+    only way possible. ADR-0067 reverses it. An acknowledgement naming this
+    review (:func:`acknowledged`) now clears the alarm, which makes the honest
+    answer the procedure requires one the gate can actually read.
     """
     alarms: list[str] = []
     for bot in report:
@@ -1758,13 +1921,25 @@ def body_only_findings(
             continue
         for review in reviews_by(reviews, spec, since):
             found = spec.body_findings.search(str(review.get("body") or ""))
-            if found and int(found.group(1)):
-                alarms.append(
-                    f"{bot.key}: review {review.get('id')} renders "
-                    f"{found.group(1)} finding(s) in its body rather than as "
-                    "comments. They cannot carry a reply, so this sweep can "
-                    "never clear them — read the review itself"
-                )
+            if not (found and int(found.group(1))):
+                continue
+            review_id = int(str(review.get("id", 0)))
+            if acknowledged(
+                issue_comments_,
+                spec,
+                "review",
+                review_id,
+                parse_ts(str(review.get("submitted_at", ""))),
+            ):
+                continue
+            alarms.append(
+                f"{bot.key}: review {review_id} renders "
+                f"{found.group(1)} finding(s) in its body rather than as "
+                "comments, where no threaded reply can reach them. Read the "
+                "review and answer them in a PR-level comment carrying its "
+                f"own line 'Acknowledges {bot.key} review {review_id}' "
+                "(ADR-0067)"
+            )
     return alarms
 
 
@@ -1790,6 +1965,21 @@ def undercounted_summaries(
     of the two causes it cannot distinguish. If Greptile turns out to batch,
     this will fire on a clean PR and should be re-keyed to zero-matched like
     its sibling.
+
+    The undercount's worst cause — findings that exist *only* as prose in the
+    summary, with no comment object anywhere (PR #72) — can never be cleared
+    by a threaded reply, because there is nothing to thread onto. An
+    acknowledgement naming the summary (:func:`acknowledged`, ADR-0067) clears
+    it instead. The ack must postdate the summary's ``updated_at``, so a
+    re-review that edits the summary in place re-arms this alarm on its own.
+
+    The ack clears the alarm **whatever the undercount's cause** — this
+    detector cannot tell prose-only from batching from a partial filter miss,
+    and the ack does not pretend to. What it asserts is that a person read the
+    summary and answered everything it states, which resolves the ambiguity at
+    exactly the trust level a threaded reply gets (ADR-0067 records this as an
+    accepted tradeoff). The wording below is therefore careful to demand that
+    reading, not to promise the cause.
     """
     alarms: list[str] = []
     for bot in report:
@@ -1800,14 +1990,23 @@ def undercounted_summaries(
         if summary is None:
             continue
         stated = stated_count(str(summary.get("body") or ""), spec)
-        if stated is not None and stated > len(bot.findings):
-            alarms.append(
-                f"{bot.key}: its summary states {stated} finding(s) but the "
-                f"sweep matched {len(bot.findings)} — either "
-                f"{stated - len(bot.findings)} were never seen and their "
-                "replies cannot have been checked, or it batched several into "
-                "one comment (unobserved for this bot). Read the summary"
-            )
+        if stated is None or stated <= len(bot.findings):
+            continue
+        summary_id = int(str(summary.get("id", 0)))
+        if acknowledged(
+            issue_comments_, spec, "summary", summary_id, comment_ts(summary)
+        ):
+            continue
+        alarms.append(
+            f"{bot.key}: its summary states {stated} finding(s) but the "
+            f"sweep matched {len(bot.findings)} — either "
+            f"{stated - len(bot.findings)} were never seen and their "
+            "replies cannot have been checked, or it batched several into "
+            "one comment (unobserved for this bot). Read the summary; once "
+            "everything it states is answered, record that in a PR-level "
+            "comment carrying its own line "
+            f"'Acknowledges {bot.key} summary {summary_id}' (ADR-0067)"
+        )
     return alarms
 
 
@@ -1874,18 +2073,23 @@ def cmd_outstanding(repo: str, pr: int, since: datetime) -> int:
     # states a different true fact about the same PR, and suppressing one to
     # tidy the output would drop evidence a human is about to act on. None can
     # mask another; any non-empty list blocks.
-    unprovable = unmatched_reviews(report, reviews, since)
-    unprovable += body_only_findings(report, reviews, since)
     # Fetched when some bot's evidence lives in an issue comment rather than in
-    # a review — a summary-comment bot's stated count, or an always-reviews
-    # bot's proof of having run. The guard names that dependency rather than a
-    # bot: if no spec declares either property the fetch is skipped *and* so are
-    # the two checks that need it, which is correct degradation rather than a
-    # check that quietly stops applying.
-    if any(s.summary_marker is not None or s.always_reviews for s in BOTS.values()):
+    # a review — a summary-comment bot's stated count, an always-reviews bot's
+    # proof of having run, or the ADR-0067 acknowledgements that answer a
+    # body-findings bot's prose findings. The guard names those dependencies
+    # rather than a bot: if no spec declares any of the three, the fetch is
+    # skipped and every detector that needed it skips its bots anyway — correct
+    # degradation rather than a check that quietly stops applying.
+    issues: list[Comment] = []
+    if any(
+        s.summary_marker is not None or s.always_reviews or s.body_findings is not None
+        for s in BOTS.values()
+    ):
         issues = issue_comments(repo, pr)
-        unprovable += undercounted_summaries(report, issues, since)
-        unprovable += silent_always_reviewers(report, reviews, issues, since)
+    unprovable = unmatched_reviews(report, reviews, issues, since)
+    unprovable += body_only_findings(report, reviews, issues, since)
+    unprovable += undercounted_summaries(report, issues, since)
+    unprovable += silent_always_reviewers(report, reviews, issues, since)
     if unprovable:
         print("\nCANNOT CLEAR THE GATE:", file=sys.stderr)
         for line in unprovable:

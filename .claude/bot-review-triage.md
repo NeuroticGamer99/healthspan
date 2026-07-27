@@ -88,6 +88,29 @@ gh api repos/{owner}/{repo}/pulls/{n}/comments \
 Never leave a finding unanswered. An unaddressed comment is indistinguishable from an overlooked
 one, to both a reviewer and to the next person reading the thread.
 
+**A finding with no comment object cannot take that threaded reply.** Two real shapes: Greptile can
+leave a finding only as prose in its summary comment (PRs #72, #73), and Gemini renders findings it
+cannot anchor to a diff line as bullets in its review *body*. Answer those in a **PR-level issue
+comment** that states your verdicts — same verification bar as any threaded reply — and carries the
+machine-checkable reference (ADR-0067):
+
+```text
+Acknowledges <bot> (summary|review) <id>
+```
+
+`<bot>` is the bot key as passed to `--bot` (`greptile`, `gemini`); the kind is `summary` for a
+summary comment, `review` for a review body; `<id>` is the artifact id — §4's gate prints the exact
+string to post, so never compose it from memory. The reference must **own its whole line** inside
+the prose that does the answering — nothing else on the line beyond an optional final period; one
+comment may acknowledge several artifacts, one line each. A reference quoted mid-line, in a
+blockquote (`>`), or with the banner's surrounding text still attached to the line is deliberately
+not credited: the gate's own refusal contains a valid reference, and pasting that banner into a
+comment to ask about the blocker must not clear the alarm it quotes, however the paste wraps. The gate credits an acknowledgement only
+when the comment is authored by a non-bot login and **created** after the artifact it answers —
+editing a comment later neither re-dates nor revives it. A Greptile re-review edits its summary in
+place, which moves the summary's timestamp past every earlier acknowledgement — deliberately: new
+prose is a new decision, so the gate re-blocks until the new summary is answered.
+
 ## 3. Report, then stop
 
 Report a verdict table to the user — finding, severity, verdict, action — with the reasoning for
@@ -137,3 +160,10 @@ Both stop a merge, but only the first is a statement about the PR. `/squash-merg
 precondition and stops on either non-2 code. It reads the reply threads rather than your
 recollection of them, and it counts a reply from the bot itself as no reply at all — CodeRabbit
 acks threads routinely, and a bot agreeing with itself is not triage.
+
+When the banner names findings that live where no reply can reach — a summary stating more
+findings than its comments, or a review rendering findings in its body — the exit is §2's
+acknowledgement, not an override: the refusal line prints the exact
+`Acknowledges <bot> (summary|review) <id>` string, and a PR-level comment answering those findings
+and carrying it clears the gate on the next run (ADR-0067). The same authorship rule applies as for
+threaded replies — an acknowledgement from any bot login counts as no acknowledgement at all.

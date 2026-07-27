@@ -20,6 +20,7 @@ from bot_review import (
     EXIT_CLEAN,
     EXIT_EMPTY_RANGE,
     BotReviewError,
+    acknowledged,
     answered_ids,
     as_page,
     comment_ts,
@@ -1647,9 +1648,13 @@ def test_a_summary_only_finding_ends_the_wait_instead_of_hanging(
     # 0, not a timeout: there is review work, and the wait says where it lives.
     assert bot_review.cmd_wait("o/r", 72, GREPTILE, since, 0) == 0
     assert "1 that exist only in the summary text" in capsys.readouterr().out
-    # fetch still refuses to call it clean, naming the real cause.
+    # fetch still refuses to call it clean, naming the real cause. The refusal
+    # routes the reader to the ADR-0067 acknowledgement rather than crediting
+    # one itself — fetch answers a triage question, outstanding the merge one.
     assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
-    assert "exist only in the summary text" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "exist only in the summary text" in err
+    assert "ADR-0067 acknowledgement reference" in err
 
 
 def test_a_freshly_posted_undercount_is_still_waited_out(
@@ -2390,7 +2395,9 @@ def test_body_only_findings_refuse_to_clear_the_gate(
     assert _outstanding(monkeypatch, [], reviews=[review]) == 1
     err = capsys.readouterr().err
     assert "renders 3 finding(s) in its body" in err
-    assert "can never clear them" in err
+    # The refusal prints the exact acknowledgement to post (ADR-0067), so the
+    # one exit it has is never composed from memory.
+    assert "Acknowledges gemini review 4780620978" in err
 
 
 def test_body_findings_are_caught_even_when_some_comments_matched(
@@ -2515,7 +2522,492 @@ def test_a_summary_claiming_more_findings_than_were_matched_blocks(
         2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
     )
     assert _outstanding(monkeypatch, [finding, reply], issues=[summary]) == 1
-    assert "states 3 finding(s) but the sweep matched 1" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "states 3 finding(s) but the sweep matched 1" in err
+    # The refusal prints the exact acknowledgement to post (ADR-0067), so the
+    # one exit it has is never composed from memory.
+    assert "Acknowledges greptile summary 5081386528" in err
+
+
+# --------------------------------------------------------------------------
+# ADR-0067: a PR-level acknowledgement clears a finding no reply can reach.
+# This is the gate's first LOOSENING — every prior change tightened it — so
+# the rejection paths are tested as hard as the clearing one: an ack that
+# fails any condition must leave the gate exactly as closed as no ack at all.
+# --------------------------------------------------------------------------
+
+GREPTILE_SUMMARY_ID = 5081386528
+GEMINI_REVIEW_ID = 4780620978  # the id _review_by stamps
+
+
+def _claims_three_summary(updated_at: str = "2026-07-26T01:00:00Z") -> dict[str, Any]:
+    """PR #72's shape, scaled: the summary states 3, comments carry fewer."""
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True).replace(
+        "Fix the following 1 code review", "Fix the following 3 code review"
+    )
+    return _comment(
+        GREPTILE_SUMMARY_ID,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        updated_at,
+        body=body,
+    )
+
+
+def _ack(
+    body: str,
+    updated_at: str = "2026-07-26T02:00:00Z",
+    login: str = "NeuroticGamer99",
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """An acknowledgement comment; created_at defaults to the update stamp."""
+    return _comment(9001, login, created_at or updated_at, updated_at, body=body)
+
+
+def test_an_acknowledged_summary_clears_the_gate_a_reply_never_could(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PRs #72 and #73 blocked here permanently: findings living only in the
+    # summary prose have no comment object, so the threaded reply the gate
+    # counts is physically impossible and the only exits were an unrecorded
+    # override or a metered re-trigger. The mixed shape is the realistic one —
+    # one finding threaded and answered, two existing only as prose — and the
+    # ack carries the exact reference the alarm prints, on its own line under
+    # the prose that actually answers them.
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    ack = _ack(
+        "Both prose findings verified against the code — the first is fixed in "
+        "abc1234, the second declined per ADR-0055 §1.\n"
+        f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}"
+    )
+    assert (
+        _outstanding(
+            monkeypatch, [finding, reply], issues=[_claims_three_summary(), ack]
+        )
+        == EXIT_CLEAN
+    )
+    assert "NOTHING OUTSTANDING" in capsys.readouterr().out
+
+
+def test_a_bot_authored_ack_leaves_the_gate_closed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same exclusion answered_ids applies via not_by, for the same reason:
+    # a bot must never clear the gate on its own say-so, and a DIFFERENT bot's
+    # comment is no more a person having read the finding than a self-ack —
+    # CodeRabbit auto-replies as a matter of course, and nothing stops that
+    # prose containing a matching sentence.
+    for login in ("greptile-apps[bot]", "coderabbitai[bot]"):
+        ack = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}", login=login)
+        assert _outstanding(monkeypatch, [], issues=[_claims_three_summary(), ack]) == 1
+        assert "CANNOT CLEAR THE GATE" in capsys.readouterr().err
+
+
+def test_an_ack_the_artifact_postdates_leaves_the_gate_closed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An ack cannot answer prose that had not been written. The artifact stamp
+    # is the summary's updated_at, and that is the re-arming mechanism: a
+    # Greptile re-review edits the summary IN PLACE, so the edit moves the
+    # stamp past every earlier ack and invalidates them — new prose is a new
+    # decision. This fixture is exactly that sequence: summary created 01:00,
+    # acked 02:00, re-review edit at 03:00.
+    ack = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}")
+    rereviewed = _claims_three_summary(updated_at="2026-07-26T03:00:00Z")
+    assert _outstanding(monkeypatch, [], issues=[rereviewed, ack]) == 1
+    assert "CANNOT CLEAR THE GATE" in capsys.readouterr().err
+    # Same-second is also not "after" — strict >, the floor convention.
+    tied = _ack(
+        f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}",
+        updated_at="2026-07-26T01:00:00Z",
+    )
+    assert _outstanding(monkeypatch, [], issues=[_claims_three_summary(), tied]) == 1
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID + 1}",  # wrong id
+        f"Acknowledges greptile review {GREPTILE_SUMMARY_ID}",  # wrong kind
+        f"Acknowledges gemini summary {GREPTILE_SUMMARY_ID}",  # wrong bot
+        "LGTM — merging.",  # no reference at all
+    ],
+)
+def test_an_ack_naming_the_wrong_artifact_leaves_the_gate_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    reference: str,
+) -> None:
+    # The id requirement is what stops a passing "LGTM" from clearing a real
+    # gap — so a reference that names anything other than THIS artifact, or
+    # nothing, must be worth exactly as much.
+    ack = _ack(reference)
+    assert _outstanding(monkeypatch, [], issues=[_claims_three_summary(), ack]) == 1
+    assert "CANNOT CLEAR THE GATE" in capsys.readouterr().err
+
+
+def test_an_acknowledged_body_only_review_clears_the_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The second detector (ADR-0067 covers both): Gemini's body bullets are
+    # prose findings by construction, not by accident, so they take the same
+    # acknowledgement. The greptile clean summary must ride along — passing
+    # `issues` explicitly drops the helper's default, and Greptile's silence
+    # is its own alarm.
+    review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_BODY_ONLY)
+    greptile_clean = _comment(
+        5081386529,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        "2026-07-26T01:00:00Z",
+        body=_greptile_summary(ATTENTION_CLEAN),
+    )
+    ack = _ack(
+        "All three unanchored findings verified and answered.\n"
+        f"Acknowledges gemini review {GEMINI_REVIEW_ID}"
+    )
+    assert (
+        _outstanding(monkeypatch, [], reviews=[review], issues=[greptile_clean, ack])
+        == EXIT_CLEAN
+    )
+
+
+def test_a_body_only_ack_is_held_to_the_same_three_conditions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The conditions live in one shared function, but the wiring is per
+    # detector — a body_only_findings that forgot to pass the review's own
+    # stamp or id would pass a bot-authored or predated ack while the shared
+    # function stayed correct. So each rejection is pinned through THIS
+    # detector too.
+    review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_BODY_ONLY)
+    greptile_clean = _comment(
+        5081386529,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        "2026-07-26T01:00:00Z",
+        body=_greptile_summary(ATTENTION_CLEAN),
+    )
+    rejected = [
+        _ack(f"Acknowledges gemini review {GEMINI_REVIEW_ID}", login="Copilot"),
+        _ack(
+            f"Acknowledges gemini review {GEMINI_REVIEW_ID}",
+            updated_at="2026-07-26T00:30:00Z",
+        ),
+        _ack(f"Acknowledges gemini review {GEMINI_REVIEW_ID + 1}"),
+        _ack(f"Acknowledges gemini summary {GEMINI_REVIEW_ID}"),  # wrong kind
+        _ack(f"Acknowledges greptile review {GEMINI_REVIEW_ID}"),  # wrong bot
+    ]
+    for ack in rejected:
+        assert (
+            _outstanding(
+                monkeypatch, [], reviews=[review], issues=[greptile_clean, ack]
+            )
+            == 1
+        )
+        assert "Acknowledges gemini review 4780620978" in capsys.readouterr().err
+
+
+def test_the_ack_reference_is_case_insensitive_but_exact() -> None:
+    # Case-insensitive because a human types it; exact in bot, kind, and id
+    # because the reference is the entire discriminator between "answered" and
+    # "waved through". A longer number containing the right digits is a
+    # different id, not a match.
+    at = parse_ts("2026-07-26T01:00:00Z")
+    assert acknowledged(
+        [_ack("acknowledges GREPTILE Summary 555")], GREPTILE, "summary", 555, at
+    )
+    # The reference lives on its own line under the prose that answers.
+    assert acknowledged(
+        [_ack("Verified both; see above.\nAcknowledges greptile summary 555.")],
+        GREPTILE,
+        "summary",
+        555,
+        at,
+    )
+    assert not acknowledged(
+        [_ack("Acknowledges greptile summary 5550")], GREPTILE, "summary", 555, at
+    )
+    assert not acknowledged(
+        [_ack("Acknowledges greptile summary 55")], GREPTILE, "summary", 555, at
+    )
+    # One comment may acknowledge several artifacts — one reference per line,
+    # so a two-bot triage does not need two comments.
+    both = _ack("Acknowledges greptile summary 555.\nAcknowledges gemini review 777.")
+    assert acknowledged([both], GREPTILE, "summary", 555, at)
+    assert acknowledged([both], GEMINI, "review", 777, at)
+
+
+def test_an_ack_missing_created_at_falls_back_to_the_edit_stamp() -> None:
+    # GitHub has never been seen to omit created_at; if a payload ever does,
+    # _created_ts degrades to updated_at — the mirror of comment_ts's own
+    # fallback — rather than crashing the gate over a missing field.
+    at = parse_ts("2026-07-26T01:00:00Z")
+    ack: dict[str, Any] = {
+        "id": 9001,
+        "user": {"login": "NeuroticGamer99"},
+        "updated_at": "2026-07-26T02:00:00Z",
+        "body": "Acknowledges greptile summary 555",
+    }
+    assert acknowledged([ack], GREPTILE, "summary", 555, at)
+
+
+def test_an_unrelated_comments_garbage_timestamp_cannot_crash_the_gate() -> None:
+    # The order of acknowledged()'s checks is load-bearing, not stylistic: the
+    # reference is matched before any timestamp is parsed, so a malformed
+    # stamp on a comment that never claimed to be an ack (an imported or
+    # API-mangled comment) cannot turn the whole merge gate into a parse
+    # error. Reordering the checks makes this raise BotReviewError.
+    at = parse_ts("2026-07-26T01:00:00Z")
+    junk: dict[str, Any] = {
+        "id": 1,
+        "user": {"login": "NeuroticGamer99"},
+        "created_at": "not-a-timestamp",
+        "updated_at": None,
+        "body": "LGTM — what does this banner mean?",
+    }
+    valid = _ack("Acknowledges greptile summary 555")
+    assert acknowledged([junk, valid], GREPTILE, "summary", 555, at)
+
+
+def test_quoting_the_gates_own_banner_is_not_an_acknowledgement() -> None:
+    # The refusal message prints a valid reference verbatim — that is the
+    # copy-paste property the alarm wants — so the commonest non-ack comment
+    # containing a reference is someone pasting the banner to ask about the
+    # blocker. Mid-line, quoted, and blockquoted occurrences must all fail;
+    # only a reference deliberately started at a line's beginning is a
+    # decision. This is why ACK_REFERENCE is anchored with ^/MULTILINE.
+    at = parse_ts("2026-07-26T01:00:00Z")
+    banner_paste = _ack(
+        "The merge is blocked with: greptile: its summary states 3 finding(s) "
+        "but the sweep matched 1 — [...] carrying its own line "
+        "'Acknowledges greptile summary 555' (ADR-0067). What should I do?"
+    )
+    blockquote = _ack("> Acknowledges greptile summary 555\n\nIs this right?")
+    # A hard-wrapped paste can land the reference at a LINE START with the
+    # banner's trailing text still attached — a leading anchor alone credited
+    # exactly this shape, so the tail anchor is pinned as hard as the head.
+    wrapped_paste = _ack(
+        "carrying its own line '\nAcknowledges greptile summary 555' "
+        "(ADR-0067). What should I do?"
+    )
+    wrapped_blockquote = _ack(
+        "> carrying its own line '\nAcknowledges greptile summary 555'"
+    )
+    # Separators must not span lines either, or any wrap through the middle
+    # of the reference reassembles it.
+    token_split = _ack("Acknowledges\ngreptile\nsummary\n555")
+    for echo in (
+        banner_paste,
+        blockquote,
+        wrapped_paste,
+        wrapped_blockquote,
+        token_split,
+    ):
+        assert not acknowledged([echo], GREPTILE, "summary", 555, at)
+    # The same reference owning its line IS credited — line ownership is the
+    # only difference between the echo and the decision. A lone trailing
+    # period rides along (prose ends that way); the banner's closing quote
+    # does not.
+    assert acknowledged(
+        [_ack("Acknowledges greptile summary 555")], GREPTILE, "summary", 555, at
+    )
+    assert acknowledged(
+        [_ack("Acknowledges greptile summary 555.")], GREPTILE, "summary", 555, at
+    )
+    assert not acknowledged(
+        [_ack("Acknowledges greptile summary 555'")], GREPTILE, "summary", 555, at
+    )
+
+
+def test_editing_a_stale_ack_does_not_revive_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The ack side of the timestamp is created_at — an acknowledgement is a
+    # decision made when it was written. Sequence: summary created 01:00,
+    # acked 02:00, re-review edits the summary in place at 03:00 (re-arming
+    # the gate), then the owner edits the old ack at 04:00 for a typo. On
+    # updated_at the 02:00 decision would time-travel past the 03:00 prose it
+    # never read; on created_at it stays where it was made.
+    edited_stale_ack = _ack(
+        f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}",
+        created_at="2026-07-26T02:00:00Z",
+        updated_at="2026-07-26T04:00:00Z",
+    )
+    rereviewed = _claims_three_summary(updated_at="2026-07-26T03:00:00Z")
+    assert _outstanding(monkeypatch, [], issues=[rereviewed, edited_stale_ack]) == 1
+    assert "CANNOT CLEAR THE GATE" in capsys.readouterr().err
+
+
+def test_a_summary_ack_clears_the_empty_bodied_review_alarm_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PR #72 one step over: a findings run that posts its empty-bodied review
+    # object AND the counting summary, but whose inline comments never land.
+    # That trips unmatched_reviews (review exists, zero matched) alongside
+    # undercounted_summaries — and if only the latter honored the ack, this
+    # shape would rebuild the permanent block one detector to the left. The
+    # summary is the artifact a person reads either way, so its ack clears
+    # both; a body-less review offers nothing separate to acknowledge.
+    empty_review = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    assert (
+        _outstanding(
+            monkeypatch, [], reviews=[empty_review], issues=[_claims_three_summary()]
+        )
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "0 of its comments matched" in err
+    # The remedy carries the literal reference, like every other ack-clearable
+    # alarm — a reference composed from memory and mistyped fails closed with
+    # no hint of the typo.
+    assert f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}" in err
+    ack = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}")
+    assert (
+        _outstanding(
+            monkeypatch,
+            [],
+            reviews=[empty_review],
+            issues=[_claims_three_summary(), ack],
+        )
+        == EXIT_CLEAN
+    )
+
+
+def test_the_unmatched_alarm_prints_the_reference_even_when_it_fires_alone(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A findings summary WITHOUT the optional fix-prompt block states no count,
+    # so undercounted_summaries stays silent and unmatched_reviews is the only
+    # alarm left to print the reference. If it named the remedy without the
+    # literal string, ADR-0067's never-composed-from-memory invariant would
+    # break exactly where the triager has no other line to copy from.
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=False)
+    summary = _comment(
+        GREPTILE_SUMMARY_ID,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        "2026-07-26T01:00:00Z",
+        body=body,
+    )
+    empty_review = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    assert _outstanding(monkeypatch, [], reviews=[empty_review], issues=[summary]) == 1
+    err = capsys.readouterr().err
+    assert "0 of its comments matched" in err
+    assert f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}" in err
+    ack = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}")
+    assert (
+        _outstanding(monkeypatch, [], reviews=[empty_review], issues=[summary, ack])
+        == EXIT_CLEAN
+    )
+
+
+def test_an_unmatched_review_with_no_summary_yet_offers_no_remedy(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The third summary state: a summary_marker bot whose review landed but
+    # whose summary has NOT — summary is None, distinct from "no marker at
+    # all". The remedy line would name an artifact that does not exist, so it
+    # must be absent, and with nothing to read there is nothing to ack: the
+    # alarm stands.
+    empty_review = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    assert _outstanding(monkeypatch, [], reviews=[empty_review], issues=[]) == 1
+    err = capsys.readouterr().err
+    assert "0 of its comments matched" in err
+    assert "Acknowledges" not in err
+
+
+def test_a_non_summary_bots_unmatched_review_takes_no_ack(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The boundary of the F4 wiring: for every bot without a summary comment,
+    # zero-matched means the author FILTER missed real comment objects, and no
+    # PR-level comment makes unread comments read. An ack naming the review
+    # must be worth nothing there.
+    review = _review_by(
+        "coderabbitai[bot]", "2026-07-26T01:00:00Z", "**Actionable comments posted: 2**"
+    )
+    ack = _ack(f"Acknowledges coderabbit review {GEMINI_REVIEW_ID}")
+    issues = [
+        _comment(
+            5081386529,
+            "greptile-apps[bot]",
+            "2026-07-26T01:00:00Z",
+            "2026-07-26T01:00:00Z",
+            body=_greptile_summary(ATTENTION_CLEAN),
+        ),
+        ack,
+    ]
+    assert _outstanding(monkeypatch, [], reviews=[review], issues=issues) == 1
+    err = capsys.readouterr().err
+    assert "0 of its comments matched" in err
+    # And no remedy reference: there is no summary whose ack could clear it.
+    assert "Acknowledges coderabbit" not in err
+
+
+def test_the_triage_commands_do_not_credit_acknowledgements(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ADR-0067 §2's other boundary: wait/fetch answer a triage question, not
+    # the merge question, so a valid ack changes nothing there — fetch still
+    # refuses to classify the summary-only shape. Without this pin, the
+    # obvious next "fix" when fetch exits 1 after acking is to wire
+    # acknowledged() into summary_state, silently reversing a recorded
+    # decision under a green suite.
+    import bot_review
+
+    body = _greptile_summary(ATTENTION_FINDINGS, fix_prompt=True)
+    stale_summary = _comment(
+        GREPTILE_SUMMARY_ID,
+        "greptile-apps[bot]",
+        "2020-01-01T00:00:00Z",
+        "2020-01-01T00:00:00Z",
+        body=body,
+    )
+    valid_ack = _ack(
+        f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}",
+        updated_at="2020-01-02T00:00:00Z",
+    )
+    assert acknowledged(
+        [stale_summary, valid_ack],
+        GREPTILE,
+        "summary",
+        GREPTILE_SUMMARY_ID,
+        comment_ts(stale_summary),
+    )
+
+    def the_issues(repo: str, pr: int) -> list[dict[str, Any]]:
+        return [stale_summary, valid_ack]
+
+    def nothing(repo: str, pr: int) -> list[dict[str, Any]]:
+        return []
+
+    def the_head(repo: str, pr: int) -> str:
+        return GREPTILE_SHA
+
+    monkeypatch.setattr(bot_review, "issue_comments", the_issues)
+    monkeypatch.setattr(bot_review, "pull_comments", nothing)
+    monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
+    since = parse_ts("2019-01-01T00:00:00Z")
+    assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
+    assert "exist only in the summary text" in capsys.readouterr().err
+
+
+def test_silence_cannot_be_acknowledged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # silent_always_reviewers honors no ack for any bot: silence leaves no
+    # artifact to read, so there is nothing an acknowledgement could honestly
+    # assert. A stray valid-form reference must not stand in for the missing
+    # run.
+    stray = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}")
+    assert _outstanding(monkeypatch, [], issues=[stray]) == 1
+    err = capsys.readouterr().err
+    assert "reviews every PR unasked" in err
 
 
 def test_one_bots_reply_does_not_answer_another_bots_finding() -> None:
