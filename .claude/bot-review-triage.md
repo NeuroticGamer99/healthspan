@@ -89,7 +89,9 @@ Never leave a finding unanswered. An unaddressed comment is indistinguishable fr
 one, to both a reviewer and to the next person reading the thread.
 
 **A finding with no comment object cannot take that threaded reply.** Two real shapes: Greptile can
-leave a finding only as prose in its summary comment (PRs #72, #73), and Gemini renders findings it
+leave a finding only as prose in its summary comment (PRs #72, #73) — with or without its
+empty-bodied review object alongside, which is why the summary acknowledgement below also clears a
+summary-comment bot's zero-matched review alarm (ADR-0067 §2) — and Gemini renders findings it
 cannot anchor to a diff line as bullets in its review *body*. Answer those in a **PR-level issue
 comment** that states your verdicts — same verification bar as any threaded reply — and carries the
 machine-checkable reference (ADR-0067):
@@ -162,8 +164,9 @@ recollection of them, and it counts a reply from the bot itself as no reply at a
 acks threads routinely, and a bot agreeing with itself is not triage.
 
 When the banner names findings that live where no reply can reach — a summary stating more
-findings than its comments, or a review rendering findings in its body — the exit is §2's
-acknowledgement, not an override: the refusal line prints the exact
-`Acknowledges <bot> (summary|review) <id>` string, and a PR-level comment answering those findings
-and carrying it clears the gate on the next run (ADR-0067). The same authorship rule applies as for
-threaded replies — an acknowledgement from any bot login counts as no acknowledgement at all.
+findings than its comments, a review rendering findings in its body, or (for a summary-comment bot
+only) a review whose inline comments never landed — the exit is §2's acknowledgement, not an
+override: the refusal line prints the exact `Acknowledges <bot> (summary|review) <id>` string, and
+a PR-level comment answering those findings and carrying it clears the gate on the next run
+(ADR-0067). The same authorship rule applies as for threaded replies — an acknowledgement from any
+bot login counts as no acknowledgement at all.
