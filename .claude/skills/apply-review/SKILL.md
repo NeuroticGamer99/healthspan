@@ -113,8 +113,8 @@ trade off.
   reflowed line — apply it and let the loop end; re-reviewing a diff whose only delta is a
   renumbered bullet buys nothing. When in doubt, treat it as substantive and run the round.
 - **From round 2 on, only defects reopen the loop** — correctness, spec conformance, test
-  validity. Cosmetic notes get reported in step 6 rather than fixed-and-re-reviewed, which is
-  what makes the loop terminate.
+  validity. A cosmetic note can still be applied; it just does not earn another round. Report it
+  in step 6 either way. That is what makes the loop terminate.
 - **A round that edits re-runs step 4's gates, not just the reviewers.** This section's own thesis
   applies to a gate run: step 4 passed on the pre-round code, so a reviewer-round fix that breaks
   ruff, pyright, pytest, `check_adr_index.py`, or `check_spec_links.py` would otherwise be reported
