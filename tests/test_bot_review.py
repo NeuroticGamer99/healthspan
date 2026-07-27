@@ -1648,13 +1648,15 @@ def test_a_summary_only_finding_ends_the_wait_instead_of_hanging(
     # 0, not a timeout: there is review work, and the wait says where it lives.
     assert bot_review.cmd_wait("o/r", 72, GREPTILE, since, 0) == 0
     assert "1 that exist only in the summary text" in capsys.readouterr().out
-    # fetch still refuses to call it clean, naming the real cause. The refusal
-    # routes the reader to the ADR-0067 acknowledgement rather than crediting
-    # one itself — fetch answers a triage question, outstanding the merge one.
+    # fetch still refuses to call it clean, naming the real cause — and prints
+    # the literal reference, id and all, because this refusal returns before
+    # anything else names the summary: it is the one moment the workflow tells
+    # a human to write an acknowledgement, and withholding the string there
+    # forces the compose-from-memory the reference contract forbids.
     assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
     err = capsys.readouterr().err
     assert "exist only in the summary text" in err
-    assert "ADR-0067 acknowledgement reference" in err
+    assert "Acknowledges greptile summary 5085014060" in err
 
 
 def test_a_freshly_posted_undercount_is_still_waited_out(
@@ -1675,6 +1677,7 @@ def test_a_freshly_posted_undercount_is_still_waited_out(
     )
     state = bot_review.SummaryState(
         comment=fresh,
+        bot="greptile",
         clean=False,
         stale=False,
         reviewed=GREPTILE_SHA,
@@ -1694,6 +1697,7 @@ def _undercounted_state(age: timedelta) -> Any:
     stamp = (datetime.now(UTC) - age).strftime("%Y-%m-%dT%H:%M:%SZ")
     return bot_review.SummaryState(
         comment=_comment(1, "greptile-apps[bot]", stamp, stamp, body="x"),
+        bot="greptile",
         clean=False,
         stale=False,
         reviewed=GREPTILE_SHA,
@@ -2994,7 +2998,12 @@ def test_the_triage_commands_do_not_credit_acknowledgements(
     monkeypatch.setattr(bot_review, "pr_head_sha", the_head)
     since = parse_ts("2019-01-01T00:00:00Z")
     assert bot_review.cmd_fetch("o/r", 72, GREPTILE, since) == 1
-    assert "exist only in the summary text" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "exist only in the summary text" in err
+    # Printing the reference is not crediting it: the refusal names the exact
+    # string to post while the exit stays 1 — the ack already present changes
+    # nothing here, because answering the merge question is outstanding's job.
+    assert f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}" in err
 
 
 def test_a_bot_key_the_ack_reference_cannot_name_is_refused() -> None:

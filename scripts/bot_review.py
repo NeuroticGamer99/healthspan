@@ -1383,6 +1383,13 @@ class SummaryState:
     """
 
     comment: Comment
+    # The spec key of the bot this summary belongs to. Carried so that
+    # `contradiction` can print the literal `Acknowledges <bot> summary <id>`
+    # reference — a message that directs a human to write an acknowledgement
+    # while withholding the string forces exactly the compose-from-memory the
+    # reference contract forbids, and a mistyped reference fails closed with
+    # no hint of the typo.
+    bot: str
     # The summary's *own* prose verdict — the clean marker is present. Never
     # sufficient on its own: see `contradiction` below.
     clean: bool
@@ -1475,13 +1482,19 @@ class SummaryState:
         # refusal rather than a pass: the missing findings were written
         # somewhere no threaded reply can reach, and reporting the PR clean
         # would bury them. The merge gate credits a PR-level acknowledgement
-        # instead (ADR-0067); this triage-time message routes the reader there.
+        # instead (ADR-0067) — and since this refusal is the moment the
+        # workflow tells a human to write one, it prints the literal
+        # reference, id and all: cmd_fetch returns on this message before
+        # anything else names the summary, so pointing at the docs here left
+        # the reference to be composed from memory, where a typo fails closed
+        # with no hint of itself.
         return (
             f"{gap} were fetched, and the comments are no longer in flight. "
             "Those findings exist only in the summary text, where no threaded "
             "reply can reach them — read the summary on the PR and answer "
-            "them there, in a PR-level comment carrying the ADR-0067 "
-            "acknowledgement reference (.claude/bot-review-triage.md §2)."
+            "them there, in a PR-level comment carrying its own line "
+            f"'Acknowledges {self.bot} summary {self.comment.get('id')}' "
+            "(ADR-0067; .claude/bot-review-triage.md §2)."
         )
 
 
@@ -1510,6 +1523,7 @@ def summary_state(
     findings = select_finding_comments(posted, spec, since)
     return SummaryState(
         comment=comment,
+        bot=spec.key,
         clean=spec.clean_marker is not None and bool(spec.clean_marker.search(body)),
         stale=reviewed is not None and not same_commit(reviewed, head),
         reviewed=reviewed,
