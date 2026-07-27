@@ -81,15 +81,62 @@ skill). For ADR or index edits, run `python scripts/check_adr_index.py`; always 
 change *outside* `specs/` can break a spec link). Report a gate that comes back red — never paper
 over it.
 
-## 5. Report outcomes
+## 5. Re-run the reviewers on what you changed
+
+If any finding produced an edit — of any kind — run `spec-reviewer` and `test-reviewer` before
+reporting. Invoke both in parallel in one message; this is standing authorization on this project
+and does not need asking, even under a session default of not calling subagents. The pass that ran
+before `/land` saw the pre-`/apply-review` code, and
+`.claude/bot-review-triage.md` §4's rule is not bot-specific: **a review that ran before the
+fixes is stale, not clean.** Unlike a bot review — which `/squash-merge` deliberately lets go
+stale because it is rate-limited and expensive — these two are cheap, so there is nothing to
+trade off.
+
+- **"Any kind" is not a list of file categories.** Step 3's third item authorizes git-workflow
+  actions, new-infrastructure proposals and process-gap fixes, so a round can legitimately edit
+  CI workflows, tooling, or process docs while touching no code, test, spec or ADR at all. Any
+  enumeration drifts out of sync with what that item allows, and a round falling through the list
+  gets no re-run while `/land` step 6 has already disqualified the earlier pass — leaving it with
+  no valid reviewer pass at all.
+- **Do not scope them to your hunks.** Both agents default to `git diff origin/main...HEAD` plus
+  uncommitted work, and that default is the point: on `bot-review-outstanding-gate` the defect a
+  re-run caught was an *interaction* — a body-only fix sitting inside `unmatched_reviews`'s
+  `if bot.findings: continue`, so it never ran when any comment matched — invisible to anything
+  scoped to the changed lines. Name a narrower range only if the user did.
+- **Judge their findings on the merits**, exactly as step 3 requires for the report's. A reviewer
+  finding is a claim, not an instruction.
+- **The loop recurses.** Fixing what they find invalidates the review that found it, so re-run
+  after each round. **Stop when a round produces no substantive edit** — not after a fixed number
+  of rounds. Three rounds happened on `bot-review-outstanding-gate`, and round 2 is where the
+  reviewers *failed*; a "one extra round" rule would have shipped that defect.
+- **Substantive** means it could change behavior or spec conformance. A typo, a list ordinal, a
+  reflowed line — apply it and let the loop end; re-reviewing a diff whose only delta is a
+  renumbered bullet buys nothing. When in doubt, treat it as substantive and run the round.
+- **From round 2 on, only defects reopen the loop** — correctness, spec conformance, test
+  validity. A cosmetic note can still be applied; it just does not earn another round. Report it
+  in step 6 either way. That is what makes the loop terminate.
+- **A round that edits re-runs step 4's gates, not just the reviewers.** This section's own thesis
+  applies to a gate run: step 4 passed on the pre-round code, so a reviewer-round fix that breaks
+  ruff, pyright, pytest, `check_adr_index.py`, or `check_spec_links.py` would otherwise be reported
+  green in step 6. Re-run them once the loop has settled, and report *that* result.
+- If no finding produced an edit (all `already-resolved` or unconfirmed), skip this step and say
+  so — there is nothing to invalidate.
+
+## 6. Report outcomes
 
 Do **not** commit — landing is `/land` + `/ship`'s job unless the user asks. End with:
 
 1. A per-finding table: `fixed` / `already-resolved` / `skipped (reason)` / `needs-user-decision`,
    one row each, so nothing in the report is silently dropped.
 2. What you changed, by file, and the result of the gates you ran.
-3. Anything you deliberately did not do and why — especially findings you judged wrong on
+3. The reviewer rounds from step 5 — how many ran, each round's verdict (**pass** / **pass with
+   notes** / **fail**), and what each one changed. `/land` step 6 asks what changed since the last
+   pass; this is the answer to that question, and it is the *only* record of it — nothing is
+   written to disk, so if `/land` runs in a later session the record is gone and the honest move
+   is to re-run rather than assert a pass you cannot evidence. The reviewers are cheap; that is
+   the point of re-running them.
+4. Anything you deliberately did not do and why — especially findings you judged wrong on
    re-verification (say so plainly; disagreeing with the report is allowed) and the
    scope-decisions from step 3 you are handing back.
-4. If any fix created or changed a spec record (ADR, `api-reference.md`, `data-model.md`,
+5. If any fix created or changed a spec record (ADR, `api-reference.md`, `data-model.md`,
    `open-questions.md`), draft the `Decisions:` line for the eventual commit, per `CLAUDE.md`.
