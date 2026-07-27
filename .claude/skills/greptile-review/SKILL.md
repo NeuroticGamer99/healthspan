@@ -113,8 +113,11 @@ thing: it has not reported, which is not a clean review. Beyond that:
   comments are still in flight: Greptile posts its summary about four seconds ahead of them, and a
   re-run resolves it. If it adds *"the comments are no longer in flight … exist only in the summary
   text"*, re-running will never help. Those findings were written as prose in the summary with no
-  comment object behind them, so nothing can be replied to and no triage will ever clear them —
-  **read the summary on the PR and answer them there**, as a PR-level comment.
+  comment object behind them, so no threaded reply will ever clear them — **read the summary on the
+  PR and answer them there**, as a PR-level comment carrying the
+  `Acknowledges greptile summary <id>` reference (`.claude/bot-review-triage.md` §2, ADR-0067).
+  That reference is what lets the `outstanding` merge gate credit the answer; without it the gate
+  stays blocked however thoroughly the comment answers the findings.
 
   That second shape is not hypothetical: Greptile did exactly this on PR #72, stating one finding
   with no review object and no inline comment anywhere. Treating the gap as always-transient is

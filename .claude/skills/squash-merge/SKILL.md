@@ -38,7 +38,12 @@ step that fails.
   zero it could not *prove*: a bot posted a review but none of its comments matched the author
   filter, a summary states more findings than were matched, a bot renders findings in its review
   body where no reply can reach them, or a bot that reviews every PR left no artifact at all.
-  Those are findings the sweep could not read, not findings that do not exist. **Without** the
+  Those are findings the sweep could not read, not findings that do not exist. Where the findings
+  live in prose — a summary stating more than its comments, a review rendering findings in its
+  body, and (for a summary-comment bot only) a review whose inline comments never landed — the
+  banner prints the exit: an `Acknowledges <bot> (summary|review) <id>` PR-level comment answering
+  them (`.claude/bot-review-triage.md` §2, ADR-0067) — an artifact so acknowledged no longer
+  blocks, so re-running the sweep after posting it is how the gate clears. **Without** the
   banner, exit 1 is an ordinary failure — `gh` auth, a network timeout, a usage error — and the
   gate simply did not run. Both stop the merge; only one is about the PR. It reports every bot
   including the ones that found nothing, so a zero is visibly a zero rather than a silence.
