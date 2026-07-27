@@ -137,6 +137,14 @@ DISPATCH_CONFIRM_TIMEOUT = 120
 COMMENT_GRACE = timedelta(minutes=2)
 
 
+# The character class the ADR-0067 acknowledgement reference's `<bot>` group
+# captures. Defined up here — above BotSpec, which is built at import time —
+# because `__post_init__` refuses a key that does not fit it, and ACK_REFERENCE
+# below composes this same string into its pattern, so the validation and the
+# regex cannot drift apart.
+ACK_KEY_PATTERN = r"[A-Za-z0-9][A-Za-z0-9-]*"
+
+
 @dataclass(frozen=True)
 class BotSpec:
     """How one review bot identifies itself and reports its finding count."""
@@ -317,6 +325,18 @@ class BotSpec:
             raise ValueError(
                 f"{self.key}: comment_login duplicates review_login — leave it "
                 "unset unless the two accounts genuinely differ"
+            )
+        # The gate's remedy strings interpolate this key into the ADR-0067
+        # acknowledgement reference, whose regex captures only
+        # ACK_KEY_PATTERN. A key outside it (an underscore, a dot) would make
+        # the gate print a remedy that can never be credited — that bot's
+        # unrepliable findings permanently unclearable again, with the printed
+        # exit a lie (Copilot, PR #74). Refused at import like every other
+        # mis-built spec above.
+        if not re.fullmatch(ACK_KEY_PATTERN, self.key):
+            raise ValueError(
+                f"{self.key!r}: a bot key must match {ACK_KEY_PATTERN} — the "
+                "ADR-0067 acknowledgement reference cannot name it otherwise"
             )
 
 
@@ -751,9 +771,11 @@ def bot_logins() -> tuple[str, ...]:
 # disqualifies the line. Deliberately narrow beyond that too: no other
 # punctuation, no synonym verbs — a reference that fails to parse fails
 # *closed*, blocking the merge until the comment is corrected, which is the
-# safe direction for a gate.
+# safe direction for a gate. The `<bot>` group is ACK_KEY_PATTERN — the same
+# string BotSpec.__post_init__ validates every key against, so no configured
+# bot can ever have a key this pattern cannot capture.
 ACK_REFERENCE = re.compile(
-    r"^Acknowledges[^\S\n]+([A-Za-z0-9][A-Za-z0-9-]*)"
+    rf"^Acknowledges[^\S\n]+({ACK_KEY_PATTERN})"
     r"[^\S\n]+(summary|review)[^\S\n]+(\d+)[^\S\n]*\.?[^\S\n]*$",
     re.IGNORECASE | re.MULTILINE,
 )

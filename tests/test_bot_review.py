@@ -2997,6 +2997,28 @@ def test_the_triage_commands_do_not_credit_acknowledgements(
     assert "exist only in the summary text" in capsys.readouterr().err
 
 
+def test_a_bot_key_the_ack_reference_cannot_name_is_refused() -> None:
+    # The gate prints `Acknowledges <key> ...` as the remedy for unrepliable
+    # findings, and ACK_REFERENCE's <bot> group captures only ACK_KEY_PATTERN.
+    # A key outside that class would make the printed remedy unmatchable — the
+    # bot's unrepliable findings permanently unclearable again, the exact state
+    # ADR-0067 removes, rebuilt by a config addition (Copilot, PR #74). Refused
+    # at import like every other mis-built spec; the import of BOTS itself is
+    # what proves every current key conforms.
+    import bot_review
+
+    with pytest.raises(ValueError, match="must match"):
+        bot_review.BotSpec(
+            key="under_scored",
+            review_login="x[bot]",
+            request_login=None,
+            requested_display=None,
+            trigger_body="@x review",
+            count=re.compile(r"(\d+)"),
+            clean_marker=None,
+        )
+
+
 def test_silence_cannot_be_acknowledged(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
