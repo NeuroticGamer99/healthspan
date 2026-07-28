@@ -1838,6 +1838,7 @@ def reviews_by(reviews: list[Review], spec: BotSpec, since: datetime) -> list[Re
 def unmatched_reviews(
     report: list[BotFindings],
     reviews: list[Review],
+    comments: list[Comment],
     issue_comments_: list[Comment],
     since: datetime,
 ) -> list[str]:
@@ -1855,6 +1856,27 @@ def unmatched_reviews(
     except a review that states zero findings, which is Copilot's clean run and
     is excluded here.
 
+    A review that states **no count at all** and carries no comment object of
+    its own — by any author — is excluded too. The alarm's own claim, that the
+    author filter missed, is only meaningful when there were comments to miss;
+    a review carrying none leaves nothing a filter could have dropped, so its
+    zero is structural rather than merely reported. The check is deliberately
+    keyed on *this review's* comments rather than on the PR being comment-free:
+    a PR where another bot found something would otherwise re-block every clean
+    overview review. What that leaves uncovered is a bot posting findings
+    outside its own review object — which needs its *review* login to have
+    drifted too, and a review whose login drifted is never examined here at all,
+    with or without this exclusion. This is not hypothetical: Copilot
+    answered PR #75 with a "Pull request overview" body carrying none of the
+    three ``generated …`` shapes issue #61 verified, so ``stated`` is None and
+    only the comment objects can prove the zero. Scoped away from a
+    ``summary_marker`` bot on purpose — there "review present, zero comments"
+    stays genuinely ambiguous, because its findings review is empty-bodied by
+    design and its findings can live in the summary instead (PR #72), which is
+    what ADR-0067's acknowledgement clears. And scoped to ``stated is None``:
+    a review claiming a positive count while carrying no comments is the alarm
+    working, not a false one.
+
     For a ``summary_marker`` bot only, an acknowledgement of its **summary**
     clears this alarm too (ADR-0067). That bot's findings review carries an
     empty body by design, so the shape "review object present, zero comments"
@@ -1867,6 +1889,21 @@ def unmatched_reviews(
     and no PR-level comment can make unread comment objects read.
     """
     alarms: list[str] = []
+    # Review ids that carry at least one comment object, by *any* author. The
+    # author filter is what this detector suspects, so the cross-check has to be
+    # taken before that filter is applied.
+    #
+    # Normalized through int(str(...)) like every other id comparison here, and
+    # a null id is dropped rather than admitted as a member. Both matter more
+    # than usual at this site: an unnormalized string-vs-int mismatch makes the
+    # membership test false, which means the exclusion *applies* and the gate
+    # *clears*. Everything else in this module fails closed; this is the one
+    # comparison that would fail open.
+    reviews_with_comments = {
+        int(str(raw))
+        for raw in (comment.get("pull_request_review_id") for comment in comments)
+        if raw is not None
+    }
     for bot in report:
         if bot.findings:
             continue
@@ -1898,6 +1935,12 @@ def unmatched_reviews(
             stated = stated_count(body, spec)
             if stated == 0:
                 continue  # a review that says it found nothing, and did
+            if (
+                stated is None
+                and spec.summary_marker is None
+                and int(str(review.get("id", 0))) not in reviews_with_comments
+            ):
+                continue  # nothing to filter, so nothing the filter could miss
             if summary_acked:
                 continue
             # The remedy carries the literal reference, like its sibling
@@ -2122,7 +2165,7 @@ def cmd_outstanding(repo: str, pr: int, since: datetime) -> int:
         for s in BOTS.values()
     ):
         issues = issue_comments(repo, pr)
-    unprovable = unmatched_reviews(report, reviews, issues, since)
+    unprovable = unmatched_reviews(report, reviews, comments, issues, since)
     unprovable += body_only_findings(report, reviews, issues, since)
     unprovable += undercounted_summaries(report, issues, since)
     unprovable += silent_always_reviewers(report, reviews, issues, since)

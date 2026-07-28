@@ -1190,6 +1190,7 @@ def _pull_comment(
     login: str,
     updated_at: str,
     in_reply_to_id: int | None = None,
+    review_id: int | None = None,
 ) -> dict[str, Any]:
     return {
         "id": comment_id,
@@ -1197,6 +1198,10 @@ def _pull_comment(
         "created_at": updated_at,
         "updated_at": updated_at,
         "in_reply_to_id": in_reply_to_id,
+        # Which review this comment hangs off, as GitHub reports it. Defaults to
+        # None because most fixtures do not care; unmatched_reviews reads it to
+        # tell "the filter missed a comment" from "there was no comment".
+        "pull_request_review_id": review_id,
         "path": "src/healthspan/fsperm.py",
         "line": 42,
         "body": "P2 — the printed remedy omits /remove:g.",
@@ -2241,6 +2246,82 @@ def test_a_review_stating_zero_findings_is_not_an_alarm(
         "Copilot reviewed 3 files and generated no comments.",
     )
     assert _outstanding(monkeypatch, [], reviews=[review]) == EXIT_CLEAN
+
+
+def test_a_countless_review_carrying_no_comment_objects_is_not_an_alarm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Copilot answered PR #75 with a "Pull request overview" body carrying none
+    # of the three `generated ...` shapes issue #61 verified, so stated_count
+    # returns None and the text cannot prove the zero. The comment objects can:
+    # the review carries none by any author, so no filter could have dropped
+    # one. Without this, every clean Copilot review of this shape blocks a merge
+    # while reporting a diagnosis -- "the filter is probably wrong" -- that is
+    # provably false, because there was nothing to filter.
+    review = _review_by(
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-26T01:00:00Z",
+        "## Pull request overview\n\nAdds an AST gate.\n\n**Changes:**\n- one",
+    )
+    assert _outstanding(monkeypatch, [], reviews=[review]) == EXIT_CLEAN
+
+
+def test_a_countless_review_whose_comment_went_unmatched_is_still_an_alarm(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The identity drift this detector exists for, in the one shape the
+    # exclusion above must not swallow: the review states no count AND carries a
+    # comment object, but under a login the filter does not match. Here there
+    # really was something to miss, so the zero stays unproven and the merge
+    # stays blocked. A rename of Copilot's comment login lands exactly here.
+    review = _review_by(
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-26T01:00:00Z",
+        "## Pull request overview\n\nAdds an AST gate.",
+    )
+    stray = _pull_comment(
+        7,
+        "copilot-renamed[bot]",
+        "2026-07-26T01:05:00Z",
+        review_id=int(review["id"]),
+    )
+    assert _outstanding(monkeypatch, [stray], reviews=[review]) == 1
+    assert "0 of its comments matched" in capsys.readouterr().err
+
+
+def test_a_string_valued_review_id_still_ties_a_comment_to_its_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ids are normalized through int(str(...)) everywhere in this module; this
+    # pins why it matters at the one site where the comparison decides whether a
+    # merge clears. Unnormalized, a string id on one side and an int on the
+    # other makes the membership test false -- so the exclusion applies and the
+    # gate opens. Every other failure in this module is closed; this one would
+    # be open, which is why it gets a test rather than a convention.
+    review = _review_by(
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-26T01:00:00Z",
+        "## Pull request overview\n\nAdds an AST gate.",
+    )
+    stray = _pull_comment(7, "copilot-renamed[bot]", "2026-07-26T01:05:00Z")
+    stray["pull_request_review_id"] = str(review["id"])
+    assert _outstanding(monkeypatch, [stray], reviews=[review]) == 1
+
+
+def test_a_review_claiming_comments_it_never_posted_is_still_an_alarm(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The exclusion is scoped to a review that states NO count. One claiming a
+    # positive count while carrying no comment objects is the detector working:
+    # the comments it names should exist and do not. Keying the exclusion on
+    # "no comments" alone would turn this into a silent pass.
+    review = _review_by(
+        "copilot-pull-request-reviewer[bot]",
+        "2026-07-26T01:00:00Z",
+        "Copilot reviewed 3 files and generated 2 comments.",
+    )
+    assert _outstanding(monkeypatch, [], reviews=[review]) == 1
+    assert "0 of its comments matched" in capsys.readouterr().err
 
 
 def test_a_consolidated_multi_finding_comment_is_not_an_alarm(
