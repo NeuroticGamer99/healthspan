@@ -1048,6 +1048,8 @@ def run_cmd(argv: list[str], env: dict[str, str] | None = None) -> str:
     # `.github/scripts/gemini_review_agent.py` keeps a deliberate near-twin of
     # this (it takes `stdin` instead of `env` and raises RuntimeError, staying
     # independent of this installable module); keep the hardening below in sync.
+    # `scripts/review_worktree.py`'s `_run` shares the no-shell/utf-8/timeout
+    # hardening with a different contract (callers inspect the CompletedProcess).
     #
     # encoding="utf-8" is load-bearing, not decoration: `text=True` alone decodes
     # with the *locale* codec, which is cp1252 on Windows, and both bots' bodies
@@ -2271,7 +2273,7 @@ def resolve_since(args: argparse.Namespace) -> datetime:
     return parse_ts(raw)
 
 
-def use_utf8_io() -> None:
+def use_utf8_io(streams: tuple[object, ...]) -> None:
     """Print through UTF-8 regardless of the console's codepage.
 
     The mirror of the decode fix in :func:`_run`: Python encodes stdout with the
@@ -2279,14 +2281,36 @@ def use_utf8_io() -> None:
     full of emoji. Without this, `fetch` dies with a UnicodeEncodeError *after*
     the API work succeeded — the same Windows-1252 hazard CLAUDE.md flags for
     file I/O, reached through the console instead.
+
+    Called from ``__main__`` and not from :func:`main`, and taking its streams
+    as an argument. `_pytest.capture.EncodedFile` and `TeeCaptureIO` ARE
+    `TextIOWrapper` subclasses (measured), so calling this inside ``main()``
+    made every in-process ``main()`` call in the suite reconfigure pytest's
+    own session-wide capture streams and leave them at ``errors="replace"``
+    for every test that followed — a global encoding-strictness downgrade,
+    ordered by test execution order, landing on whichever innocent test wrote
+    next. ``scripts/review_worktree.py`` diagnosed and fixed this in its own
+    copy; the fix is backported here rather than left as a documented defect
+    in the file that documented it.
+
+    **The consequence was recorded against the wrong stream, and the
+    correction matters because this paragraph is what a future author reads
+    when deciding whether the ``main()`` call may come back.** It said the
+    downgrade hit "the stream the POSIX legs tee into ``pytest-output.log``".
+    It does not: ``TeeCaptureIO.write`` writes to its own ``TextIOWrapper``
+    over a ``BytesIO`` and then forwards the **str** to ``self._other``, the
+    pre-capture ``sys.stdout`` — and ``_other`` is what ``2>&1 | tee
+    pytest-output.log`` actually captures. Reconfiguring ``sys.stdout``
+    mutates the capture wrapper only; ``_other`` is never touched. The
+    deletion is still right, for the reason above. The canary gate was not
+    the reason.
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream in streams:
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main(argv: list[str] | None = None) -> int:
-    use_utf8_io()
     args = build_parser().parse_args(argv)
     command = str(args.command)
     try:
@@ -2313,4 +2337,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8_io((sys.stdout, sys.stderr))
     sys.exit(main())

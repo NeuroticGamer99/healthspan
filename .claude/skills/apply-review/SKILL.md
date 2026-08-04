@@ -84,30 +84,67 @@ over it.
 ## 5. Re-run the reviewers on what you changed
 
 If any finding produced an edit — of any kind — run `spec-reviewer` and `test-reviewer` before
-reporting. Invoke both in parallel in one message; this is standing authorization on this project
-and does not need asking, even under a session default of not calling subagents. The pass that ran
-before `/land` saw the pre-`/apply-review` code, and
+reporting. This is standing authorization on this project and does not need asking, even under a
+session default of not calling subagents. Launch them per `.claude/reviewer-isolation.md` —
+parallel when its setup succeeds; its fallback is sequential, and that file owns the
+procedure, the fallback, and the reasons, so do not restate them here. The pass that ran before `/land` saw the pre-`/apply-review` code, and
 `.claude/bot-review-triage.md` §4's rule is not bot-specific: **a review that ran before the
 fixes is stale, not clean.** Unlike a bot review — which `/squash-merge` deliberately lets go
 stale because it is rate-limited and expensive — these two are cheap, so there is nothing to
 trade off.
 
+- **Tear down every round, on every exit path.** `.claude/reviewer-isolation.md` § Teardown
+  owns the command and the reasons; what belongs here is that this skill is a *caller* and
+  the obligation is the caller's. A round that reports and moves on to `/ship` leaves two
+  full copies of the repo on disk and registered, carrying the uncommitted work under review.
+  **The party this wedges is THIS session's next round, not a later one** — the earlier
+  wording had that backwards, and the inversion was load-bearing. The scratch path is
+  `…/claude/<project>/<session-uuid>/scratchpad`, so a later session resolves a *different*
+  `--scratch`, finds no state file, and its setup succeeds; setup's guard only inspects
+  `<scratch>/review-worktrees.json`. It is the next round in this same session — same UUID,
+  same scratch dir — whose setup exits 1. What a later session actually inherits is the
+  leaked worktree directories and their `.git/worktrees/` registrations, which block nothing
+  and which no teardown will ever remove (`scripts/review_worktree.py` reports them as
+  unrecorded strays and deliberately does not delete them).
+  Read the old way round, the consequence is worse than an untidy disk: you skip teardown on
+  the strength of "not for this one", the loop below re-runs setup in the same scratch dir,
+  it exits 1, and the exit-1 reads as a new fault — putting the round at risk of being
+  dropped to the sequential fallback, which `.claude/reviewer-isolation.md` and
+  `specs/testing-strategy.md` **explicitly forbid for this cause** ("Recoverable — fix and
+  rerun, do not fall back").
+- **Each round re-runs `setup`, not just the agents.** Stated here because the recursion
+  bullet below says only "re-run after each round", which reads as re-running the two
+  reviewers — and the teardown bullet above depends on a new setup happening. Relaunch both
+  agents against round 1's worktrees and they review a snapshot pinned *before* this round's
+  fixes, so both return **pass** on code that no longer exists: the stale-not-clean failure
+  `.claude/reviewer-isolation.md` invariant 1 names, reached with no bot involved. New round
+  = teardown, setup, relaunch.
 - **"Any kind" is not a list of file categories.** Step 3's third item authorizes git-workflow
   actions, new-infrastructure proposals and process-gap fixes, so a round can legitimately edit
   CI workflows, tooling, or process docs while touching no code, test, spec or ADR at all. Any
   enumeration drifts out of sync with what that item allows, and a round falling through the list
   gets no re-run while `/land` step 6 has already disqualified the earlier pass — leaving it with
   no valid reviewer pass at all.
-- **Do not scope them to your hunks.** Both agents default to `git diff origin/main...HEAD` plus
-  uncommitted work, and that default is the point: on `bot-review-outstanding-gate` the defect a
+- **Do not scope them to your hunks.** Both agents default to the whole change under review —
+  isolated, that is the diff against the manifest's base ref inside their worktree plus the
+  untracked files the invoking prompt lists; in the fallback there is no worktree and no
+  manifest, so it is `<base>...HEAD` **plus `git diff` and `git diff --cached`** — the
+  uncommitted tracked work, which in the isolated form arrives inside the snapshot commit and
+  in the fallback has nowhere else to come from — plus the untracked files they enumerate
+  themselves. Only with that middle clause do the two spellings mean the same scope; without
+  it the fallback reads as `<base>...HEAD` plus untracked, which on a branch carrying zero
+  commits is *nothing plus the new files* — every tracked modification silently out of scope,
+  and the sentence asserting the spellings match is what hides it. The agent files carry the
+  full form; this is the copy that has to agree with them. That default is the point: on `bot-review-outstanding-gate` the defect a
   re-run caught was an *interaction* — a body-only fix sitting inside `unmatched_reviews`'s
   `if bot.findings: continue`, so it never ran when any comment matched — invisible to anything
   scoped to the changed lines. Name a narrower range only if the user did.
 - **Judge their findings on the merits**, exactly as step 3 requires for the report's. A reviewer
   finding is a claim, not an instruction.
-- **The loop recurses.** Fixing what they find invalidates the review that found it, so re-run
-  after each round. **Stop when a round produces no substantive edit** — not after a fixed number
-  of rounds. Three rounds happened on `bot-review-outstanding-gate`, and round 2 is where the
+- **The loop recurses.** Fixing what they find invalidates the review that found it, so
+  re-run after each round — teardown, a fresh `setup`, then both agents, per the bullet
+  above; relaunching the agents alone reviews the previous round's snapshot. **Stop when a
+  round produces no substantive edit** — not after a fixed number of rounds. Three rounds happened on `bot-review-outstanding-gate`, and round 2 is where the
   reviewers *failed*; a "one extra round" rule would have shipped that defect.
 - **Substantive** means it could change behavior or spec conformance. A typo, a list ordinal, a
   reflowed line — apply it and let the loop end; re-reviewing a diff whose only delta is a
@@ -129,12 +166,14 @@ Do **not** commit — landing is `/land` + `/ship`'s job unless the user asks. E
 1. A per-finding table: `fixed` / `already-resolved` / `skipped (reason)` / `needs-user-decision`,
    one row each, so nothing in the report is silently dropped.
 2. What you changed, by file, and the result of the gates you ran.
-3. The reviewer rounds from step 5 — how many ran, each round's verdict (**pass** / **pass with
-   notes** / **fail**), and what each one changed. `/land` step 6 asks what changed since the last
-   pass; this is the answer to that question, and it is the *only* record of it — nothing is
-   written to disk, so if `/land` runs in a later session the record is gone and the honest move
-   is to re-run rather than assert a pass you cannot evidence. The reviewers are cheap; that is
-   the point of re-running them.
+3. The reviewer rounds from step 5 — how many ran, **which mode each ran in** (isolated, or the
+   sequential live-tree fallback), each round's verdict (**pass** / **pass with notes** /
+   **fail**), and what each one changed. `/land` step 6 asks what changed since the last pass
+   *and in which mode it ran*; this is the answer to both, and it is the *only* record of them —
+   nothing is written to disk, so a record omitting the mode leaves `/land`'s fallback check
+   nothing to read and an unmutated pass gets counted as equivalent. If `/land` runs in a later
+   session the record is gone entirely and the honest move is to re-run rather than assert a
+   pass you cannot evidence. The reviewers are cheap; that is the point of re-running them.
 4. Anything you deliberately did not do and why — especially findings you judged wrong on
    re-verification (say so plainly; disagreeing with the report is allowed) and the
    scope-decisions from step 3 you are handing back.

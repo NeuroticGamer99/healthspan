@@ -133,8 +133,20 @@ it. If you run them after the push instead, the replies name a commit the next r
 §2's "reply after the fix has landed so the commit SHA in the reply is real", broken by its own
 tooling. Let them default to the whole branch rather than scoping them to the fix; the
 interactions between a fix and the code already on the branch are what the re-run is for.
-`/apply-review` step 5 has the rest of the rule — the recursion, its stopping condition, and the
-gate re-run that a settled loop triggers; it applies here unchanged.
+All of `/apply-review` step 5's operational rules apply here unchanged, **and so does step 6's
+reporting obligation**: record how many rounds ran, each round's verdict, and **which mode each
+ran in** — isolated, or the sequential live-tree fallback. Step 5 owns how to run them and step
+6 owns how to report them, so inheriting only step 5 leaves a bot-fix round whose isolation
+setup failed recording a bare "pass"; `/squash-merge` never asks about the local reviewers at
+all, and `/land` step 6 — the one consumer that does ask — is not in this file's sequence. A
+fallback-only pass would then be counted as equivalent to an isolated one, which
+`.claude/reviewer-isolation.md` explicitly forbids. §3's table is one row per **bot finding**
+and has nowhere to put this, so record the rounds as their own line beneath it — how many ran,
+each one's mode, each one's verdict — rather than trying to fit a round into a finding's row.
+
+Read `/apply-review`'s bare step numbers as **its** steps, never as the sections of this file:
+"re-runs step 4's gates" there means the ruff/pyright/pytest gate run, not §4 below — which is
+the metered bot re-review this project requires prompting for and cannot un-spend.
 
 ## 4. After the fixes land
 
