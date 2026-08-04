@@ -1825,7 +1825,7 @@ def test_the_copy_time_containment_abort_redacts_the_path_it_refused(
 
 
 @pytest.mark.skipif(
-    os.name == "nt", reason="non-UTF-8 filenames (WSL/CI legs run this)"
+    os.name == "nt", reason="NTFS refuses these names; other hosts probe at runtime"
 )
 def test_a_non_utf8_filename_aborts_cleanly_instead_of_dying_by_traceback(
     repo: Path, scratch: Path, capsys: pytest.CaptureFixture[str]
@@ -1856,7 +1856,7 @@ def test_a_non_utf8_filename_aborts_cleanly_instead_of_dying_by_traceback(
 
 
 @pytest.mark.skipif(
-    os.name == "nt", reason="non-UTF-8 filenames (WSL/CI legs run this)"
+    os.name == "nt", reason="NTFS refuses these names; other hosts probe at runtime"
 )
 def test_a_worktree_registered_under_a_non_utf8_path_is_still_seen(
     repo: Path, tmp_path: Path
@@ -2552,7 +2552,7 @@ def test_a_staged_deletion_of_an_absent_file_is_not_divergence(
 
 
 @pytest.mark.skipif(
-    os.name == "nt", reason="NTFS refuses a non-UTF-8 name (WSL/CI legs run this)"
+    os.name == "nt", reason="NTFS refuses these names; other hosts probe at runtime"
 )
 def test_a_staged_deletion_of_a_non_utf8_named_file_is_still_divergence(
     repo: Path, scratch: Path, capsys: pytest.CaptureFixture[str]
@@ -2576,8 +2576,11 @@ def test_a_staged_deletion_of_a_non_utf8_named_file_is_still_divergence(
     """
     name = b"panel-\xff-2026.md"
     path = os.path.join(os.fsencode(str(repo)), name)
-    with open(path, "wb") as handle:
-        handle.write(b"synthetic\n")
+    try:
+        with open(path, "wb") as handle:
+            handle.write(b"synthetic\n")
+    except OSError:
+        pytest.skip("filesystem rejects non-UTF-8 filenames")
     _git(repo, "add", "--", os.fsdecode(path))
     _git(repo, "commit", "-m", "add a file whose name is not utf-8")
     _git(repo, "rm", "--cached", "--", os.fsdecode(path))
@@ -3776,7 +3779,7 @@ def test_a_tracked_symlink_leaving_the_repo_is_caught_by_the_artifact_walk(
 
 
 @pytest.mark.skipif(
-    os.name == "nt", reason="NTFS refuses a non-UTF-8 name (WSL/CI legs run this)"
+    os.name == "nt", reason="NTFS refuses these names; other hosts probe at runtime"
 )
 def test_a_non_utf8_named_tracked_symlink_into_personal_is_named_by_the_guard(
     repo: Path, scratch: Path, capsys: pytest.CaptureFixture[str]
@@ -3807,7 +3810,10 @@ def test_a_non_utf8_named_tracked_symlink_into_personal_is_named_by_the_guard(
     # gitignored directory was never checked out, which is the harmless
     # dangling case `_leaks_personal`'s own comment describes.
     link = os.path.join(os.fsencode(str(repo)), b"panel-\xff-2026")
-    os.symlink(os.fsencode(str(personal / "labs.md")), link)
+    try:
+        os.symlink(os.fsencode(str(personal / "labs.md")), link)
+    except OSError:
+        pytest.skip("filesystem rejects non-UTF-8 filenames")
     _git(repo, "add", "--", os.fsdecode(link))
     _git(repo, "commit", "-m", "track a link with a name that is not utf-8")
 
