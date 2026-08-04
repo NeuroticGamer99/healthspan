@@ -438,23 +438,56 @@ def render_json(report: Report) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _use_utf8_io() -> None:
+    """Force UTF-8 on the real streams, for a real invocation only.
+
+    The report embeds em dashes; without this a Windows cp1252 console (or a
+    redirect) raises UnicodeEncodeError. See CLAUDE.md's encoding note.
+
+    Called from `__main__` and NEVER from `main()`, which is the whole point.
+    `tests/test_repo_stats.py` calls `main()` in-process, so a reconfigure
+    inside it mutates **pytest's session-wide capture stream** rather than
+    this script's stdout — the same defect this diff removed from
+    `bot_review.py` and `review_worktree.py`, still live here.
+
+    It was worse than those two, because this call passed `encoding=` with no
+    `errors=` and `TextIOWrapper.reconfigure` **resets the error handler to
+    `strict` when `errors` is omitted** (measured: `replace` -> `strict`). So
+    `rs.main([])` left every test running afterwards in that worker writing
+    through a *stricter* stream than the suite started with, and a later test
+    emitting a lone surrogate then raised UnicodeEncodeError, ordered by test
+    execution order, with the blame landing on the innocent test.
+
+    Not the log-canary stream, though the sibling copies of this paragraph
+    said so before being corrected: `TeeCaptureIO.write` forwards the **str**
+    to `self._other`, the pre-capture `sys.stdout`, which is what
+    `tee pytest-output.log` captures, while a reconfigure touches only the
+    capture wrapper.
+
+    `errors="replace"` is now explicit rather than implied, so the handler is
+    stated at the one site that sets it instead of inherited from whatever the
+    stream happened to carry.
+
+    Streams are cast to reach `.reconfigure` without a strict-typing
+    complaint, and guarded for exotic streams that lack it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        wrapper = cast(Any, stream)
+        if hasattr(wrapper, "reconfigure"):
+            wrapper.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report repository size and shape.")
     parser.add_argument(
         "--json", action="store_true", help="emit a machine-readable JSON dump"
     )
     args = parser.parse_args(argv)
-    # The report embeds em dashes; force UTF-8 so a Windows cp1252 console (or a
-    # redirect) cannot raise UnicodeEncodeError. See CLAUDE.md encoding note.
-    # sys.stdout is a TextIOWrapper at runtime but typed TextIO; cast to reach
-    # .reconfigure without a strict-typing complaint, and guard for exotic streams.
-    stdout = cast(Any, sys.stdout)
-    if hasattr(stdout, "reconfigure"):
-        stdout.reconfigure(encoding="utf-8")
     report = build_report()
     print(render_json(report) if args.json else render_markdown(report))
     return 0
 
 
 if __name__ == "__main__":
+    _use_utf8_io()
     sys.exit(main())

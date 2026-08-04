@@ -1090,17 +1090,85 @@ def test_printing_a_review_body_survives_a_cp1252_console() -> None:
     # The encode half: Python writes stdout with the locale codec, so printing a
     # body full of emoji raised UnicodeEncodeError *after* the API calls had all
     # succeeded. Exercised in a child process, whose stdout is a real
-    # TextIOWrapper defaulting to the console codepage — pytest's captured
-    # stdout is not, so an in-process check would prove nothing.
+    # TextIOWrapper defaulting to the console codepage. The reason given here
+    # for the child process used to be that pytest's captured stdout is not a
+    # TextIOWrapper — that is **false**, measured: `_pytest.capture.EncodedFile`
+    # and `TeeCaptureIO` are both subclasses, which is exactly why calling this
+    # from `main()` reconfigured the session's own capture streams. The real
+    # reason is narrower and still holds: only a child process has a stdout
+    # whose encoding is the console codepage, which is the thing under test.
     scripts = str(Path(__file__).resolve().parent.parent / "scripts")
     code = (
         f"import sys; sys.path.insert(0, {scripts!r});"
-        "import bot_review; bot_review.use_utf8_io();"
+        "import bot_review; bot_review.use_utf8_io((sys.stdout, sys.stderr));"
         'print("\\U0001f407\\u2705 \\u2014 \\U0001f4d0")'
     )
     out = run_cmd([sys.executable, "-c", code])
     assert "🐇✅" in out
     assert "—" in out  # the em dash that came back as `?` before the fix
+
+
+def test_the_utf8_reconfigure_stays_out_of_main_and_fires_from_dunder_main() -> None:
+    """`review_worktree.py`'s twin has this pin; `bot_review.py` had none.
+
+    The test above calls `use_utf8_io` directly inside a child, bypassing
+    both `main()` and `__main__`, so two regressions were invisible:
+
+    * deleting the `__main__` call silently removes UTF-8 protection from
+      every real invocation — the script is reached from six skills
+      (coderabbit/copilot/gemini/greptile-review, ship, squash-merge) and
+      from `.claude/bot-review-triage.md` — reinstating the
+      UnicodeEncodeError-after-the-API-work-succeeded bug while the test
+      above still passes;
+    * re-adding it *inside* `main()` reinstates the session-wide
+      `errors="replace"` downgrade of pytest's capture streams, with ruff,
+      pyright and the whole suite green.
+
+    Source-level because that is where the property lives: which call site
+    the reconfigure sits at is not observable from a single invocation.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "scripts" / "bot_review.py"
+    ).read_text(encoding="utf-8")
+    main_body = source.split("\ndef main(")[1].split("\nif __name__")[0]
+    assert "use_utf8_io" not in main_body, (
+        "the reconfigure is back inside main(), where it mutates pytest's "
+        "own capture streams for every in-process call"
+    )
+    dunder_main = source.split("\nif __name__")[1]
+    assert "use_utf8_io((sys.stdout, sys.stderr))" in dunder_main, (
+        "deleting this leaves every real invocation unprotected"
+    )
+
+
+def test_repo_stats_reconfigure_stays_out_of_main_and_states_its_error_handler() -> (
+    None
+):
+    """The third live copy, and the one that reset the handler to `strict`.
+
+    `tests/test_repo_stats.py` calls `rs.main()` **in-process**, so the
+    reconfigure this diff removed from the other two scripts was still live
+    here — and worse: it passed `encoding=` with no `errors=`, and
+    `TextIOWrapper.reconfigure` resets the handler to `strict` when `errors`
+    is omitted. So `rs.main([])` left every later test in that worker writing
+    through a stricter stream than the suite started with, including the one
+    the POSIX legs tee for the log-canary gate, and a later test emitting a
+    lone surrogate raised UnicodeEncodeError with the blame landing on the
+    innocent test.
+
+    Both halves are asserted, because fixing only the call site would leave
+    the handler implicit and a future edit could drop it again.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "scripts" / "repo_stats.py"
+    ).read_text(encoding="utf-8")
+    main_body = source.split("\ndef main(")[1].split("\nif __name__")[0]
+    assert "reconfigure" not in main_body
+    assert "_use_utf8_io" not in main_body
+    assert 'errors="replace"' in source.split("\ndef _use_utf8_io")[1], (
+        "reconfigure without errors= resets the handler to strict"
+    )
+    assert "_use_utf8_io()" in source.split("\nif __name__")[1]
 
 
 # --------------------------------------------------------------------------

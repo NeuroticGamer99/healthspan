@@ -130,7 +130,9 @@ def run_cmd(argv: list[str], stdin: str | None = None) -> str:
     ``RuntimeError`` rather than ``BotReviewError`` (the 422-fallback in
     ``main`` keys on the message text, not the class). Keep the two subprocess
     hardenings — utf-8, ``COMMAND_TIMEOUT``, non-zero-exit raise — in sync by
-    hand.
+    hand. ``scripts/review_worktree.py``'s ``_run`` shares the
+    no-shell/utf-8/timeout hardening with a different contract (callers
+    inspect the ``CompletedProcess``).
     """
     try:
         proc = subprocess.run(  # noqa: S603 - fixed executables, no shell

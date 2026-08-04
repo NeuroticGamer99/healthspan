@@ -25,6 +25,50 @@ from healthspan.config import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+# Belt for the machine's real credential store (ADR-0068 §3): keyring resolves
+# its backend lazily, and this makes any code path that reaches real backend
+# resolution — a test escaping the autouse fake_keychain fixture below, a
+# subprocess a test spawns — raise NoKeyringError instead of touching the OS
+# keychain on the machine that holds a real encrypted health database.
+# Assigned rather than setdefault: keyring's load_env() reads this variable at
+# resolution time and takes it first, so an inherited value naming a real
+# backend — another tool's, an old shell profile's — would silently win and
+# put the real store back in reach. No spec describes a legitimate suite run
+# against a real backend: testing-strategy.md § Cross-Platform Testing, the
+# section that owns keychain policy, requires the mocked backend on every
+# platform and names an explicit `keyring.set_keyring(<real backend>)` as the
+# only sanctioned way past this line. Not `set_keyring` as such — the autouse
+# fixture below calls it twice per test to install the in-memory fake, which
+# is that policy being obeyed. It does mean this variable is read once per
+# process rather than per test, so what this line actually protects is the
+# window before the first fixture runs plus every subprocess a test spawns.
+# (That section is the citation. An earlier version of this comment cited
+# § Parallel execution instead — a section about xdist worker-collision
+# safety, two headings below the one that decides the question — while
+# § Cross-Platform Testing still read "must run on each platform **or** mock",
+# which this assignment makes impossible. ADR-0068 §3 repeated the same
+# mis-citation and was **corrected in the same change that wrote this
+# comment**; both now cite § Cross-Platform Testing. Recorded in the past
+# tense on purpose — as a live report it sent readers to the ADR expecting a
+# defect, found none, and left them unable to tell a stale comment from a
+# quietly-edited ADR, which CLAUDE.md's governance rules make expensive to
+# resolve.)
+# The mutation-testing reviewer's own out-of-tree export sets this same value,
+# so it loses nothing: its job is surviving a conftest broken by a mutation,
+# not winning a conflict over the value. `scripts/review_worktree.py`'s setup
+# now prints that export as a ready-to-paste `env[<agent>]:` line rather than
+# leaving it to prose — the only belt layer outside the tree a reviewer may
+# mutate, and it was the layer with no mechanism.
+#
+# Not the first statement in the file, and that is a real dependency rather
+# than a tidiness point: `keyring.core.init_backend()` runs lazily on the
+# first `get_keyring()`, so this line only wins while nothing imported above
+# it resolves a backend at import time. Nothing does today, and
+# `test_the_belt_is_assigned_before_any_backend_is_resolved` pins it —
+# both other probes assert the *final* value and effect, so they stay green
+# with this assignment moved anywhere in the file.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+
 # Hypothesis profiles (testing-strategy.md): `dev` is a fast inner loop; `ci`
 # runs more examples and derandomizes so a failure reproduces deterministically.
 # CI selects `ci` automatically via the CI env var GitHub Actions always sets;

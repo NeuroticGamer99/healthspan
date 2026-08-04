@@ -77,7 +77,14 @@ between each.
   implements it rather than re-derives it. The brief is where the hard reasoning goes.
 - Sequence passes that touch the same files; parallelize only genuinely independent ones. Review
   each pass's diff before starting the next — a wrong schema cascades.
-- Run `spec-reviewer` and `test-reviewer` when the passes are done.
+- Run `spec-reviewer` and `test-reviewer` when the passes are done, launched per
+  `.claude/reviewer-isolation.md` (parallel when its setup succeeds; its fallback is
+  sequential — that file decides). Record **which mode each round ran in** alongside its
+  verdict; that file states what a fallback-only pass is worth, and `/land` step 6 asks. Its
+  first invariant governs the
+  implementation passes above too: an agent writing to the live tree never runs beside one
+  reading it, whatever the agents are named — file-overlap alone does not make two passes
+  independent when one of them reads the whole tree.
 - **Flag, don't assume**, when a WI is security-critical (encryption, key derivation, tokens,
   process boundaries): recommend staying on Opus for that part and let the user decide.
 

@@ -94,6 +94,12 @@ jobs:
       - name: Check the two markdown-lint configs stay in sync (ADR-0062)
         run: python3 scripts/check_markdownlint_config_sync.py
 
+      - name: Check the reviewer agent files obey ADR-0068's isolation rules
+        # The `isolation: worktree` prohibition was stated in three prose
+        # locations and enforced by nothing, while the failure it prevents is
+        # a reviewer reporting clean on a tree holding none of the work.
+        run: python3 scripts/check_reviewer_agents.py
+
       - name: Markdown style lint (PyMarkdown, ADR-0062)
         # Scope (ADR-0062 §4): tracked *.md under specs/ plus root README.md and
         # CLAUDE.md; specs/personal/ is gitignored so git ls-files never lists it
