@@ -148,7 +148,7 @@ the branch's own log does not tell you `N` (a report applied in a fresh session)
 ```bash
 mb=$(git merge-base origin/main HEAD)
 [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
-git log --oneline "$mb"..HEAD | grep -oE '^[0-9a-f]+ \[x[0-9]+\]' | grep -oE '[0-9]+$' | sort -n | tail -1
+git log --oneline "$mb"..HEAD | sed -nE 's/^[0-9a-f]+ \[x([0-9]+)\].*/\1/p' | sort -n | tail -1
 ```
 
 **No output does not by itself mean this is `[x1]`.** It means no *tagged* round, which is equally
@@ -176,18 +176,26 @@ vacuous exactly here, where no tags exist. Show the count, the report list it ca
 report in your hand, and let the user confirm or correct it. A wrong number is worse than none —
 `/savepoint` step 3's rule, and the reason for all of this.
 
-Four details of the query earn their keep for the same reason. The pattern requires the closing bracket immediately after the digits, so it matches the
-batch tag `[x2]` and **not** the smoke tags `[x2s1]`…`[x2s3]` this same skill adds a few lines
-below — a bare `[x…]` match would count those too, turning one applied review into four and
-tagging the next batch `[x5]`. It is also **anchored to the start of the subject**
-(`^[0-9a-f]+ \[x…`, since `--oneline` puts the sha first), because an unanchored match reads a tag
-out of any commit that merely *mentions* one — a subject like "Correct the `[x99]` example" would
-select round 100. Take the **highest** `N` rather than a count, since a batch that
-produced no edit leaves no tag and a count then re-issues a number already on the branch. And the
-merge base carries the same guard its three siblings in `/land` and `/ship` do: unguarded, a
-failed substitution leaves `git log --oneline ..HEAD`, which git accepts, exits 0 on, and prints
-nothing for (measured) — indistinguishable from a branch with no prior rounds, so the fourth
-external review would be tagged `[x1]`.
+Four details of the query earn their keep for the same reason. It is a **single `sed` capture,
+deliberately, not a grep pipeline** — this recipe shipped once as
+`grep -oE '^[0-9a-f]+ \[x[0-9]+\]' | grep -oE '[0-9]+$'` and was dead on arrival: stage 1's output
+ends in `]`, so stage 2's `$`-anchored match never fired and the query returned empty on every
+branch, silently taking the fallback below each time (found by review, not by failure, because an
+empty result is also a *legal* answer here). The tempting repair — dropping the `$` — is worse: an
+unanchored `[0-9]+` over the whole line harvests digits from the commit *sha*, answering `196`
+from `7a1f196`. The capture group takes exactly the digits between `[x` and `]` and nothing else
+can match. It requires the closing bracket immediately after the digits, so it matches the batch
+tag `[x2]` and **not** the smoke tags `[x2s1]`…`[x2s3]` this same skill adds a few lines below —
+a bare `[x…]` match would count those too, turning one applied review into four and tagging the
+next batch `[x5]`. It is **anchored to the start of the subject** (`^[0-9a-f]+ \[x…`, since
+`--oneline` puts the sha first), because an unanchored match reads a tag out of any commit that
+merely *mentions* one — a subject like "Correct the `[x99]` example" would select round 100. Take
+the **highest** `N` rather than a count, since a batch that produced no edit leaves no tag and a
+count then re-issues a number already on the branch. And the merge base carries the same guard its
+three siblings in `/land` and `/ship` do: unguarded, a failed substitution leaves
+`git log --oneline ..HEAD`, which git accepts, exits 0 on, and prints nothing for (measured) —
+indistinguishable from a branch with no prior rounds, so the fourth external review would be
+tagged `[x1]`.
 
 ## 5. Re-run the reviewers on what you changed
 
@@ -267,7 +275,7 @@ trade off.
   matters because an apply resumed in a fresh session has no other memory of how many smokes ran —
 
   ```bash
-  git log --oneline "$mb"..HEAD | grep -oE "^[0-9a-f]+ \[x${N}s[0-9]+\]" | grep -oE '[0-9]+$' | sort -n | tail -1
+  git log --oneline "$mb"..HEAD | sed -nE "s/^[0-9a-f]+ \[x${N}s([0-9]+)\].*/\1/p" | sort -n | tail -1
   ```
 
   No output means this is `s1`. A gap in the sequence is information rather than an error — a smoke

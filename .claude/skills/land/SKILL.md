@@ -64,6 +64,16 @@ A failing gate stops the landing; fix or escalate before proceeding.
   **Do not reach for `--first-parent` instead.** The two names read almost identically and do opposite things: `--diff-merges=first-parent` changes only how a *merge commit's diff* is rendered and leaves traversal whole, while `--first-parent` restricts the *traversal* itself and walks straight past every commit on a merged-in side branch. Measured on one repo — a side branch that added a file and deleted it again, then merged back with a real merge commit: the range holds 5 commits, `--diff-merges=first-parent` walks all 5 and reports the file, `--first-parent` walks 3 and never mentions it. That file is exactly what this scan exists to catch, so the wrong flag fails silently and in the one direction that matters.
 - For every added or modified file outside `specs/personal/` — in the working tree *or* in the branch diff — confirm it contains no personal health values, lab results, diagnoses, medications, or owner-identifying information. Test fixtures must be synthetic. Each savepoint ran this scan over its own chunk at commit time; this pass is the whole-branch backstop, not a formality to skip on that account.
 
+  **The content half must read the branch's history too, not only the files as they stand now** — the same argument the path list above already makes, carried to its conclusion. A value committed by one savepoint and sanitized by a later one is invisible in every *current* file, while the dirty blob remains reachable in the branch's history and rides the push with it. The path list would name the file, but a reader then inspecting the clean current version finds nothing. The instrument is the patch stream:
+
+  ```bash
+  mb=$(git merge-base origin/main HEAD)
+  [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
+  git log --diff-merges=first-parent -p "$mb"..HEAD
+  ```
+
+  Every line any savepoint ever added appears as a `+` line somewhere in that stream — including lines a later savepoint removed — so scanning it covers every intermediate blob without enumerating them. Same guard, same merge-commit flag, same one-Bash-call rule as the path scan, and the reasons are stated there. On a long branch this is a large read; it is also the only pass that sees what the endpoint diff structurally cannot, and it is the last one before `/ship` pushes every one of those blobs.
+
 ## 4. ADR governance check (if `specs/adr/` is touched)
 
 - No Accepted ADR's decision content is modified (only status-field corrections, `## Links` navigation additions, typo/link fixes are permitted in place).

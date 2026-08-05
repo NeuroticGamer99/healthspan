@@ -70,18 +70,30 @@ personal data and then cleaned in the working tree keeps the **dirty blob** in t
 the path check, and commits. `git add` exits 1 and names the path there, so **treat any non-zero
 `git add` as a stop** — but do not rest on that alone. Prove identity per enumerated path:
 
-For each enumerated path `$p`, with `$st` its status letter from
-`git diff --cached --name-status`:
+For each record from `git diff --cached --name-status`, reading **three** fields, because a
+rename or copy record carries two paths and a two-field read binds the *source* — a path that
+exists in neither the index nor the working tree, so both halves of the check would fail on it
+exactly as they do on a deletion (measured: `R100  old.md  new.md`):
 
 ```bash
-[ "$st" = D ] || [ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] || { echo "staged content is not what was scanned: $p"; exit 1; }
+git diff --cached --name-status | while IFS=$'\t' read -r st p1 p2; do
+  case "$st" in
+    D*) continue ;;        # a deletion contributes no bytes — the path list governs it
+    R*|C*) p="$p2" ;;      # rename/copy: the DESTINATION holds the staged content
+    *) p="$p1" ;;
+  esac
+  [ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] \
+    || { echo "staged content is not what was scanned: $p"; exit 1; }
+done
 ```
 
 **The `D` arm is not a shortcut — without it the check breaks on an ordinary checkpoint.** A staged
 deletion has no index blob and no working-tree file, so *both* halves fail with `fatal:` (measured:
 `path 'f.md' does not exist` and `could not open 'f.md'`). It also needs no content check, because
 a deletion contributes no bytes to the object; what still applies to it is the path list above,
-unchanged.
+unchanged. **The rename arm compares the destination**, which is where the staged bytes live; the
+source is governed the same way a deletion is. The `R`/`C` letters arrive with a score suffix
+(`R100`), which is why every arm pattern is a prefix match rather than an equality test.
 
 Measured against the cases that decide whether such a check survives contact: it catches the
 skip-worktree divergence, passes an ordinarily added file, and passes a CRLF file under

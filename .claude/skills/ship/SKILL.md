@@ -126,8 +126,14 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   mb=$(git merge-base origin/main HEAD)
   [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
   git reset --soft "$mb"
-  git commit -F <scratchpad>/commit-msg/<branch>.txt
+  git commit --cleanup=whitespace -F <scratchpad>/commit-msg/<branch>.txt
   ```
+
+  The explicit `--cleanup=whitespace` pins the mode the read-back's `git stripspace` reproduces.
+  Without it the mode comes from `commit.cleanup`, and a machine configured with `strip` deletes
+  `#`-prefixed lines that `stripspace` (bare) keeps — measured — so the read-back reports a
+  word-level delta on a correctly landed message. Same flag on every `commit -F` in this file, for
+  the same reason.
 
   The **fetch** comes first because `git merge-base origin/main HEAD` reads the local tracking
   ref: a stale `origin/main` resolves the base further back than it truly is, and `reset --soft`
@@ -190,23 +196,24 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
 - On a branch with no savepoints (nothing between the merge base and `HEAD`), **stage the work
   the same way a savepoint would** — nothing has staged it yet, and `git commit -F` against an
   empty index exits 1 (or, worse, commits only a stray pre-staged file): run `/savepoint`'s scan
-  and explicit `git add` path list over the change, then `git commit -F
-  <scratchpad>/commit-msg/<branch>.txt`.
+  and explicit `git add` path list over the change, then `git commit --cleanup=whitespace -F
+  <scratchpad>/commit-msg/<branch>.txt` (the pinned mode — the collapse block above says why).
 - **On each path that commits from the `-F` file** — the collapse, the tree-dirty commit-on-top,
   and the no-savepoints branch — the message is `/land`'s file, unchanged, including its
   `Decisions:` section and the co-author trailer step 1 verified. **Then read the commit back**:
 
   ```bash
-  git log -1 --format=%B > <scratchpad>/commit-msg-landed.txt
+  sp='<scratchpad>'   # the literal session scratchpad path, quoted once here
+  git log -1 --format=%B > "$sp/commit-msg-landed.txt"
 
   # Put the SOURCE through git's own cleanup first, then normalize both sides
   # identically. `git stripspace` is the same implementation `git commit -F`
   # runs, so the comparison cannot drift from it; `--format=%B` then appends a
   # trailing newline the file does not carry, which the printf pair removes.
-  git stripspace < <scratchpad>/commit-msg/<branch>.txt > <scratchpad>/expected-raw.txt
-  printf '%s\n' "$(cat <scratchpad>/expected-raw.txt)"      > <scratchpad>/expected-msg.txt
-  printf '%s\n' "$(cat <scratchpad>/commit-msg-landed.txt)" > <scratchpad>/landed-msg.txt
-  diff <scratchpad>/expected-msg.txt <scratchpad>/landed-msg.txt
+  git stripspace < "$sp/commit-msg/<branch>.txt" > "$sp/expected-raw.txt"
+  printf '%s\n' "$(cat "$sp/expected-raw.txt")"      > "$sp/expected-msg.txt"
+  printf '%s\n' "$(cat "$sp/commit-msg-landed.txt")" > "$sp/landed-msg.txt"
+  diff "$sp/expected-msg.txt" "$sp/landed-msg.txt"
   ```
 
   `git commit -F` applies whitespace cleanup, so the one artifact this mechanism exists to keep
@@ -238,7 +245,12 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   trailing whitespace on a line, extra interior blank lines, a changed word, a dropped trailer —
   every one still differs after normalizing. Interior blank lines in particular survive it, so
   git's collapse of them remains visible and remains a judgement call under the rule above.
-- Push, setting upstream on a new branch: `git push -u origin <branch>`.
+- Push, setting upstream on a new branch: `git push -u origin "<branch>"`. **Quote every
+  substituted branch name and scratchpad path in this file's recipes** — `$(cmd)`, `&` and `"` are
+  all *legal* in git ref names (measured with `check-ref-format`; the space is not, but the
+  scratchpad path carries several), so an unquoted substitution can select the wrong file or hand
+  the shell something executable. The collapse block quotes `"$mb"` for a different reason with
+  the same moral: the quoting is part of the recipe, not decoration.
 
 ## 3. Open or update the PR
 
