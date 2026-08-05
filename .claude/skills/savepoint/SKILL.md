@@ -54,6 +54,26 @@ Run `git diff --cached --name-only`, compare it against the echoed list, and sto
 path; the enumeration is only a containment control if the commit provably contains nothing
 else.
 
+**That path list is necessary and not sufficient — check the staged *content* too.**
+`git diff --cached --name-only` proves which paths are in the index, never that each one holds the
+bytes the scan read, and the two diverge wherever `git add` silently declines to update an entry.
+It does exactly that on a `skip-worktree` or `assume-unchanged` path: measured, a file staged with
+personal data and then cleaned in the working tree keeps the **dirty blob** in the index, satisfies
+the path check, and commits. `git add` exits 1 and names the path there, so **treat any non-zero
+`git add` as a stop** — but do not rest on that alone. Prove identity per enumerated path:
+
+```bash
+[ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] || { echo "staged content is not what was scanned: $p"; exit 1; }
+```
+
+Measured against the three cases that decide whether such a check survives contact: it catches the
+skip-worktree divergence, passes an ordinarily added file, and passes a CRLF file under
+`.gitattributes eol=lf`. That last one is why the comparison is blob-to-blob rather than
+byte-to-byte — a check that false-alarms on line endings is one an operator learns to skip, and
+this repo's own `/ship` read-back carries the same lesson. `git diff --name-only` cannot stand in
+for it: `skip-worktree` is precisely what that command is told to ignore, so it reports clean on
+the one case this catches.
+
 ## 3. Commit
 
 A bracketed phase tag, then one plain imperative subject line describing the chunk. No body
