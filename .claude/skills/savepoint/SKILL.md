@@ -30,8 +30,16 @@ also carries a whole-branch history clause; that is `/land`'s backstop over ever
 savepoint, deliberately not duplicated here where the scope is this chunk alone — do not "sync"
 the two copies in either direction):
 
-- `git status --porcelain` must show no `specs/personal/` path (it is gitignored; its appearance
-  means the ignore broke — treat as critical and stop).
+- `git status --porcelain` must show no `specs/personal/` path — matched **case-insensitively**
+  and covering the **bare path** `specs/personal` itself, not only the `specs/personal/` prefix.
+  It is gitignored, so any appearance means the ignore broke: treat as critical and stop.
+  Both extra conditions are load-bearing rather than belt-and-braces, and the precedent is in this
+  repo: `scripts/review_worktree.py` guards the same invariant in *tested code* and `casefold()`s
+  its comparison, accepts the bare path, and uses an `:(icase)` pathspec — holes found by review
+  passes rather than by design. A case-sensitive prefix test lets `specs/Personal/labs.csv` through
+  on the Linux and macOS CI legs, where the ignore rule does not cover it either; and a
+  directory-only ignore rule is blind to a force-added plain file or symlink at exactly
+  `specs/personal`, so a prefix test that requires the trailing slash never sees it.
 - For every added or modified file outside `specs/personal/`, confirm it contains no personal
   health values, lab results, diagnoses, medications, or owner-identifying information. Test
   fixtures must be synthetic.
@@ -62,17 +70,30 @@ personal data and then cleaned in the working tree keeps the **dirty blob** in t
 the path check, and commits. `git add` exits 1 and names the path there, so **treat any non-zero
 `git add` as a stop** — but do not rest on that alone. Prove identity per enumerated path:
 
+For each enumerated path `$p`, with `$st` its status letter from
+`git diff --cached --name-status`:
+
 ```bash
-[ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] || { echo "staged content is not what was scanned: $p"; exit 1; }
+[ "$st" = D ] || [ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] || { echo "staged content is not what was scanned: $p"; exit 1; }
 ```
 
-Measured against the three cases that decide whether such a check survives contact: it catches the
+**The `D` arm is not a shortcut — without it the check breaks on an ordinary checkpoint.** A staged
+deletion has no index blob and no working-tree file, so *both* halves fail with `fatal:` (measured:
+`path 'f.md' does not exist` and `could not open 'f.md'`). It also needs no content check, because
+a deletion contributes no bytes to the object; what still applies to it is the path list above,
+unchanged.
+
+Measured against the cases that decide whether such a check survives contact: it catches the
 skip-worktree divergence, passes an ordinarily added file, and passes a CRLF file under
 `.gitattributes eol=lf`. That last one is why the comparison is blob-to-blob rather than
 byte-to-byte — a check that false-alarms on line endings is one an operator learns to skip, and
-this repo's own `/ship` read-back carries the same lesson. `git diff --name-only` cannot stand in
-for it: `skip-worktree` is precisely what that command is told to ignore, so it reports clean on
-the one case this catches.
+this repo's own `/ship` read-back carries the same lesson. It also works because **`git
+hash-object` applies the path's `.gitattributes` filters by default** — `--no-filters` is the
+opt-out, and `--path` is for hashing content whose real path differs, not for switching filtering
+on. Measured under `eol=lf`: the plain form reproduces the staged blob exactly while `--no-filters`
+does not, so no `--path` is needed here. `git diff --name-only` cannot stand in for any of it:
+`skip-worktree` is precisely what that command is told to ignore, so it reports clean on the one
+case this catches.
 
 ## 3. Commit
 

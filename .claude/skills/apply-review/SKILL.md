@@ -148,7 +148,7 @@ the branch's own log does not tell you `N` (a report applied in a fresh session)
 ```bash
 mb=$(git merge-base origin/main HEAD)
 [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
-git log --oneline "$mb"..HEAD | grep -oE '\[x[0-9]+\]' | grep -oE '[0-9]+' | sort -n | tail -1
+git log --oneline "$mb"..HEAD | grep -oE '^[0-9a-f]+ \[x[0-9]+\]' | grep -oE '[0-9]+$' | sort -n | tail -1
 ```
 
 **No output does not by itself mean this is `[x1]`.** It means no *tagged* round, which is equally
@@ -170,10 +170,13 @@ will ever match. Both inflate `N`. So if the count disagrees with the tags, or t
 hand is not the newest line, **ask the user** instead of choosing — a wrong number is worse than
 none, which is `/savepoint` step 3's rule and the reason for all of this.
 
-Three details of the query earn their keep for the same reason. The pattern requires the closing bracket immediately after the digits, so it matches the
+Four details of the query earn their keep for the same reason. The pattern requires the closing bracket immediately after the digits, so it matches the
 batch tag `[x2]` and **not** the smoke tags `[x2s1]`…`[x2s3]` this same skill adds a few lines
 below — a bare `[x…]` match would count those too, turning one applied review into four and
-tagging the next batch `[x5]`. Take the **highest** `N` rather than a count, since a batch that
+tagging the next batch `[x5]`. It is also **anchored to the start of the subject**
+(`^[0-9a-f]+ \[x…`, since `--oneline` puts the sha first), because an unanchored match reads a tag
+out of any commit that merely *mentions* one — a subject like "Correct the `[x99]` example" would
+select round 100. Take the **highest** `N` rather than a count, since a batch that
 produced no edit leaves no tag and a count then re-issues a number already on the branch. And the
 merge base carries the same guard its three siblings in `/land` and `/ship` do: unguarded, a
 failed substitution leaves `git log --oneline ..HEAD`, which git accepts, exits 0 on, and prints
@@ -253,7 +256,19 @@ trade off.
   in step 6 either way. That is what makes the loop terminate.
 - **A round that edits ends with a `/savepoint`** — scan, path list, commit, tagged
   **`[x<N>s<M>]`** for smoke pass `M` inside external review `N`'s apply — before the next
-  round's teardown + setup (ADR-0069). These local passes are **smokes**, not reviews: that
+  round's teardown + setup (ADR-0069). **Derive `M` the same way as `N`, and never reuse one**:
+  take the highest already on the branch for *this* `N` and add one, anchored the same way, which
+  matters because an apply resumed in a fresh session has no other memory of how many smokes ran —
+
+  ```bash
+  git log --oneline "$mb"..HEAD | grep -oE "^[0-9a-f]+ \[x${N}s[0-9]+\]" | grep -oE '[0-9]+$' | sort -n | tail -1
+  ```
+
+  No output means this is `s1`. A gap in the sequence is information rather than an error — a smoke
+  that found nothing has no edit to checkpoint, so a missing number means a clean pass — which is
+  why the rule is *highest plus one* rather than *count plus one*: counting re-issues a number
+  already on the branch. If the query disagrees with what you believe ran, ask rather than pick;
+  a wrong `M` is the same defect as a wrong `N`, and `/savepoint` step 3 says why. These local passes are **smokes**, not reviews: that
   skill's step 3 owns the vocabulary and the reason, and the short version is that "review"
   belongs to the purchased external loop and a smoke never counts as one. The tag is what makes
   the loop legible afterwards: a branch showing `[x2s1]`…`[x2s4]` says one review's findings took

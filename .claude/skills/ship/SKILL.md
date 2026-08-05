@@ -199,19 +199,27 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   ```bash
   git log -1 --format=%B > <scratchpad>/commit-msg-landed.txt
 
-  # Normalize both sides identically before comparing — `--format=%B` appends a
-  # trailing newline the file does not carry, so an unnormalized diff fails on a
-  # message that landed perfectly. Same rule, and the same reason, as step 3's
-  # PR-body diff and /squash-merge step 4.
-  printf '%s\n' "$(cat <scratchpad>/commit-msg/<branch>.txt)"  > <scratchpad>/expected-msg.txt
-  printf '%s\n' "$(cat <scratchpad>/commit-msg-landed.txt)"    > <scratchpad>/landed-msg.txt
+  # Put the SOURCE through git's own cleanup first, then normalize both sides
+  # identically. `git stripspace` is the same implementation `git commit -F`
+  # runs, so the comparison cannot drift from it; `--format=%B` then appends a
+  # trailing newline the file does not carry, which the printf pair removes.
+  git stripspace < <scratchpad>/commit-msg/<branch>.txt > <scratchpad>/expected-raw.txt
+  printf '%s\n' "$(cat <scratchpad>/expected-raw.txt)"      > <scratchpad>/expected-msg.txt
+  printf '%s\n' "$(cat <scratchpad>/commit-msg-landed.txt)" > <scratchpad>/landed-msg.txt
   diff <scratchpad>/expected-msg.txt <scratchpad>/landed-msg.txt
   ```
 
-  `git commit -F` applies whitespace cleanup (trailing whitespace stripped, consecutive blank
-  lines collapsed — measured, not hypothetical), so the one artifact this mechanism exists to
-  keep faithful is otherwise the one never checked. Whitespace-only deltas are that cleanup —
-  fine; any word-level delta stops the ship. The normalization is not decoration: raw, the two
+  `git commit -F` applies whitespace cleanup, so the one artifact this mechanism exists to keep
+  faithful is otherwise the one never checked. Measured, `whitespace` mode strips leading blank
+  lines, strips trailing whitespace from every line, collapses runs of blank lines, and trims
+  trailing blanks. **`git stripspace` is that same cleanup**, which is why the source goes through
+  it rather than the operator being asked to judge the difference: with it, **any** delta stops
+  the ship. The earlier form said "whitespace-only deltas are that cleanup — fine" and left the
+  classification to whoever ran it, so a correct ship carrying one trailing space produced a red
+  diff that had to be talked past — a check whose verdict depends on operator judgement is the
+  same species as one whose verdict depends on its own quoting. `--cleanup=verbatim` would also
+  make the comparison exact and is the wrong way to get there: it buys exactness by landing the
+  trailing whitespace and blank-line runs in public history. The normalization is not decoration: raw, the two
   files differ by that one appended newline and `diff` exits 1 on a correct landing (measured), so
   **every** ship reports a red gate — and under this skill's own "never push past a red gate" rule
   that either stops good ships or teaches the operator to ignore the one check standing between

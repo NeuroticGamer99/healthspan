@@ -86,6 +86,20 @@ Record:
   collapse from real drift, so a carrier without it reduces that check to a warning it cannot
   resolve.
 
+  **Both anchors describe committed state only — say so when the tree is not clean.** Step 1
+  explicitly permits reviewing uncommitted work, and neither `HEAD` nor `HEAD^{tree}` moves when
+  the working tree does, so on a dirty tree these values name something the review did not look
+  at. That is worse than a missing anchor: `/apply-review` step 1 item 3 would compare against
+  them and answer *explained* on the strength of a value that never described the reviewed state,
+  which is the confident-and-wrong outcome `/review-handoff` calls "worse than none". Prefer
+  pinning a clean tree — a `/savepoint` before prep costs one commit and makes both anchors exact,
+  which is the practice ADR-0069 institutes. If the scope must stay dirty, record that in the
+  carrier beside the values rather than letting a committed-tree hash stand in for the reviewed
+  one, and hash the uncommitted material explicitly: `git stash create` covers tracked
+  modifications and untracked files need `git hash-object` per path.
+  `.claude/reviewer-isolation.md` § The two invariants, invariant 1 owns that split and the
+  reasons; do not restate them here.
+
 `/code-review` is read-only and does not move HEAD, so these values stay correct for the review as
 long as *you* do not commit before running `/review-handoff`.
 

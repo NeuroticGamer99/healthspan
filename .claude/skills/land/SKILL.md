@@ -49,7 +49,7 @@ A failing gate stops the landing; fix or escalate before proceeding.
 
 ## 3. Personal-data containment check
 
-- Verify nothing under `specs/personal/` is staged or would be committed: `git status --porcelain` must show no `specs/personal/` paths (it is gitignored; its appearance means the ignore broke — treat as critical), **and neither must any path the branch's history ever touched**:
+- Verify nothing under `specs/personal/` is staged or would be committed: `git status --porcelain` must show no `specs/personal/` paths (it is gitignored; its appearance means the ignore broke — treat as critical), **and neither must any path the branch's history ever touched**. Match **case-insensitively** and cover the **bare path** `specs/personal` as well as the `specs/personal/` prefix, in both scans — `/savepoint` step 1 carries the reasoning and the in-repo precedent (`scripts/review_worktree.py` casefolds and uses `:(icase)` in tested code); the short version is that a case-sensitive prefix test misses `specs/Personal/…` on the POSIX CI legs and misses a plain file at exactly `specs/personal`, which a directory-only ignore rule does not cover either. The history scan:
 
   ```bash
   mb=$(git merge-base origin/main HEAD)
