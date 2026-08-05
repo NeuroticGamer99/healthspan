@@ -102,6 +102,25 @@ reviewers". A wrong-directory launch would silently skip both reviewers on a dir
 For the same reason, treat an exit 2 that does *not* print a `nothing to review:` line on
 stdout as a launch failure, not a sanctioned skip.
 
+**Record `git rev-parse HEAD` — and `git rev-parse 'HEAD^{tree}'` — beside setup's manifest in
+the round's record** (ADR-0069; the record is `/apply-review` step 6 item 3). That record is
+**conversational, not on disk** — step 6 item 3 says so itself, and a local round's anchors
+therefore last exactly as long as the session does. Two durable carriers exist and neither is
+automatic: `/review-prep`'s carrier file and the `/review-handoff` report both record the pair,
+so an *external* round's anchors survive by construction. A local round's do not; if they need
+to, put them somewhere that outlives the session deliberately. When `/land` runs later and finds
+no record, the honest move is to re-run the reviewers, not to assert a pass on an anchor nobody
+can produce — they are cheap, which is the whole reason that trade is available.
+The snapshot SHA is ephemeral by design (§ Fidelity). The
+`HEAD` sha anchors the round while the branch's commits stand — but `/ship`'s collapse
+deliberately rewrites the savepoints, leaving every recorded pre-collapse `HEAD` dangling on a
+gc timer, so a later session comparing against one alone would read a permanent false
+"not an ancestor". The tree hash is what survives the collapse unchanged (`reset --soft` +
+recommit rebuilds the commit, not the tree); record both, compare commit first, fall back to
+tree. A `/savepoint` immediately before the round is the recommended way to put the round
+boundary on a commit — but a dirty tree is still reviewable (carrying uncommitted state is what
+the launcher is for) and is never a reason to refuse the round.
+
 - **Exit 0** — ready. The manifest on **stdout** names the snapshot SHA, the base ref, one
   worktree path per reviewer, a per-agent venv path, and the untracked files replicated into
   each. Fidelity warnings are on **stderr** — so capture both streams. A session that reads

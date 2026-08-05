@@ -14,6 +14,16 @@ then fix what genuinely needs fixing.
 
 Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>-<ts>.md`).
 
+**The git recipes in this file are Bash — run them with the Bash tool, not PowerShell**, the same
+declaration `/land` and `/ship` carry and for the same reasons. The construct that needs it is
+**step 4's round-number query**: `[ -n "$mb" ]`, `|| { …; exit 1; }`, and a `grep`/`sort`/`tail`
+pipeline, none of which survive PowerShell's parser. A guard that fails to parse is a guard that
+does not run, and here that means a wrong round number written into the branch's history — the
+outcome `/savepoint` step 3 calls worse than none. Step 1's classification is a different case and
+is portable on its own: bare `git` invocations whose revisions are quoted whole, which both shells
+pass through intact. Its PowerShell hazard is the *unquoted* `^{commit}` form, called out where it
+arises rather than here.
+
 ## 1. Load the report
 
 - If a path was passed, Read it — the normal case, since `review-handoff` prints the report's
@@ -26,9 +36,52 @@ Argument: the report path (e.g. `/apply-review <scratchpad>/code-review-<branch>
 - Read the report's **Branch / HEAD** and **Diff scope** lines, then run `git rev-parse HEAD`
   and `git rev-parse --abbrev-ref HEAD`. Compare on the **full** SHA (the `Branch / HEAD` line
   records it); if a report carries only a short SHA, match it against the prefix rather than
-  reporting false drift. If HEAD has moved or the branch differs, warn the user:
-  findings may reference lines that have since shifted. This does not abort the run — step 3
-  re-verifies every finding anyway — but a large drift is worth flagging up front.
+  reporting false drift.
+
+  **Check the branch first, and on its own.** Whether you are on the right branch is a different
+  question from where HEAD sits, and the three-step classification below answers only the second.
+  If `git rev-parse --abbrev-ref HEAD` does not equal the report's branch, stop and confirm with
+  the user before touching anything: a report pinned on `chore/a`, applied in a session sitting on
+  `chore/b` branched off that same commit, passes item 1 and exits 0 at item 2 — so the
+  classification reports "savepoints landed since the review: the expected steady state", which is
+  reassuring output for findings being applied to the wrong branch. Nothing downstream consumes
+  the branch name, so this is the only place the mismatch can surface. A deliberate cross-branch
+  apply is legitimate — a report re-used on a follow-up branch — but it has to be the user's
+  choice rather than an unremarked default.
+
+  If HEAD has moved, **classify the mismatch with
+  commands, not impressions** (ADR-0069) — `git log <sha>..HEAD` alone cannot do it: it runs
+  happily from a dangling SHA and prints the whole branch, which reads as "the intervening
+  commits" in exactly the case it isn't. In order:
+  1. `git cat-file -e "<report sha>^{commit}"` — if this fails the SHA is unknown or gc'd:
+     report the anchor as unresolvable, skip to the tree comparison below, and lean on step 3.
+     Quote the whole revision, as written: unquoted, PowerShell splits `^{commit}` off and git
+     rejects the remains (exit 129, measured), so a perfectly live anchor reads as gc'd and the
+     early warning this classification exists to give is lost. Run these with the Bash tool.
+  2. `git merge-base --is-ancestor "<report sha>" HEAD` — exit 0 means savepoints landed since
+     the review: the expected steady state, and the enumeration is the useful output. Run
+     `git log <report sha>..HEAD --oneline`, name what the intervening commits touched, and
+     give findings citing those files extra care in step 3.
+  3. Not an ancestor (or unresolvable): compare the report's recorded **tree hash** against
+     `git rev-parse 'HEAD^{tree}'`. A match means `/ship`'s collapse rewrote the savepoints
+     into one commit over the identical tree — explained, not drift; the report's per-commit
+     SHAs are gone by design. A recorded hash that does **not** match is **real drift** — warn
+     the user: findings may reference lines that have since shifted. A report carrying **no**
+     tree hash is a third outcome, not the second: say the anchor is unavailable and that the
+     mismatch is therefore unclassifiable, and lean on step 3's per-finding re-verification.
+     `/review-handoff` records the field, but only reports written after it began to are
+     obliged to carry one — reading absence as drift would fire a false alarm on every older
+     report, which is the alarm ADR-0069 exists to remove rather than relocate.
+     **A field reading `unknown — prep skipped` is that same third outcome, not a mismatch.**
+     `/review-handoff` writes that sentinel whenever it cannot honestly anchor the hash — prep
+     was skipped, or HEAD had moved past the reviewed SHA — and the same wording carries in the
+     `Branch / HEAD` line, which already has its own sentinel clause below. Treat the two fields
+     alike: the sentinel is not a hash, it can never match, and reading it as a *recorded* hash
+     fires the drift alarm on exactly the reports that already declared they could not anchor
+     themselves.
+
+  Neither case aborts the run — step 3 re-verifies every finding anyway — but unexplained
+  drift is worth flagging up front.
   If the SHA reads `unknown` (the review's reviewed commit was never pinned — prep was skipped),
   there is nothing to compare against: skip the drift check, note that the early-warning is
   unavailable, and lean entirely on step 3's per-finding re-verification.
@@ -80,6 +133,52 @@ skill). For ADR or index edits, run `python scripts/check_adr_index.py`; always 
 `python scripts/check_spec_links.py` (it validates link targets anywhere in the repo, so a
 change *outside* `specs/` can break a spec link). Report a gate that comes back red — never paper
 over it.
+
+**Then checkpoint the batch: run `/savepoint`** (ADR-0069) — containment scan, the explicit
+path list of what this batch changed, commit. This is the highest-leverage savepoint site: it
+puts a revert point behind the verified work and a commit boundary exactly where step 5's next
+smoke pass starts its diff. A batch that produced no edit has nothing to checkpoint — skip.
+
+**Tag it `[x<N>]`**, where `N` is which external review this is — the report you are applying is
+round `N`'s. This skill is the only place that knows that number: `/savepoint` cannot derive it,
+and an untagged checkpoint here is what leaves a branch reading as an undifferentiated pile. If
+the branch's own log does not tell you `N` (a report applied in a fresh session), read the highest
+`N` already used and add one:
+
+```bash
+mb=$(git merge-base origin/main HEAD)
+[ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
+git log --oneline "$mb"..HEAD | grep -oE '\[x[0-9]+\]' | grep -oE '[0-9]+' | sort -n | tail -1
+```
+
+**No output does not by itself mean this is `[x1]`.** It means no *tagged* round, which is equally
+what a branch that adopted the convention mid-flight looks like — this one included, its first two
+external rounds predating the tag. When the query comes back empty, count the reports instead.
+Step 1 does not already do this for you: it walks the sibling scratchpads only in its
+no-path-passed branch, and it takes the *newest* rather than enumerating them, so this is a search
+of its own — go up from your scratchpad to the per-project directory and list, oldest first:
+
+```bash
+ls -1 <per-project dir>/*/scratchpad/code-review-<branch, / flattened to ->-*.md | sort
+```
+
+The report you are applying should be the last line, and its 1-based position is `N`. **That is
+evidence, not an answer.** It holds only while every round produced exactly one report and every
+report was applied, and neither is guaranteed: a re-run of `/review-handoff` writes a second file
+for a single round, and a review abandoned before `/apply-review` leaves a report no `[x…]` tag
+will ever match. Both inflate `N`. So if the count disagrees with the tags, or the report in your
+hand is not the newest line, **ask the user** instead of choosing — a wrong number is worse than
+none, which is `/savepoint` step 3's rule and the reason for all of this.
+
+Three details of the query earn their keep for the same reason. The pattern requires the closing bracket immediately after the digits, so it matches the
+batch tag `[x2]` and **not** the smoke tags `[x2s1]`…`[x2s3]` this same skill adds a few lines
+below — a bare `[x…]` match would count those too, turning one applied review into four and
+tagging the next batch `[x5]`. Take the **highest** `N` rather than a count, since a batch that
+produced no edit leaves no tag and a count then re-issues a number already on the branch. And the
+merge base carries the same guard its three siblings in `/land` and `/ship` do: unguarded, a
+failed substitution leaves `git log --oneline ..HEAD`, which git accepts, exits 0 on, and prints
+nothing for (measured) — indistinguishable from a branch with no prior rounds, so the fourth
+external review would be tagged `[x1]`.
 
 ## 5. Re-run the reviewers on what you changed
 
@@ -152,6 +251,17 @@ trade off.
 - **From round 2 on, only defects reopen the loop** — correctness, spec conformance, test
   validity. A cosmetic note can still be applied; it just does not earn another round. Report it
   in step 6 either way. That is what makes the loop terminate.
+- **A round that edits ends with a `/savepoint`** — scan, path list, commit, tagged
+  **`[x<N>s<M>]`** for smoke pass `M` inside external review `N`'s apply — before the next
+  round's teardown + setup (ADR-0069). These local passes are **smokes**, not reviews: that
+  skill's step 3 owns the vocabulary and the reason, and the short version is that "review"
+  belongs to the purchased external loop and a smoke never counts as one. The tag is what makes
+  the loop legible afterwards: a branch showing `[x2s1]`…`[x2s4]` says one review's findings took
+  four passes to settle, which is the signal that a fix shape is wrong rather than merely
+  incomplete. The next setup then pins a clean tree through the
+  launcher's branch-diff path, and the round boundary becomes diffable
+  (`git diff <previous round's sha> HEAD`) instead of an assertion the next reviewer takes on
+  trust. A round whose only outcome was `already-resolved`/unconfirmed has no edit to checkpoint.
 - **A round that edits re-runs step 4's gates, not just the reviewers.** This section's own thesis
   applies to a gate run: step 4 passed on the pre-round code, so a reviewer-round fix that breaks
   ruff, pyright, pytest, `check_adr_index.py`, or `check_spec_links.py` would otherwise be reported
@@ -161,14 +271,19 @@ trade off.
 
 ## 6. Report outcomes
 
-Do **not** commit — landing is `/land` + `/ship`'s job unless the user asks. End with:
+Do **not** make the landing commit — that is `/land` + `/ship`'s job unless the user asks. The
+`/savepoint` checkpoints in steps 4 and 5 are the deliberate exception (ADR-0069): local
+scaffolding `/ship` collapses, not a landing. End with:
 
 1. A per-finding table: `fixed` / `already-resolved` / `skipped (reason)` / `needs-user-decision`,
    one row each, so nothing in the report is silently dropped.
 2. What you changed, by file, and the result of the gates you ran.
-3. The reviewer rounds from step 5 — how many ran, **which mode each ran in** (isolated, or the
-   sequential live-tree fallback), each round's verdict (**pass** / **pass with notes** /
-   **fail**), and what each one changed. `/land` step 6 asks what changed since the last pass
+3. The smoke passes from step 5 — how many ran, **which mode each ran in** (isolated, or the
+   sequential live-tree fallback), **each round's anchor** — the `git rev-parse HEAD` and
+   `HEAD^{tree}` values recorded at its launch (`.claude/reviewer-isolation.md` § Launch; the
+   commit SHA dangles after `/ship`'s collapse, the tree hash survives it — without them here
+   the recorded anchor dies with the session and the drift check it exists for reads nothing) —
+   each round's verdict (**pass** / **pass with notes** / **fail**), and what each one changed. `/land` step 6 asks what changed since the last pass
    *and in which mode it ran*; this is the answer to both, and it is the *only* record of them —
    nothing is written to disk, so a record omitting the mode leaves `/land`'s fallback check
    nothing to read and an unmutated pass gets counted as equivalent. If `/land` runs in a later

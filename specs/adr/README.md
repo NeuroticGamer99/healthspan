@@ -121,3 +121,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0066](0066-startup-permission-verification.md) | Startup Permission Verification for the Database, Sidecar, and Passphrase File (extends ADR-0049) | Proposed |
 | [ADR-0067](0067-unrepliable-finding-acknowledgement.md) | PR-Level Acknowledgement Clears Unrepliable Bot Findings | Proposed |
 | [ADR-0068](0068-reviewer-isolation-worktrees.md) | Reviewer Isolation via Stash-Snapshot Worktrees | Proposed |
+| [ADR-0069](0069-local-checkpoint-commits.md) | Local Checkpoint Commits via /savepoint | Proposed |

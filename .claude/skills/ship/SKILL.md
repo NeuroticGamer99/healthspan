@@ -32,10 +32,43 @@ opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every
 `/land` proposes; `/ship` disposes. Stop and report at any step that fails; never push past a red
 gate.
 
+**The git recipes in this file are Bash — run them with the Bash tool, not PowerShell.** The
+guards below (`[ -n "$mb" ]`, `{ …; exit 1; }`) are Bash syntax, and git's `^{commit}` revision
+suffix is mangled by PowerShell's parser unless the whole revision is quoted — which here it is,
+deliberately. This matters most at the collapse: it is the only history rewrite in the skill
+chain, and a guard that fails to parse is a guard that does not run. Step 3's note on writing the
+PR body is the deliberate exception and stays as it is: its subject is file *encoding*, not git,
+and the PowerShell form it names writes UTF-8 without a BOM correctly.
+
 ## 1. Preconditions
 
-- `/land` has run in this session and proposed a commit message the user has seen. If it hasn't,
-  run `/land` first and stop — never invent a commit message here.
+- `/land` has run and proposed a commit message the user has seen, and wrote it to
+  `<scratchpad>/commit-msg/<branch>.txt`, with the exact branch name beside it in
+  `<scratchpad>/commit-msg/<branch>.branch` (its step 7). **Read the message from that file** — it
+  is the approved copy — and **check the sidecar before using it**: its single line, trailing
+  newline and any carriage return or BOM ignored, must equal `git rev-parse --abbrev-ref HEAD`.
+  Compare the trimmed line rather than raw bytes — the file is written on Windows, where a tool can
+  emit CRLF against `.gitattributes eol=lf`, and a correct ship blocked by a line ending is how an
+  operator learns to skip the check. Anything else is a mismatch. In detached HEAD `rev-parse`
+  answers the literal `HEAD`, which no sidecar holds, so that state fails closed — correctly, since
+  there is no branch to push. The path is a hint, not a proof of ownership: on Windows, *which*
+  file a branch-derived path names depends on which API resolves it, and `/land` step 7 carries the
+  full measured breakdown for the legal branches `a./b` and `a/b`. What it means here is that a file
+  sitting at exactly the expected path can still hold another work item's message — a .NET or
+  PowerShell read of `a./b` returns `a/b`'s contents silently (measured) — and committing that
+  would ship the wrong `Decisions:` links onto this branch. **The sidecar closes this without
+  needing to know which layer misbehaved**, which is the point of resting on a checked value: any
+  wrong read yields some *other* branch's name, and that mismatches `git rev-parse --abbrev-ref
+  HEAD`. Do not reason about which layer is the safe one; `/land` step 7 records why that ranking
+  does not hold. A missing or mismatched sidecar is "no file": stop and
+  re-run `/land`, never reconcile it by hand. If `/land` ran
+  in an earlier session, the file is under *that* session's scratchpad — ask the user for the
+  path rather than re-deriving the prose from memory or transcript. **Then verify the trailer
+  before using the file**: its `Co-Authored-By` must name the model running *this* session
+  (read the model from the system prompt). A file written by an earlier session can carry that
+  session's model, and nothing else will ever notice — on mismatch, stop and re-run `/land`;
+  never edit the trailer here. If no matching file and no `/land` run exists, run `/land`
+  first and stop — never invent a commit message here.
 - Re-run the gates if anything changed since `/land`, or if you are unsure. Read the pinned
   versions out of the `env:` block of `.github/workflows/ci.yml` (`RUFF_VERSION`,
   `PYRIGHT_VERSION`, `PYTEST_VERSION`) — match CI, don't guess:
@@ -57,11 +90,146 @@ gate.
   A gate that has gone red since `/land` stops the ship.
 - Confirm the branch is not `main`. If it is, stop — branch first.
 
-## 2. Commit and push
+## 2. Collapse savepoints, commit, and push
 
-- Commit with the message `/land` proposed, unchanged, including its `Decisions:` section.
-- The co-author trailer must name the model running **this** session — read it from the system
-  prompt; never carry a trailer forward from an earlier commit.
+- **Decide "has it ever been pushed" by asking the remote, never the cache**:
+  `git ls-remote --exit-code --heads origin "refs/heads/<branch>"`. A local tracking ref is stale
+  evidence in both directions — `git fetch --prune` drops it while the remote branch may have been
+  recreated, and a push from another clone or worktree never created it here — and this guard
+  protects ADR-0069's only history rewrite, so it gets the authoritative probe (`/squash-merge`
+  step 1 fetches first for the same class of hazard). Two details of the probe are load-bearing:
+  - **Give it the full ref, not the bare branch name.** A bare name matches on the ref *tail*, so
+    `git ls-remote --exit-code --heads origin python-5caa5761e1` exits 0 against this repo's own
+    origin, printing `refs/heads/dependabot/pip/python-5caa5761e1` (measured). Any local branch
+    whose name equals the last segment of some remote branch — `savepoint-skill` against a remote
+    `chore/savepoint-skill` — then reads as already-pushed, skips the collapse, and is first-pushed
+    with a savepoint as its first commit: the state this skill says breaks `/squash-merge`'s
+    first-commit extraction. `refs/heads/<branch>` is anchored and exits 2 on the same probe.
+  - **Classify all three outcomes, and fail closed on the third.** Exit 0 the remote has it; exit 2
+    it does not; **any other exit is no evidence either way** — 128 covers an unreachable host, an
+    unknown remote name, and an expired credential (measured). Do not read "not 2" as pushed, nor
+    "not 0" as never-pushed: the first silently skips the collapse, the second aims `reset --soft`
+    at history this session knows nothing about. Stop and report instead.
+- **If the branch carries savepoint commits and the remote does not have it**, collapse them
+  first (ADR-0069). Make a final `/savepoint` if **`git status --porcelain` prints any line at
+  all — `??` untracked lines included** (that skill's containment scan and explicit path list are
+  the only way work enters a commit here — never stage leftovers with `git add -A`). Do not reach
+  here for `/land` step 7's **tracked-modified, not dirty** discriminator: that one exists because
+  `git stash create` cannot hash untracked state, and it is the wrong test for this question.
+  Applied here it reads an untracked-only tree as nothing-to-do, skips the checkpoint, and
+  collapses a branch whose new files were never staged — so they are never pushed. ADR-0069's
+  problem statement records that exact tree: the ADR-0068 branch carried seven untracked files,
+  including its largest. Then resolve and check the base **before any reset**:
+
+  ```bash
+  git fetch origin --quiet
+  mb=$(git merge-base origin/main HEAD)
+  [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
+  git reset --soft "$mb"
+  git commit -F <scratchpad>/commit-msg/<branch>.txt
+  ```
+
+  The **fetch** comes first because `git merge-base origin/main HEAD` reads the local tracking
+  ref: a stale `origin/main` resolves the base further back than it truly is, and `reset --soft`
+  then folds commits that are already upstream into this PR's single composed commit
+  (`/squash-merge` step 1 fetches ahead of the same class of hazard, and says so). The **guard**
+  exists because an empty `mb` fails two different ways and only one of them is loud. Quoted, as
+  written above, `git reset --soft ""` exits 128 on `fatal: ambiguous argument ''` (measured) —
+  caught by this skill's stop-on-failure rule. Unquoted, the same emptiness leaves a bare
+  `git reset --soft`, a silent no-op to HEAD: the collapse skipped with no error and a savepoint
+  pushed as the branch's first commit. The guard makes the outcome independent of that quoting,
+  and it additionally catches a merge base that resolves to no object at all, which no amount of
+  quoting would. Resolve `mb` in the same Bash call that uses it; shell variables do not
+  survive between Bash tool invocations, and an empty `mb` is precisely what the guard is for.
+  The checkpoints were local scaffolding; public history gets the single composed commit, same as
+  today. The reflog keeps the chunks.
+
+  **If `git commit -F` fails after the reset, put the tip back before reporting:**
+
+  ```bash
+  git reset --soft ORIG_HEAD
+  ```
+
+  Everything above guards the state *before* the rewrite and nothing guards the window inside it.
+  The two steps are not atomic: `reset --soft` succeeds, then `commit -F` exits 1 on an empty
+  index — reachable whenever the savepoints net to no diff against the merge base (a file added
+  by one checkpoint and removed by a later one), and equally on a mistyped or space-containing
+  `<scratchpad>` path — leaving the branch pointing at the merge base with every savepoint off
+  the tip. The stop-on-failure rule then halts exactly there. `reset --soft ORIG_HEAD` restores
+  the tip and the index (measured: `ORIG_HEAD` is set by the collapse's own reset), and "the
+  reflog keeps the chunks" is the archaeology, not the recovery — name the command rather than
+  leaving an operator to derive it from a reflog at the one moment the branch looks destroyed.
+- **If the remote has the branch, never reset** — the collapse window has passed and the PR
+  history is what it is. Rewriting pushed history is not this skill's call. What to do instead
+  turns on where the new work sits, and "commit on top with the same `-F` file" is right for
+  only one of the three cases:
+  - **Tree dirty** — the new work is uncommitted. Stage it exactly as the next bullet does
+    (`/savepoint`'s scan and explicit path list, never `git add -A`) and commit on top with the
+    same `-F` file.
+  - **Tree clean, new work already in savepoint commits** — the ordinary shape of a *second*
+    ship, since `/apply-review` checkpoints every finding batch and every reviewer round. There
+    is nothing to commit: `git commit -F` against an empty index exits 1, and running it here
+    is how the second ship of any branch dies. Push the savepoints as they stand and say so.
+    Their subjects become PR history, which is harmless — `/squash-merge` composes the merge
+    from the **first** commit's body, and that is still `/land`'s message from the first ship.
+    **Say the other half out loud too: the message the user just approved was not used.**
+    Invoking `/ship` is an approval (this skill's opening line), and on this path the freshly
+    composed message is verified by step 1 and then goes nowhere — the merge body still comes
+    from the first ship's. Silence here reads as "landed", and the divergence surfaces at merge
+    time or never. Name the file, say it is unconsumed, and tell the user that if *this* text is
+    what they want on the merge, `/squash-merge` is where it goes.
+  - **Tree clean, nothing ahead of the remote** — nothing to commit and nothing to push; say so
+    and go to step 3, where an existing PR is reused.
+
+  The collapse guarantee therefore rests on a stated precondition: **this
+  skill is the only route by which a branch is first pushed** (already the standing rule — pushes
+  go through skills, never hand-rolled commands). A branch pushed around `/ship` with savepoints
+  uncollapsed leaves a savepoint as its first commit, which also breaks `/squash-merge`'s
+  first-commit-is-the-composed-message extraction — if you inherit that state, say so and let
+  the user decide rather than resetting a pushed branch.
+- On a branch with no savepoints (nothing between the merge base and `HEAD`), **stage the work
+  the same way a savepoint would** — nothing has staged it yet, and `git commit -F` against an
+  empty index exits 1 (or, worse, commits only a stray pre-staged file): run `/savepoint`'s scan
+  and explicit `git add` path list over the change, then `git commit -F
+  <scratchpad>/commit-msg/<branch>.txt`.
+- **On each path that commits from the `-F` file** — the collapse, the tree-dirty commit-on-top,
+  and the no-savepoints branch — the message is `/land`'s file, unchanged, including its
+  `Decisions:` section and the co-author trailer step 1 verified. **Then read the commit back**:
+
+  ```bash
+  git log -1 --format=%B > <scratchpad>/commit-msg-landed.txt
+
+  # Normalize both sides identically before comparing — `--format=%B` appends a
+  # trailing newline the file does not carry, so an unnormalized diff fails on a
+  # message that landed perfectly. Same rule, and the same reason, as step 3's
+  # PR-body diff and /squash-merge step 4.
+  printf '%s\n' "$(cat <scratchpad>/commit-msg/<branch>.txt)"  > <scratchpad>/expected-msg.txt
+  printf '%s\n' "$(cat <scratchpad>/commit-msg-landed.txt)"    > <scratchpad>/landed-msg.txt
+  diff <scratchpad>/expected-msg.txt <scratchpad>/landed-msg.txt
+  ```
+
+  `git commit -F` applies whitespace cleanup (trailing whitespace stripped, consecutive blank
+  lines collapsed — measured, not hypothetical), so the one artifact this mechanism exists to
+  keep faithful is otherwise the one never checked. Whitespace-only deltas are that cleanup —
+  fine; any word-level delta stops the ship. The normalization is not decoration: raw, the two
+  files differ by that one appended newline and `diff` exits 1 on a correct landing (measured), so
+  **every** ship reports a red gate — and under this skill's own "never push past a red gate" rule
+  that either stops good ships or teaches the operator to ignore the one check standing between
+  the approved text and public history. The second outcome is the worse one.
+
+  **Do not run this on the paths that make no commit from the file** — "tree clean, new work
+  already in savepoint commits" and "tree clean, nothing ahead of the remote". There `git log -1`
+  answers the last *savepoint* subject, which mismatches the composed message at word level by
+  construction, so the rule above would stop a legitimate push over a commit deliberately not
+  made. Both sit under the **already-pushed** bullet, which carries its own reporting
+  instructions — that is where their coverage comes from, not from this check.
+
+  The normalization is narrower than it looks, which is why it is safe to apply unconditionally
+  here: command substitution strips *trailing newlines* and `printf` restores exactly one, so the
+  only difference it can hide is how many newlines a file ends with. Measured against the rest —
+  trailing whitespace on a line, extra interior blank lines, a changed word, a dropped trailer —
+  every one still differs after normalizing. Interior blank lines in particular survive it, so
+  git's collapse of them remains visible and remains a judgement call under the rule above.
 - Push, setting upstream on a new branch: `git push -u origin <branch>`.
 
 ## 3. Open or update the PR
