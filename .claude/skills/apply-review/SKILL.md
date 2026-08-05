@@ -166,9 +166,15 @@ The report you are applying should be the last line, and its 1-based position is
 evidence, not an answer.** It holds only while every round produced exactly one report and every
 report was applied, and neither is guaranteed: a re-run of `/review-handoff` writes a second file
 for a single round, and a review abandoned before `/apply-review` leaves a report no `[x…]` tag
-will ever match. Both inflate `N`. So if the count disagrees with the tags, or the report in your
-hand is not the newest line, **ask the user** instead of choosing — a wrong number is worse than
-none, which is `/savepoint` step 3's rule and the reason for all of this.
+will ever match. Both inflate `N`.
+
+**So confirm the number with the user before committing it — always, on this path, not only when
+something looks wrong.** You reach this fallback precisely because the tag query came back empty,
+which makes report counting the *only* source for `N` by construction; there is nothing left to
+cross-check it against, and a rule that says "ask when the count disagrees with the tags" is
+vacuous exactly here, where no tags exist. Show the count, the report list it came from, and the
+report in your hand, and let the user confirm or correct it. A wrong number is worse than none —
+`/savepoint` step 3's rule, and the reason for all of this.
 
 Four details of the query earn their keep for the same reason. The pattern requires the closing bracket immediately after the digits, so it matches the
 batch tag `[x2]` and **not** the smoke tags `[x2s1]`…`[x2s3]` this same skill adds a few lines
