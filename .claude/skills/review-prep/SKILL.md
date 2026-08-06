@@ -47,7 +47,29 @@ and gives `/review-handoff` a source of truth better than fallible conversation 
 ```
 
 Sanitize `/` in the branch name to `-`; write it with the **Write tool** (never PowerShell
-redirection — encoding corruption). Record:
+redirection — encoding corruption).
+
+**That filename is a hint, not proof of ownership**, and it matters more since this carrier gained
+a tree hash. Flattening is not injective — `feat/x` and `feat-x` land on one name — and `/land`
+step 7 records the wider case: on Windows even the unflattened path form collides, because
+components lose trailing dots and spaces. So a stale carrier from a sibling branch sits at exactly
+the expected path, and every value in it is individually plausible. Because `/apply-review`'s drift
+classification keys on the tree hash below, a foreign carrier does not fail loudly — it answers
+that check confidently and wrongly. The **Branch** field is what makes the case detectable:
+`/review-handoff` compares it before trusting anything else here. Record it even though it looks
+redundant against the filename; it is the one line in this file that is a check rather than a
+convenience.
+
+**The residual, stated rather than left implied** — `/land` step 7 states its own for the same
+collision class, and an unstated one reads as a guarantee. This step still *writes* the carrier
+unconditionally, so a colliding branch's prep run overwrites the earlier carrier and that file is
+gone. What the `Branch` check buys is that the loss is never silent downstream: the overwritten
+carrier fails `/review-handoff`'s comparison and the report falls back to its no-carrier rules,
+rather than a foreign SHA and tree hash being recorded as this review's anchors. Detection, not
+prevention — accepted here because a carrier is cheap to regenerate by re-running prep, whereas
+`/land`'s message is not, which is why that one earned a sidecar and this one does not.
+
+Record:
 
 - **Scope command and file count** — the exact diff command from step 1 and its `wc -l` count.
   This is the one datum that must not be reconstructed later (a re-derived range can misrepresent
@@ -57,6 +79,26 @@ redirection — encoding corruption). Record:
   transcription time; a mismatch means you committed between the review and the handoff, and the
   report must record *this* reviewed SHA, not the later one.
 - **Short SHA** — `git rev-parse --short HEAD`, for the report title.
+- **Tree hash** — `git rev-parse 'HEAD^{tree}'`. The SHA above anchors the review only while the
+  branch's commits stand; `/ship`'s collapse (ADR-0069) rewrites a savepoint branch into one
+  commit, leaving every recorded pre-collapse SHA dangling, and the tree is what survives that
+  unchanged. It is the anchor `/apply-review` step 1 item 3 falls back on to tell an explained
+  collapse from real drift, so a carrier without it reduces that check to a warning it cannot
+  resolve.
+
+  **Both anchors describe committed state only — say so when the tree is not clean.** Step 1
+  explicitly permits reviewing uncommitted work, and neither `HEAD` nor `HEAD^{tree}` moves when
+  the working tree does, so on a dirty tree these values name something the review did not look
+  at. That is worse than a missing anchor: `/apply-review` step 1 item 3 would compare against
+  them and answer *explained* on the strength of a value that never described the reviewed state,
+  which is the confident-and-wrong outcome `/review-handoff` calls "worse than none". Prefer
+  pinning a clean tree — a `/savepoint` before prep costs one commit and makes both anchors exact,
+  which is the practice ADR-0069 institutes. If the scope must stay dirty, record that in the
+  carrier beside the values rather than letting a committed-tree hash stand in for the reviewed
+  one, and hash the uncommitted material explicitly: `git stash create` covers tracked
+  modifications and untracked files need `git hash-object` per path.
+  `.claude/reviewer-isolation.md` § The two invariants, invariant 1 owns that split and the
+  reasons; do not restate them here.
 
 `/code-review` is read-only and does not move HEAD, so these values stay correct for the review as
 long as *you* do not commit before running `/review-handoff`.

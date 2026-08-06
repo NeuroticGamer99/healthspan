@@ -34,7 +34,17 @@ findings and calls no `ReportFindings` — that is expected, not a gap).
 
 Also recover the scope and metadata the report records. First read `/review-prep`'s carrier file if
 it exists — `<scratchpad>/review-prep-<branch>.md` in this session's scratchpad directory (branch
-`/` sanitized to `-`); it is the on-disk source of truth that survives compaction. Then:
+`/` sanitized to `-`); it is the on-disk source of truth that survives compaction.
+
+**Check the carrier's recorded `Branch` against `git rev-parse --abbrev-ref HEAD` before using any
+value in it, and treat a mismatch as no carrier at all** — say so in the report and fall through to
+the no-carrier rules below. The sanitized filename cannot establish ownership: `feat/x` and `feat-x`
+resolve to one carrier, and on Windows so do `a./b` and `a/b`, whose path components lose trailing
+dots (`/land` step 7 carries the measurements and the sidecar it built for the same problem). A
+foreign carrier is the dangerous shape rather than the obvious one — its SHA and tree hash are real
+values from a real branch, just not this one, so accepting them produces a report that answers
+`/apply-review`'s drift check with a confident wrong classification: precisely what the tree-hash
+rule below calls "worse than none". Then:
 
 - **Diff scope** — prefer the range `/code-review` itself stated it reviewed; that is what was
   actually inspected. Fall back to the carrier file's pinned scope only when the review said nothing
@@ -55,6 +65,12 @@ it exists — `<scratchpad>/review-prep-<branch>.md` in this session's scratchpa
   named one; otherwise record the SHA as `unknown — prep skipped`, say so in the digest, and
   recommend rerunning via `/review-prep` for a drift-checkable report. The branch name is still safe
   to re-derive (`git rev-parse --abbrev-ref HEAD`); it is the SHA that must not be fabricated.
+- **Tree hash** — travels with the SHA and under the same rule: take `/review-prep`'s captured
+  value, or measure `git rev-parse 'HEAD^{tree}'` yourself *only* when HEAD still matches the
+  recorded SHA. It is the anchor that outlives `/ship`'s collapse (ADR-0069), which dangles every
+  pre-collapse commit SHA, so a report without it leaves `/apply-review` unable to tell an
+  explained collapse from real drift. A tree measured at a HEAD the review never saw is worse
+  than none — it answers that check confidently and wrongly; record `unknown — prep skipped`.
 - **Areas reviewed clean** — take these from the review's own output *only if it enumerated them*.
   A bare findings list (inline JSON or `ReportFindings`) names findings, not clean areas; when the
   review did not state its clean coverage, write "not stated by the review" rather than inferring it
@@ -79,6 +95,7 @@ but has seen neither this conversation nor the review's own output. Structure:
 
 - Generated: <UTC timestamp>
 - Branch / HEAD: <branch> / <full sha, or `unknown — prep skipped` when no carrier and the review named no commit>
+- Tree hash: <the carrier's tree hash, or a fresh `git rev-parse 'HEAD^{tree}'` **only** when it corresponds to the recorded SHA — i.e. HEAD has not moved since the review; otherwise `unknown — prep skipped`. Never a tree hash measured at a HEAD the review did not see: it would answer `/apply-review`'s drift check with the wrong "explained".>
 - Diff scope: `<exact command, e.g. git diff origin/main...HEAD>` — <N> files changed (or `unknown — not pinned` when neither the review nor a prep carrier fixed the range). Give `<N>` only when the review stated it, or a carrier whose pinned range matches the reviewed range supplies it; otherwise write `file count not stated by the review` — never recompute it (that reconstructs scope), and never reuse a carrier count whose range disagrees with the reviewed range.
 - Effort: <the effort actually run — `high` unless the user chose otherwise>
 - Verification: <what actually ran — e.g. "high effort: finder angles + dedup, no verify pass; the Verdict lines below are the review's confidence, not machine-verified">
