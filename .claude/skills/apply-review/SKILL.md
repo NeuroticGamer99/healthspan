@@ -156,10 +156,12 @@ what a branch that adopted the convention mid-flight looks like — this one inc
 external rounds predating the tag. When the query comes back empty, count the reports instead.
 Step 1 does not already do this for you: it walks the sibling scratchpads only in its
 no-path-passed branch, and it takes the *newest* rather than enumerating them, so this is a search
-of its own — go up from your scratchpad to the per-project directory and list, oldest first:
+of its own — go up from your scratchpad to the per-project directory and list, oldest first, with
+`<branch-flat>` standing for the branch name with every `/` replaced by `-` (the report filename
+convention `/review-handoff` documents):
 
 ```bash
-ls -1 <per-project dir>/*/scratchpad/code-review-<branch, / flattened to ->-*.md | sort
+ls -1 <per-project dir>/*/scratchpad/code-review-<branch-flat>-*.md | sort
 ```
 
 The report you are applying should be the last line, and its 1-based position is `N`. **That is
@@ -275,8 +277,16 @@ trade off.
   matters because an apply resumed in a fresh session has no other memory of how many smokes ran —
 
   ```bash
+  mb=$(git merge-base origin/main HEAD)
+  [ -n "$mb" ] && git cat-file -e "$mb^{commit}" || { echo "no merge base — stop"; exit 1; }
   git log --oneline "$mb"..HEAD | sed -nE "s/^[0-9a-f]+ \[x${N}s([0-9]+)\].*/\1/p" | sort -n | tail -1
   ```
+
+  The resolution and guard are repeated here rather than inherited from step 4's block, because
+  this snippet runs in a *different* Bash call and shell variables do not survive between calls —
+  the rule this file already states, and the rule this block shipped once violating: copied alone,
+  an empty `$mb` leaves `git log --oneline ..HEAD`, which exits 0 printing nothing, so `M`
+  silently derives as `1` and a smoke number gets reused.
 
   No output means this is `s1`. A gap in the sequence is information rather than an error — a smoke
   that found nothing has no edit to checkpoint, so a missing number means a clean pass — which is
