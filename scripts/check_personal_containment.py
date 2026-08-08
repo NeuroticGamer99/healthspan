@@ -14,10 +14,11 @@ surfaced by a review pass that had just reported the scan clean. **How many
 passes that was, and how the holes distributed across them, is deliberately not
 stated here** — including by implication: "each hole found by a different pass"
 would assert a one-to-one mapping just as firmly as a numeral, and that mapping
-is precisely what no two of these documents agreed on. The figure was restated
-incompatibly across four of them and the contradiction was caught by a bot
-rather than by any of us; a count that drifts is worth less than the mechanism
-it summarises, and the enumerated list below is the thing that has to be right.
+is precisely where these four documents diverged. Three of them asserted it
+over six passes while this one recorded six holes across four passes, which
+cannot both be true; the contradiction stood in plain sight until a bot read
+them side by side. A count that drifts is worth less than the mechanism it
+summarises, and the enumerated list below is the thing that has to be right.
 The ledger is in ``specs/open-questions.md`` under the repo-invariants register
 entry. Enumeration is ordinary code; content is judgement and stays prose in
 ``/land`` and ``/savepoint``. This script owns the first half only, and

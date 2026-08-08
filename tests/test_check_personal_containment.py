@@ -1098,7 +1098,11 @@ def test_the_mid_loop_refusals_examined_count_reaches_the_operator(
     assert gate.main(["--scope", "worktree"]) == 1
     out = capsys.readouterr().out
     assert "cannot be read consistently" in out, "the refusal itself is reported"
-    assert f"{gate.STAGED_CONTENT} 1" in out, (
+    # The trailing annotation is part of the match on purpose: a bare
+    # `"staged-content 1"` is an unanchored prefix, so it would also pass on
+    # `staged-content 12` -- an assertion that survives a wrong count is the
+    # shape this file keeps finding in its own tests.
+    assert f"{gate.STAGED_CONTENT} 1 (bytes verified)" in out, (
         "the staged source and its count survive check()'s merge and reach the "
         "evidence line, rather than the line dropping the source entirely and "
         "reading as a scan that verified no bytes at all"

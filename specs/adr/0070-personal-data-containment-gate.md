@@ -15,7 +15,7 @@ That row is the only one in the register with **measured repeated failure**, and
 5. the prose guard was case-sensitive and missed the bare path, while the repo's own *tested* launcher guard already casefolded and covered both;
 6. the history scan listed paths while the content instruction inspected *current* files, so a value committed then sanitized rode the push invisibly.
 
-Three fixes, three rounds, three new holes. **All six fall in the rule's _enumeration_ half — which paths does this change touch — and none in its _content_ half — is this value real or synthetic.** Recording them as one rule is what let six enumeration bugs read as an irreducibly manual control.
+Items 1–3 arrived in that sequence — three fixes, three rounds, three new holes — which is the shape that made the case for mechanizing rather than repairing the prose a fourth time; the sentence is about those three and not about all six. **All six fall in the rule's _enumeration_ half — which paths does this change touch — and none in its _content_ half — is this value real or synthetic.** Recording them as one rule is what let six enumeration bugs read as an irreducibly manual control.
 
 ## Decision Drivers
 - Enumeration is ordinary code with a decidable answer; content is judgement with none. The observed defect distribution (6–0) says exactly where mechanization pays.
