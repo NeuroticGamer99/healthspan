@@ -73,6 +73,7 @@ as UTF-8.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import subprocess
@@ -217,6 +218,14 @@ def md_sources() -> list[Path]:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            # surrogateescape, not strict and not "replace": `-z` output is raw
+            # filename bytes, and a non-UTF-8 name (creatable on POSIX
+            # filesystems) must neither crash the gate (strict) nor be
+            # corrupted into a path that resolves to nothing and silently
+            # drops the file from the scan (replace). This is os.fsdecode's
+            # own convention, so the escaped path round-trips back to the
+            # real file.
+            errors="surrogateescape",
             check=False,
         )
         if proc.returncode != 0:
@@ -270,4 +279,16 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Inside the `__main__` guard on purpose, and neither at module scope nor
+    # in `main()` -- scripts/check_personal_containment.py documents the
+    # measured reasons (pytest's capture streams are TextIOWrapper subclasses,
+    # so the other placements reconfigure the test session's own streams).
+    # Needed here because a reported path can carry surrogate-escaped filename
+    # bytes (see md_sources), and whether printing one crashes depends on the
+    # interpreter's UTF-8 mode -- measured: tolerated under WSL's UTF-8 mode,
+    # strict-locale Pythons raise UnicodeEncodeError, the gate crashing
+    # instead of naming the very file it found.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())

@@ -88,6 +88,11 @@ def claude_files() -> list[Path]:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # surrogateescape (os.fsdecode's convention): `-z` output is raw
+        # filename bytes, and a non-UTF-8 name must neither crash the scan
+        # (strict) nor be mangled into a path that silently drops the file
+        # (replace) -- the escaped form round-trips back to the real file.
+        errors="surrogateescape",
         check=False,
     )
     if proc.returncode != 0:
@@ -253,6 +258,27 @@ def test_a_bom_prefixed_file_is_scanned_not_crashed(
     bom_file = claude / "draft.md"
     bom_file.write_bytes(b"\xef\xbb\xbfread tasks/abc.output now\n")
     assert offending_citations([bom_file]) == [".claude/skills/draft.md:1"]
+
+
+def test_a_non_utf8_filename_is_enumerated_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same contract as the link gate's fixture: a non-UTF-8 *name* (creatable
+    # on ext4; NTFS/APFS refuse it, hence the skip) must neither crash the
+    # strict decode nor be mangled out of the scan -- the file's citation is
+    # still found.
+    claude = _synthetic_claude_repo(tmp_path, monkeypatch)
+    try:
+        # os.fsdecode itself raises on Windows (strict UTF-8 filesystem
+        # codec), so it belongs inside the guard with the write.
+        weird = claude / os.fsdecode(b"caf\xe9.md")
+        weird.write_text("read tasks/abc.output\n", encoding="utf-8")
+    except (OSError, UnicodeEncodeError, UnicodeDecodeError):  # fmt: skip
+        pytest.skip("platform cannot represent a non-UTF-8 filename")
+    assert weird in claude_files()
+    offenders = offending_citations([weird])
+    assert len(offenders) == 1
+    assert offenders[0].endswith(":1")
 
 
 def test_the_scan_reaches_the_claude_tree() -> None:

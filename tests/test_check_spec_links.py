@@ -457,6 +457,51 @@ def test_md_sources_raises_with_gits_own_explanation(
     assert "dubious ownership" in message
 
 
+def test_md_sources_survives_a_non_utf8_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `git ls-files -z` emits raw filename bytes. A non-UTF-8 name (creatable
+    # on ext4; NTFS and APFS refuse it, hence the skip guard) crashed the
+    # strict decode before any verdict; "replace" would instead mangle the
+    # path so the file silently dropped out of the scan. surrogateescape
+    # round-trips, so the file is enumerated AND its links are checked.
+    specs = _repo(tmp_path, monkeypatch)
+    try:
+        # Both statements belong inside the guard: on Windows os.fsdecode
+        # itself raises (strict UTF-8 filesystem codec), before any write.
+        weird = specs / os.fsdecode(b"caf\xe9.md")  # \xe9: invalid UTF-8 alone
+        weird.write_text("[dead](gone.md)\n", encoding="utf-8")
+    except (OSError, UnicodeEncodeError, UnicodeDecodeError):  # fmt: skip
+        pytest.skip("platform cannot represent a non-UTF-8 filename")
+    _git(["init", "-q"], tmp_path)  # untracked: the --others half enumerates it
+    assert weird in csl.md_sources()
+    errors = csl.check()
+    assert len(errors) == 1
+    assert "gone.md" in errors[0]
+
+
+def test_the_stream_reconfigure_stays_out_of_main_and_fires_from_dunder_main() -> None:
+    # Same pin as test_bot_review.py carries for its script, for the same two
+    # invisible regressions: moving the reconfigure into main() mutates
+    # pytest's own capture streams on every in-process call (every check()/
+    # main() test in this module), and deleting it reinstates the
+    # crash-on-surrogate-path bug on strict-locale consoles. Source-level
+    # because the call site is the property.
+    source = (
+        Path(__file__).resolve().parent.parent / "scripts" / "check_spec_links.py"
+    ).read_text(encoding="utf-8")
+    main_body = source.split("\ndef main(")[1].split("\nif __name__")[0]
+    assert "reconfigure" not in main_body, (
+        "the reconfigure is back inside main(), where it mutates pytest's "
+        "own capture streams for every in-process call"
+    )
+    dunder_main = source.split("\nif __name__")[1]
+    assert 'reconfigure(encoding="utf-8", errors="replace")' in dunder_main, (
+        "deleting this reinstates the UnicodeEncodeError crash when the gate "
+        "reports a surrogate-escaped path on a strict-locale console"
+    )
+
+
 def test_fallback_walk_prunes_vendored_trees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
