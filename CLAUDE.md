@@ -48,6 +48,10 @@ Always parenthesize — `except (ValueError, OSError):` — never PEP 758's bare
 
 `# fmt: skip` suits only a clause that stays on one line, because it suppresses wrapping too: a guarded line past 88 columns fails `ruff check` (E501) with no formatter fix, and the guard's own 13 characters can be what pushes it there. A longer clause needs no guard — the formatter wraps it into the parenthesized multi-line form and then leaves it alone. A trailing comma after the last exception holds that multi-line form at any length.
 
+## Subagent output pointers
+
+The harness's per-agent `tasks/<id>.output` files are reliably empty in this environment (0 bytes, measured across three multi-agent review passes; ~25 findings once survived only because a session transcribed them as they arrived). Capture each subagent's results into your own scratchpad file the moment they arrive, and never write instructions that direct a session to read those files. For `.claude/**` this is gated by `tests/test_no_task_output_citations.py`, which carries the full rationale and the re-evaluation trigger; note the gate is textual, so inside `.claude/` state the rule by description rather than quoting the literal path.
+
 ## ADR governance
 
 Before creating or modifying any file in `specs/adr/`:

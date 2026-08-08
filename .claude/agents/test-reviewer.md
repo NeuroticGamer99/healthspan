@@ -5,6 +5,8 @@ tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
 
+# test-reviewer
+
 **Editing the frontmatter above: do not add `isolation: worktree`.** The harness's own worktree
 feature checks out **committed** tracked files only; this reviewer's subject is the
 **uncommitted** tree, so it would review a change containing none of the work and report clean —

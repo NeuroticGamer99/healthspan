@@ -11,13 +11,13 @@ The counting lives in `scripts/repo_stats.py` (stdlib-only, no dependencies). Th
 
 Run the script and show its markdown table verbatim:
 
-```
+```bash
 python scripts/repo_stats.py
 ```
 
 For a machine-readable dump (feeding another tool, diffing two points in time):
 
-```
+```bash
 python scripts/repo_stats.py --json
 ```
 

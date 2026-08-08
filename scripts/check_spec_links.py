@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-r"""Verify that every relative markdown link under specs/ resolves to a file.
+r"""Verify that every relative link in the repo's markdown resolves to a file.
 
 Mechanizes the docs-integrity half of the docs-consistency CI gate
 ([ADR-0045](../specs/adr/0045-repository-workflow-and-ci-enforcement.md) §6,
-extended by ADR-0061): a cross-file link in specs/ that points at a moved or
-deleted target is a dead link, and inside an immutable Accepted ADR even the
-corrective edit carries governance ceremony. The ADR-index check
+extended by ADR-0061): a cross-file link in tracked prose that points at a
+moved or deleted target is a dead link, and inside an immutable Accepted ADR
+even the corrective edit carries governance ceremony. The ADR-index check
 (check_adr_index.py) guards the index *table*; this guards the prose *links*.
+(The filename keeps its original ``spec_links`` name for reference stability;
+the crawl was widened from specs/ to all tracked markdown by ADR-0061's
+BRIEF-1 revision.)
 
 Scope and rules:
-  - Crawls every ``*.md`` under specs/, EXCEPT specs/personal/ (gitignored,
-    absent in CI). A link *target* is validated wherever it resolves -- a
-    specs/ file linking ``../../scripts/foo.py`` is checked too.
+  - Crawls every ``*.md`` git considers part of the repo -- tracked, plus
+    untracked-but-not-ignored (``git ls-files --cached --others
+    --exclude-standard``), so a brand-new doc is gated before it is ever
+    staged -- EXCEPT specs/personal/ (gitignored, absent in CI). Outside a
+    git checkout -- the unit suite's tmp trees -- it falls back to an rglob
+    of the repo root, pruned of vendored trees, with the same personal/
+    exclusion. A link *target* is validated wherever it resolves -- a file
+    linking ``../../scripts/foo.py`` is checked too.
   - A link is inline ``[text](target)``; an image's ``![alt](target)`` target is
     validated the same way (a dead local image is a real defect). Only relative
     targets are checked: a URI scheme (``http(s):``, ``mailto:``, ``tel:`` -- two
@@ -50,20 +58,24 @@ widening is deliberate rather than a surprise:
     span state risks the swallow-the-rest-of-the-file failure the fence logic
     was hardened against, and multi-line code is normally a fenced block, which
     *is* handled -- so this is left as a documented limitation.
-  - Existence is checked against the working-tree filesystem. In CI that equals
-    the git checkout, so the gate's authoritative run validates git truth; a
-    *local* run may diverge -- an untracked linked file, or a case-only mismatch
-    on a case-insensitive filesystem, passes locally but fails CI. CI is
-    authoritative.
+  - Source *enumeration* is git truth (``git ls-files``), but target
+    *existence* is still checked against the working-tree filesystem. In CI
+    the two coincide, so the gate's authoritative run validates git truth; a
+    *local* run may diverge -- an untracked linked file, or a case-only
+    mismatch on a case-insensitive filesystem, passes locally but fails CI.
+    CI is authoritative.
 
 Exit code 0 when every link resolves; 1 with one line per dead link otherwise.
-Stdlib only; all files are read as UTF-8.
+Stdlib only, where "stdlib" now includes a ``subprocess`` call to PATH-resolved
+git for source enumeration (ADR-0061's revised tradeoff); all files are read
+as UTF-8.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -159,11 +171,75 @@ def resolve_target(source: Path, target: str) -> Path | None:
     return Path(os.path.normpath(source.parent / path_part))
 
 
+# Directories the non-git fallback walk must never enter: vendored and
+# generated trees whose *.md are not this repo's prose. The git branch needs no
+# such list -- git's ignore rules already exclude them -- which is the ADR's
+# whole argument for git truth; this keeps the fallback from reintroducing the
+# hazard on the one path git cannot police.
+FALLBACK_PRUNE = frozenset(
+    {".git", ".venv", ".venv-wsl", "node_modules", "__pycache__"}
+)
+
+
+def md_sources() -> list[Path]:
+    """Every markdown file the gate crawls, sorted for deterministic output.
+
+    Git truth when REPO_ROOT is a checkout (``.git`` is a directory in a normal
+    clone and a *file* in a linked worktree, so ``exists()`` covers both):
+    ``--cached`` is the tracked set, ``--others --exclude-standard`` adds files
+    written but not yet added -- /land runs this gate *before* staging, and a
+    brand-new doc is exactly where a dead link is most likely -- while git's
+    ignore rules keep ``.venv/`` and scratch out without a prune list. Outside
+    a checkout (the unit suite's tmp trees) an rglob of REPO_ROOT stands in,
+    pruned of the vendored trees git would have excluded.
+
+    The ``is_file()`` filter drops a tracked path deleted from the working tree
+    (``--cached`` still names it; there are no bytes to scan, and the dead
+    links *in other files that pointed at it* are what the gate should report).
+    The set dedupes an unmerged path, which ``ls-files`` names once per merge
+    stage. Both branches exclude specs/personal/: git never lists it
+    (gitignored), and the fallback filter keeps the tmp-tree behaviour
+    identical, so a test fixture under personal/ is never scanned either way.
+    """
+    if (REPO_ROOT / ".git").exists():
+        proc = subprocess.run(
+            [  # noqa: S607 - PATH-resolved git, as every other repo tool runs it
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                "*.md",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if proc.returncode != 0:
+            # Attach git's own stderr: a bare CalledProcessError says only
+            # "exit status 128", which blames this gate for a git failure.
+            raise RuntimeError(
+                f"git ls-files failed (exit {proc.returncode}): {proc.stderr.strip()}"
+            )
+        files = [REPO_ROOT / p for p in proc.stdout.split("\0") if p]
+    else:
+        files = [
+            p
+            for p in REPO_ROOT.rglob("*.md")
+            if not FALLBACK_PRUNE.intersection(p.relative_to(REPO_ROOT).parts)
+        ]
+    return sorted(
+        {p for p in files if p.is_file() and not p.is_relative_to(PERSONAL_DIR)}
+    )
+
+
 def check() -> list[str]:
     errors: list[str] = []
-    md_files = sorted(
-        p for p in SPECS_DIR.rglob("*.md") if not p.is_relative_to(PERSONAL_DIR)
-    )
+    md_files = md_sources()
     for source in md_files:
         rel = source.relative_to(REPO_ROOT).as_posix()
         try:
@@ -189,7 +265,7 @@ def main() -> int:
         for e in errors:
             print(f"  - {e}")
         return 1
-    print(f"spec links consistent: every relative link under {SPECS_DIR} resolves.")
+    print("spec links consistent: every relative link in repo markdown resolves.")
     return 0
 
 

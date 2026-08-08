@@ -101,7 +101,7 @@ jobs:
       - name: Check ADR index against files and their Status fields
         run: python3 scripts/check_adr_index.py
 
-      - name: Check every relative markdown link under specs/ resolves
+      - name: Check every relative markdown link in the repo resolves (ADR-0061)
         run: python3 scripts/check_spec_links.py
 
       - name: Check the two markdown-lint configs stay in sync (ADR-0062)
@@ -114,15 +114,21 @@ jobs:
         run: python3 scripts/check_reviewer_agents.py
 
       - name: Markdown style lint (PyMarkdown, ADR-0062)
-        # Scope (ADR-0062 §4): tracked *.md under specs/ plus root README.md and
-        # CLAUDE.md; specs/personal/ is gitignored so git ls-files never lists it
-        # (the :(exclude) pathspec guards a hypothetical future tracked file).
+        # Scope (ADR-0062 §4, widened): every *.md git considers part of the
+        # repo — tracked plus untracked-but-not-ignored, the same file-set
+        # contract as the link-check gate and the tree-walking pytest gates —
+        # with no enumerated pathspec to go stale (the old
+        # specs/+README+CLAUDE.md list silently missed the 17 files under
+        # .claude/). In CI a checkout carries no untracked files, so the
+        # --others half matters for the local reproduction of this command,
+        # not here. specs/personal/ is gitignored so git ls-files never lists
+        # it (the :(exclude) pathspec guards a hypothetical future tracked file).
         # -z / -0 are null-delimited so a path with spaces stays one argument;
         # xargs -r makes an empty list a clean no-op rather than a zero-path run.
         # Config is the [tool.pymarkdown] block in pyproject.toml, mirrored in
         # .markdownlint.yaml.
         run: |
-          git ls-files -z 'specs/*.md' ':(exclude)specs/personal/**' README.md CLAUDE.md \
+          git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)specs/personal/**' \
             | xargs -0 -r uvx "pymarkdownlnt@${PYMARKDOWN_VERSION}" --config pyproject.toml scan
 
   lint:

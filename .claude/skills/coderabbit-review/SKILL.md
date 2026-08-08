@@ -33,7 +33,7 @@ nobody asked for.
 
 **It prints the floor to use next**, stamped before the trigger:
 
-```
+```text
 triggered coderabbit via comment 5058928383
 since: 2026-07-23T14:00:00Z
   pass that to: wait/fetch --bot coderabbit --pr 54 --since 2026-07-23T14:00:00Z

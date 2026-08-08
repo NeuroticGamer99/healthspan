@@ -13,13 +13,17 @@ export/
 
 # Recovery Kit renders (contain the secret key — see ADR-0033)
 *recovery-kit*
+
+# Claude Code harness config (ADR-0071): the shared file .claude/settings.json
+# is COMMITTED (permissions and hooks reviewed like any other code); anything
+# machine-specific — absolute paths, personal grants — goes in
+# settings.local.json, which stays local.
 .claude/settings.local.json
 
 # Python
 .venv/
 __pycache__/
 *.py[cod]
-.claude/settings.json
 
 # Local pytest capture for the log-canary scan (CI regenerates it). The parallel
 # (windows-latest) leg's artifacts (ADR-0063) join it: the tee'd controller
