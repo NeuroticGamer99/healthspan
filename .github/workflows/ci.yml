@@ -56,7 +56,7 @@ env:
 
 jobs:
   gitleaks:
-    name: Secret scan (gitleaks)
+    name: Secret scan (gitleaks + personal-data containment)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -73,6 +73,19 @@ jobs:
 
       - name: Scan full git history for committed credentials
         run: ./gitleaks git --no-banner --redact .
+
+      - name: Scan full git history for personal-data paths
+        # Same job as gitleaks deliberately, and not docs-consistency: both
+        # scans walk every reachable commit rather than the tip, so both need
+        # this job's `fetch-depth: 0`. The docs-consistency checkout is shallow,
+        # where `--all` would silently shrink to one commit and report clean.
+        #
+        # This is the backstop, not the control. By the time it runs the blob is
+        # already in GitHub's object store, so it detects rather than prevents;
+        # prevention is the same script run pre-push by /savepoint and /land.
+        # Enumeration only — whether a file's values are synthetic stays a
+        # judgement those skills make.
+        run: python3 scripts/check_personal_containment.py --scope history
 
   docs-consistency:
     name: Docs consistency (ADR index + spec links + markdown style)

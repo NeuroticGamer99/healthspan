@@ -25,24 +25,54 @@ from this skill.
 
 ## 1. Containment scan
 
-The one step that is never optional — the same working-tree scan `/land` step 3 runs (that step
-also carries a whole-branch history clause; that is `/land`'s backstop over every accumulated
-savepoint, deliberately not duplicated here where the scope is this chunk alone — do not "sync"
-the two copies in either direction):
+The one step that is never optional. The enumeration half is mechanized (ADR-0070):
 
-- `git status --porcelain` must show no `specs/personal/` path — matched **case-insensitively**
-  and covering the **bare path** `specs/personal` itself, not only the `specs/personal/` prefix.
-  It is gitignored, so any appearance means the ignore broke: treat as critical and stop.
-  Both extra conditions are load-bearing rather than belt-and-braces, and the precedent is in this
-  repo: `scripts/review_worktree.py` guards the same invariant in *tested code* and `casefold()`s
-  its comparison, accepts the bare path, and uses an `:(icase)` pathspec — holes found by review
-  passes rather than by design. A case-sensitive prefix test lets `specs/Personal/labs.csv` through
-  on the Linux and macOS CI legs, where the ignore rule does not cover it either; and a
-  directory-only ignore rule is blind to a force-added plain file or symlink at exactly
-  `specs/personal`, so a prefix test that requires the trailing slash never sees it.
-- For every added or modified file outside `specs/personal/`, confirm it contains no personal
-  health values, lab results, diagnoses, medications, or owner-identifying information. Test
-  fixtures must be synthetic.
+```bash
+python scripts/check_personal_containment.py --scope worktree
+```
+
+Exit 0 is the only pass; `--scope worktree` is this chunk alone. It checks the porcelain for any
+containment path (matched case-insensitively, covering the bare path `specs/personal` as well as
+the prefix), every tracked path under the containment directory, and — this is the half a path list
+cannot do — that each staged path's index blob really is the working-tree content the scan just
+read. The reasoning for each of those lives in `scripts/check_personal_containment.py`'s docstring,
+next to the code it governs, and `tests/test_check_personal_containment.py` pins every one of them
+as a fixture that must fail.
+
+**A `Note:` line is not a failure.** Running here — *before* step 2 stages anything — an ordinary
+"staged earlier, then kept editing" path is expected, and the gate reports it as a note rather than
+failing: git shows it, `git add` resolves it, and step 2 reconciles the staged set against the
+enumerated list anyway. Only a divergence git actively **hides** — a `skip-worktree` or
+`assume-unchanged` entry — is a violation. An unresolved **merge conflict** is neither: the gate
+reports "could not run", because a conflicted path has no single staged version and `git commit`
+would refuse regardless. Finish or abort the merge first. It keeps scanning either way — the
+enumeration that needs no index still runs, and anything it found is printed alongside the refusal
+rather than lost to it, with an `Examined before stopping:` count saying how much of the scan ran.
+
+**On any refusal, a missing `Note:` line is not information — do not read it as "no notes were
+due".** A note exists only where a staged-content comparison got far enough to produce one, and
+most refusals fire before that: the unmerged case refuses before the comparison starts, and the
+not-the-top-level case below refuses before *anything* runs, carrying no findings or counts either.
+Stated as a rule rather than as a list of which refusals qualify, because that list has been
+enumerated wrongly every time it has been attempted. Whether a refusal carries notes depends on how
+far the scan got before it fired — not on which refusal it is — so the roster changes whenever the
+scan's order does.
+
+One refusal means something else entirely and should not be retried: **the scan was not pointed at
+the repository's top level.** Git spells paths inconsistently below it, so the gate declines rather
+than match against a vocabulary it cannot trust. That is a wrong-directory problem — a checkout
+nested inside an outer repository, or the script invoked by absolute path from another tree — not
+anything about this checkpoint's chunk.
+
+`/land` runs the same gate at `--scope branch`, which adds the whole-branch history walk. That is
+`/land`'s backstop over every accumulated savepoint and is deliberately not run here, where the
+scope is this chunk: a savepoint that paid for a full history walk on every checkpoint is one an
+operator stops running. The two scopes are one implementation with one test suite, so the split is
+now a flag rather than two prose copies that can drift apart.
+
+Then the half no gate decides: for every added or modified file outside `specs/personal/`, confirm
+it contains no personal health values, lab results, diagnoses, medications, or owner-identifying
+information. Test fixtures must be synthetic.
 
 This runs before **every** savepoint because a commit object outlives `--amend` and `reset` in
 the reflog — the push gate (`/land` then `/ship`) keeps a stray on this machine, but only this
@@ -62,50 +92,31 @@ Run `git diff --cached --name-only`, compare it against the echoed list, and sto
 path; the enumeration is only a containment control if the commit provably contains nothing
 else.
 
-**That path list is necessary and not sufficient — check the staged *content* too.**
+**That path list is necessary and not sufficient — the staged *content* must match too.**
 `git diff --cached --name-only` proves which paths are in the index, never that each one holds the
 bytes the scan read, and the two diverge wherever `git add` silently declines to update an entry.
 It does exactly that on a `skip-worktree` or `assume-unchanged` path: measured, a file staged with
 personal data and then cleaned in the working tree keeps the **dirty blob** in the index, satisfies
 the path check, and commits. `git add` exits 1 and names the path there, so **treat any non-zero
-`git add` as a stop** — but do not rest on that alone. Prove identity per enumerated path:
+`git add` as a stop** — but do not rest on that alone.
 
-For each record from `git diff --cached --name-status`, reading **three** fields, because a
-rename or copy record carries two paths and a two-field read binds the *source* — a path that
-exists in neither the index nor the working tree, so both halves of the check would fail on it
-exactly as they do on a deletion (measured: `R100  old.md  new.md`):
+Step 1's gate already proves per-path identity, so **re-run it once the index is staged**:
 
 ```bash
-git diff --cached --name-status | while IFS=$'\t' read -r st p1 p2; do
-  case "$st" in
-    D*) continue ;;        # a deletion contributes no bytes — the path list governs it
-    R*|C*) p="$p2" ;;      # rename/copy: the DESTINATION holds the staged content
-    *) p="$p1" ;;
-  esac
-  [ "$(git rev-parse ":$p")" = "$(git hash-object -- "$p")" ] \
-    || { echo "staged content is not what was scanned: $p"; exit 1; }
-done
+python scripts/check_personal_containment.py --scope worktree
 ```
 
-**The `D` arm is not a shortcut — without it the check breaks on an ordinary checkpoint.** A staged
-deletion has no index blob and no working-tree file, so *both* halves fail with `fatal:` (measured:
-`path 'f.md' does not exist` and `could not open 'f.md'`). It also needs no content check, because
-a deletion contributes no bytes to the object; what still applies to it is the path list above,
-unchanged. **The rename arm compares the destination**, which is where the staged bytes live; the
-source is governed the same way a deletion is. The `R`/`C` letters arrive with a score suffix
-(`R100`), which is why every arm pattern is a prefix match rather than an equality test.
+That is the second run of the step, not a duplicate of it: the first sees what you are about to
+stage, this one sees what would actually be committed, and only the second can catch an entry
+`git add` declined to update. It skips deletions (which contribute no bytes) and compares a rename
+against its *destination* (the source exists in neither the index nor the working tree). The
+comparison is blob-to-blob, so a CRLF working file under `.gitattributes eol=lf` is not a false
+alarm — a check that fires on line endings is one an operator learns to skip.
 
-Measured against the cases that decide whether such a check survives contact: it catches the
-skip-worktree divergence, passes an ordinarily added file, and passes a CRLF file under
-`.gitattributes eol=lf`. That last one is why the comparison is blob-to-blob rather than
-byte-to-byte — a check that false-alarms on line endings is one an operator learns to skip, and
-this repo's own `/ship` read-back carries the same lesson. It also works because **`git
-hash-object` applies the path's `.gitattributes` filters by default** — `--no-filters` is the
-opt-out, and `--path` is for hashing content whose real path differs, not for switching filtering
-on. Measured under `eol=lf`: the plain form reproduces the staged blob exactly while `--no-filters`
-does not, so no `--path` is needed here. `git diff --name-only` cannot stand in for any of it:
-`skip-worktree` is precisely what that command is told to ignore, so it reports clean on the one
-case this catches.
+**A `Note:` surviving into this second run is worth reading, unlike in step 1.** By here you have
+`git add`-ed every path you enumerated, so a staged path still differing from the working tree is
+one you did not list — which the path-list reconciliation above should already have stopped you on.
+Treat it as the same finding arriving by a second route, not as noise.
 
 ## 3. Commit
 

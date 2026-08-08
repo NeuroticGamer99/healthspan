@@ -287,7 +287,11 @@ Because all log output is structured JSON, a second check can assert that log en
 
 ### Repository secret scanning (mandatory)
 
-A pinned `gitleaks` step scans the full tree on every CI run for committed credentials — tokens, keys, passphrases. The hardcoded test passphrase is allowlisted. To be honest about scope: this catches *credential patterns*, not health data — there is no reliable pattern for a lab value. The personal-data containment policy ([CLAUDE.md](../CLAUDE.md)) is enforced by the `specs/personal/` gitignore and review discipline; secret scanning backstops only its credential-shaped failure modes (e.g. a Recovery Kit render or bearer token pasted into a spec).
+A pinned `gitleaks` step scans the full tree on every CI run for committed credentials — tokens, keys, passphrases. The hardcoded test passphrase is allowlisted. To be honest about scope: this catches *credential patterns*, not health data — there is no reliable pattern for a lab value.
+
+**A second step in the same job scans that same history for personal-data _paths_** ([ADR-0070](adr/0070-personal-data-containment-gate.md)): `scripts/check_personal_containment.py --scope history` fails the build if any commit reachable from any ref touches `specs/personal/`. The two steps share the job because they share its `fetch-depth: 0` checkout — both walk every commit rather than the tip, and the gate refuses to run on a shallow clone rather than reporting clean over a truncated history.
+
+That splits the containment policy ([CLAUDE.md](../CLAUDE.md)) cleanly in two. Its **enumeration** half — which paths does a change touch — is now mechanized, in CI here and pre-push in `/savepoint` and `/land`. Its **content** half — is this value real or synthetic — remains gitignore plus review discipline, because there is still no reliable pattern for a lab value. Credential-shaped leaks (a Recovery Kit render or bearer token pasted into a spec) stay `gitleaks`' half.
 
 ### Strict static typing gate (mandatory)
 
