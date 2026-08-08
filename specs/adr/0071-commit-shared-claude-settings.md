@@ -26,7 +26,7 @@ A harness audit (2026-08-06) surfaced the practical blocker: planned work items 
 - **`settings.json` (committed)** — anything shared: permission policy meant to apply to every session of this repo, hooks, harness configuration that review should see.
 - **`settings.local.json` (gitignored)** — anything machine-specific: absolute paths, personal permission grants, local experiment flags.
 
-The file lands as a minimal valid stub (`permissions.allow`/`deny`, both empty) so the tracking decision is severed from any content decision — hooks and shared grants arrive in their own reviewed changes (the harness-audit work items own them). Before any content lands in `settings.json`, it must be checked for machine-specific paths or personal data; anything local-only moves to `settings.local.json`. The two `.gitignore` entries are re-filed under a dedicated, commented section in the same change.
+The file lands as a minimal valid stub (`permissions.allow`/`deny`, both empty) so the tracking decision is severed from any content decision — hooks and shared grants arrive in their own reviewed changes (the harness-audit work items own them). Before any content lands in `settings.json`, it must be checked for machine-specific paths or personal data; anything local-only moves to `settings.local.json`. In the same change, the `.claude/settings.local.json` entry is re-filed under a dedicated, commented section, and the `.claude/settings.json` ignore line is removed outright — the point of the decision.
 
 ## Consequences
 

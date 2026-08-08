@@ -198,9 +198,11 @@ def md_sources() -> list[Path]:
     (``--cached`` still names it; there are no bytes to scan, and the dead
     links *in other files that pointed at it* are what the gate should report).
     The set dedupes an unmerged path, which ``ls-files`` names once per merge
-    stage. Both branches exclude specs/personal/: git never lists it
-    (gitignored), and the fallback filter keeps the tmp-tree behaviour
-    identical, so a test fixture under personal/ is never scanned either way.
+    stage. Both branches exclude specs/personal/ via the explicit PERSONAL_DIR
+    filter below -- that filter is the guard, and it holds even for a
+    force-added tracked personal file, which ``--cached`` would list;
+    gitignore only makes that case abnormal, it is not the exclusion
+    mechanism.
     """
     if (REPO_ROOT / ".git").exists():
         proc = subprocess.run(
