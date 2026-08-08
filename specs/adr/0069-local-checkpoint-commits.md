@@ -94,7 +94,7 @@ The classification's commands, and the collapse's guards, are **Bash**. Git's ex
 ### Negative Consequences / Tradeoffs
 - `git reset --soft` is history rewriting — deliberately confined to never-pushed commits, with "does `origin/<branch>` exist" as the guard
 - A stray blob in a local checkpoint persists in machine-local git objects until gc even after the collapse — accepted; the per-commit scan is the control, and the object never leaves the machine
-- The containment scan is prose-run, not mechanized — the same status `/land` step 3 has today; the repo-invariants register (open-questions.md) books this enforcement class
+- The containment scan is prose-run, not mechanized — the same status `/land` step 3 has today; the repo-invariants register (open-questions.md) books this enforcement class. **Partly discharged 2026-08-06** (this ADR is still Proposed, so the line is corrected in place rather than superseded): the scan's *enumeration* half is now `scripts/check_personal_containment.py`, which both skills invoke and which CI runs over full history. The *content* half — whether a value is synthetic — remains prose-run in both skills, so the tradeoff this line records is reduced rather than retired
 - `/apply-review`'s "do not commit" rule needs a carve-out: savepoints yes, landing commits no — a distinction that must stay legible in that skill's text
 - More commits means more subjects to write — kept cheap by the no-gates and no-trailer rules; if per-batch granularity proves too coarse, Aider's per-edit-turn granularity is the documented finer setting
 
@@ -110,3 +110,4 @@ The classification's commands, and the collapse's guards, are **Bash**. Git's ex
 ## Links
 - Extends: [ADR-0068](0068-reviewer-isolation-worktrees.md) — adds the launch-time `HEAD` record and gives its callers' drift check a firing condition; the snapshot mechanics are untouched
 - Related: [open-questions.md](../open-questions.md) "Align the tooling, agents, and skills to WIP commits before review" — the sweep this ADR partially resolves, and the record of the measured costs cited above
+- Partly discharged by: [ADR-0070](0070-personal-data-containment-gate.md) — mechanizes the enumeration half of the containment scan this ADR booked as prose-run debt in its Negative Consequences
