@@ -6,7 +6,7 @@ Proposed
 ## Context and Problem Statement
 [CLAUDE.md](../../CLAUDE.md)'s first rule confines personal health data to `specs/personal/`. Until now that rule was enforced by **prose**: a paragraph of git recipes in [`/land`](../../.claude/skills/land/SKILL.md) step 3 and another in [`/savepoint`](../../.claude/skills/savepoint/SKILL.md) step 1, run by hand each time. [ADR-0069](0069-local-checkpoint-commits.md) booked that as accepted debt in its Negative Consequences, and [open-questions.md](../open-questions.md) tracked it as the repo-invariants register's sixth seed row.
 
-That row is the only one in the register with **measured repeated failure**, and the measurement is what motivates this ADR rather than a general preference for automation. Across the `chore/savepoint-skill` branch (2026-08-04/05), **six independent review lenses each found a different hole in that prose, and every one of them reported clean**:
+That row is the only one in the register with **measured repeated failure**, and the measurement is what motivates this ADR rather than a general preference for automation. Across the `chore/savepoint-skill` branch (2026-08-04/05), **a succession of independent review passes each found a different hole in that prose, and every one of them reported clean otherwise** (how many passes is deliberately not stated — that count drifted across four documents and was caught by a bot; the enumerated holes below are what has to be right):
 
 1. the scan read the *endpoint diff*, so a file added by one checkpoint and deleted by a later one was invisible at both ends while its blob rode every push;
 2. the merge base was substituted **unguarded**, so an empty result left `..HEAD` — which git accepts and answers with silence at exit 0;

@@ -9,9 +9,15 @@ halves with opposite mechanizability:
   information.
 
 Every measured failure of this control landed in the enumeration half and none
-in the content half (six of them, across four independent review lenses, on the
-``chore/savepoint-skill`` branch — the ledger is in ``specs/open-questions.md``
-under the repo-invariants register entry). Enumeration is ordinary code; content
+in the content half — all of them on the ``chore/savepoint-skill`` branch, each
+found by a *different* review pass, and each of those passes reporting the scan
+clean apart from the one hole it found. **How many passes that was is
+deliberately not stated here.** It was restated incompatibly across four
+documents, caught by a bot rather than by any of them; a count that drifts is
+worth less than the mechanism it summarises, and the enumerated list below is
+the thing that actually needs to be right. The ledger is in
+``specs/open-questions.md`` under the repo-invariants register entry.
+Enumeration is ordinary code; content
 is judgement and stays prose in ``/land`` and ``/savepoint``. This script owns
 the first half only, and deliberately decides nothing about whether a value it
 never reads is synthetic.
@@ -824,11 +830,20 @@ def staged_content_mismatches(root: Path) -> StagedScan:
             # the more urgent finding lost to the less urgent one. The index
             # can mutate under a concurrent `git add` from an editor
             # integration, so this is reachable without anything exotic.
+            #
+            # `examined` rides out with them, and it is the field that is easy
+            # to forget: the two lists are visibly non-empty when this fires,
+            # while the counter is just a number that silently becomes zero.
+            # Dropping it made `Examined before stopping:` omit the staged
+            # source entirely -- reporting *no* bytes verified on a run that
+            # had verified `examined` of them, which understates the work done
+            # on exactly the exit where the evidence is load-bearing.
             raise ContainmentError(
                 f"`git diff --cached` names {path!r} but `git ls-files -s` does "
                 f"not, so the index cannot be read consistently",
                 found=mismatches,
                 notes=notes,
+                examined={STAGED_CONTENT: examined},
             )
         examined += 1
 

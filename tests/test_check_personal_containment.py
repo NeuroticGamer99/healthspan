@@ -1,7 +1,9 @@
 """The personal-data containment gate (scripts/check_personal_containment.py).
 
-The gate exists because six independent review lenses each found a *different*
-hole in the prose scan it replaces, and every one of those holes read as clean.
+The gate exists because a succession of independent review passes each found a
+*different* hole in the prose scan it replaces, and every one of those holes
+read as clean. (How many passes is deliberately not stated — that count drifted
+across four documents; the gate's docstring says why.)
 A gate that cannot fail is that same defect one layer out, so the tests below
 are organised around making it fail: each builds a repository that reproduces
 one measured hole and requires the gate to notice.
@@ -1023,6 +1025,12 @@ def test_a_mid_loop_index_inconsistency_keeps_the_mismatch_it_already_found(
     `git ls-files -s` does not is a setup problem. Raising the second with an
     empty payload discarded the first — `check()`'s preservation machinery then
     had nothing to preserve.
+
+    The `examined` count rides out with the findings, and is asserted here
+    because it is the field that fails quietly. An empty `found` is visible in
+    any report; a missing counter merely removes `staged-content` from
+    `Examined before stopping:`, which reads as a scan that verified no bytes
+    rather than one that verified some and then stopped.
     """
     _on_branch(repo)
     _write(repo, "panel.md", "clean\n")
@@ -1049,6 +1057,10 @@ def test_a_mid_loop_index_inconsistency_keeps_the_mismatch_it_already_found(
     assert "cannot be read consistently" in str(excinfo.value)
     assert any("panel.md" in found for found in excinfo.value.found), (
         "the confirmed mismatch survives the setup failure that stopped the loop"
+    )
+    assert excinfo.value.examined == {gate.STAGED_CONTENT: 1}, (
+        "the one path whose bytes were verified before the raise is still "
+        "counted, so the evidence line does not understate the work done"
     )
 
 
