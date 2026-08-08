@@ -10,17 +10,18 @@ halves with opposite mechanizability:
 
 Every measured failure of this control landed in the enumeration half and none
 in the content half — all of them on the ``chore/savepoint-skill`` branch, each
-found by a *different* review pass, and each of those passes reporting the scan
-clean apart from the one hole it found. **How many passes that was is
-deliberately not stated here.** It was restated incompatibly across four
-documents, caught by a bot rather than by any of them; a count that drifts is
-worth less than the mechanism it summarises, and the enumerated list below is
-the thing that actually needs to be right. The ledger is in
-``specs/open-questions.md`` under the repo-invariants register entry.
-Enumeration is ordinary code; content
-is judgement and stays prose in ``/land`` and ``/savepoint``. This script owns
-the first half only, and deliberately decides nothing about whether a value it
-never reads is synthetic.
+surfaced by a review pass that had just reported the scan clean. **How many
+passes that was, and how the holes distributed across them, is deliberately not
+stated here** — including by implication: "each hole found by a different pass"
+would assert a one-to-one mapping just as firmly as a numeral, and that mapping
+is precisely what no two of these documents agreed on. The figure was restated
+incompatibly across four of them and the contradiction was caught by a bot
+rather than by any of us; a count that drifts is worth less than the mechanism
+it summarises, and the enumerated list below is the thing that has to be right.
+The ledger is in ``specs/open-questions.md`` under the repo-invariants register
+entry. Enumeration is ordinary code; content is judgement and stays prose in
+``/land`` and ``/savepoint``. This script owns the first half only, and
+deliberately decides nothing about whether a value it never reads is synthetic.
 
 The six holes it closes, each of which shipped as a *prose* scan that read
 clean:

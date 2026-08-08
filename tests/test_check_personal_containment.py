@@ -1,9 +1,10 @@
 """The personal-data containment gate (scripts/check_personal_containment.py).
 
-The gate exists because a succession of independent review passes each found a
-*different* hole in the prose scan it replaces, and every one of those holes
-read as clean. (How many passes is deliberately not stated — that count drifted
-across four documents; the gate's docstring says why.)
+The gate exists because repeated independent review passes each reported the
+prose scan it replaces clean, and the holes below were in it the whole time.
+(How many passes, and how the holes distributed across them, is deliberately
+not stated — that figure drifted across four documents; the gate's docstring
+says why, and why the distribution is left unstated too.)
 A gate that cannot fail is that same defect one layer out, so the tests below
 are organised around making it fail: each builds a repository that reproduces
 one measured hole and requires the gate to notice.
@@ -1061,6 +1062,46 @@ def test_a_mid_loop_index_inconsistency_keeps_the_mismatch_it_already_found(
     assert excinfo.value.examined == {gate.STAGED_CONTENT: 1}, (
         "the one path whose bytes were verified before the raise is still "
         "counted, so the evidence line does not understate the work done"
+    )
+
+
+def test_the_mid_loop_refusals_examined_count_reaches_the_operator(
+    repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Carrying the count on the exception is half the fix; printing it is the
+    half the operator sees.
+
+    The test above asserts on the exception object and never drives the CLI, so
+    `check()`'s merge and `main()`'s evidence line both sit outside it. Found by
+    review and then confirmed by mutation: replacing that merge with
+    `exc.examined = examined` -- discarding exactly what the mid-loop raise
+    carries -- left all 121 tests in this module green. `also_failed` and `base`
+    each already carry a companion test at this layer, for this reason; this is
+    the third time the same shape has been caught in this one file.
+    """
+    _on_branch(repo)
+    _write(repo, "panel.md", "clean\n")
+    _git(repo, "add", "panel.md")
+    _git(repo, "update-index", "--skip-worktree", "panel.md")
+    _write(repo, "panel.md", "edited behind git's back\n")
+    monkeypatch.setattr(gate, "REPO_ROOT", repo)
+
+    _real_git = gate._git  # pyright: ignore[reportPrivateUsage]
+
+    def fake_git(root: Path, *args: str) -> str:
+        if args[0] == "diff" and "--cached" in args:
+            return "M\0panel.md\0M\0ghost.md\0"
+        return _real_git(root, *args)
+
+    monkeypatch.setattr(gate, "_git", fake_git)
+
+    assert gate.main(["--scope", "worktree"]) == 1
+    out = capsys.readouterr().out
+    assert "cannot be read consistently" in out, "the refusal itself is reported"
+    assert f"{gate.STAGED_CONTENT} 1" in out, (
+        "the staged source and its count survive check()'s merge and reach the "
+        "evidence line, rather than the line dropping the source entirely and "
+        "reading as a scan that verified no bytes at all"
     )
 
 
