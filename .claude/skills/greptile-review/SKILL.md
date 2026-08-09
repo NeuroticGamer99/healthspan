@@ -119,11 +119,32 @@ thing: it has not reported, which is not a clean review. Beyond that:
   with no review object and no inline comment anywhere. Treating the gap as always-transient is
   what made an earlier version of `wait` poll for comments that were never coming.
 
-**`wait` never emits either of those two messages** — do not look for them in its output. Inside
+- *"does not read clean, but no finding was fetched"* — **`fetch` only**, and the same prose-only
+  shape as above arriving with **no stated count at all**, so there is no N and M to compare. The
+  count sentence lives in an optional block a Greptile dashboard toggle removes, and on PR #84 it
+  was off: `fetch` then reported *"NOTHING OUTSTANDING: all 0 finding(s) have a reply"* about a
+  summary that stated a finding in its `Files Needing Attention` prose, and the merge gate cleared.
+  **Its absence is not a zero.** The answer is identical — read the summary on the PR, answer it in
+  a PR-level comment carrying the `Acknowledges greptile summary <id>` reference — and re-running
+  will never help, because nothing is in flight.
+
+**`wait` never emits any of those three messages** — do not look for them in its output. Inside
 the grace window it simply keeps polling; past it, it *succeeds* with exit **0** and says so on the
-ready line: `… is ready — N open finding(s), and M that exist only in the summary text`. That is
-the same condition, routed as work to do rather than as a refusal, because there is something to
-read. Step 4's `fetch` is where it becomes an exit 1.
+ready line, naming what lives only in the summary:
+
+```text
+… is ready — N open finding(s), and M that exist only in the summary text
+… is ready — N open finding(s), and at least one that exists only in the summary text — it
+  states no count, so how many is unknown
+```
+
+The second form is the countless shape the third bullet above describes, and it is worth knowing
+why it reads differently: the first line's `M` is derived from the summary's stated count, and
+that count comes from the block the dashboard toggle removes — so on precisely the shape the
+toggle produces there is no honest number to print. `wait` said `ready — 0 open finding(s)` there
+until this was fixed, which told the operator zero and left them to meet the merge gate's refusal
+with no warning. Either way the condition is routed as work to do rather than as a refusal,
+because there is something to read. Step 4's `fetch` is where it becomes an exit 1.
 
 Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
 against the real code, reply per finding, report the verdict table, **stop for the user's go before
