@@ -93,7 +93,7 @@ loop, so `N` is assigned there and flows brief → prep → handoff → apply un
 increments by one per **round begun** — not per report written, per apply performed, per brief file issued, or per file found on disk, which
 is what the retired heuristic did.
 
-**Allocation writes something, or the number is not durable.** `/review-brief` creates `angle-ledger/branches/<b6>/round-<N>.md` at
+**Allocation writes something, or the number is not durable.** `/review-brief` creates `specs/reviews/angle-ledger/branches/<b6>/round-<N>.md` at
 allocation, holding the round's scope and angle roster and nothing else; `/review-handoff` fills it, `/apply-review` amends it. Without that
 write, a round briefed and then abandoned before handoff leaves no trace on the branch that `N` was consumed — fragments were previously
 written by handoff — and the next brief, especially from a fresh orchestrator session, re-issues the same number to a different round.
@@ -195,7 +195,7 @@ Two rules keep it honest. **A section with no pattern to report says so** rather
 ### 8. Ledger location, naming, and collapse
 **Path.** `specs/reviews/angle-ledger/`, a subfolder of the existing review-records directory — not the `specs/` root, which a landed PR deliberately cleared of review artifacts. The directory keeps the name `angle-ledger/` after the reconciliation in §7 because the angle record is its durable half — the part read on every future round and every future branch.
 
-**Naming — reproducible, never derived from write time.** Two paths, both computable from values that are known before the write and
+**Naming — reproducible, never derived from write time.** Two paths, both relative to the `specs/reviews/angle-ledger/` root above, and both computable from values that are known before the write and
 identical on a re-run:
 
 | Artifact | Path | Derived from |
