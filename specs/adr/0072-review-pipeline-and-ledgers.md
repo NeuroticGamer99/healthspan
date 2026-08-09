@@ -49,7 +49,7 @@ Four skills in the table, **five that must change**. The **pipeline** is the fir
 `/review-brief` serves **both** loops. The external `/code-review` pass is primary, but the local `spec-reviewer`/`test-reviewer` smokes are where the measured savings landed (one briefed round went 172k → 85k tokens and produced the first clean report in 24 rounds), and a brief skill that serves only the external pass leaves the more frequent case improvised.
 
 ### 2. One carrier per review
-`/review-prep` **reads the brief and merges it into the carrier**. From prep onward there is exactly one artifact per review. Brief → prep handover is **by path** — the two run in different sessions (§1), so there is no other carrier, which is exactly why the revision stamp in §4 is mandatory. What is prohibited is what happens *after* absorption: from prep onward nothing may reference the brief file, and no downstream step may read it. Referencing it past that point is what leaves a second artifact able to go stale alone, and re-reading it is what exposes the mutable-underneath-its-reader failure a second time.
+`/review-prep` **reads the brief and merges it into the carrier**. From prep onward there is exactly one artifact per review. The brief lives in the **orchestrator session's scratchpad** and is handed over **by path**, by the human, the way every other cross-session value in this chain moves. That is settled here because it is the one artifact crossing a session boundary whose location §8 and §9 do not otherwise fix, and BRIEF-3 would have had to choose silently. The alternative — the brief as tracked markdown in the repository — is rejected on the same argument §8 spends a whole section making about fragments: it would pay every O(tracked-files) gate on every push, and it would put brief prose, which quotes findings and the orchestrator's own unchecked assumptions, permanently on `main`. The accepted cost is the one §9 already catalogues for the other carriers: a reviewer session cannot find a path under the orchestrator's scratchpad without being told it, so a human relays it. The two run in different sessions (§1), so there is no other carrier, which is exactly why the revision stamp in §4 is mandatory. What is prohibited is what happens *after* absorption: from prep onward nothing may reference the brief file, and no downstream step may read it. Referencing it past that point is what leaves a second artifact able to go stale alone, and re-reading it is what exposes the mutable-underneath-its-reader failure a second time.
 
 ### 3. The generate-vs-structure line
 Two claims are easy to merge by accident — *where* `/review-brief` runs and *how much of the brief it may generate*. The line:
@@ -78,7 +78,7 @@ The discriminator: the *heuristic* is recordable and stable, so encode it; the *
 | **"Not covered"** section, for scope | Three rounds of silence read as three rounds of coverage |
 | Uncertainty mapping — the brief's numbered uncertainties, answered | The highest-yield brief section, previously ad hoc |
 | Per-source **verbatim** capture, with synthesis in a labelled layer, **subject to the containment rule below** | Convergence and conflict are findings, not noise to average away |
-| Per-finding **verdict slot** including "verified, and the finding is wrong" | Two such findings had to be written as prose; one was wrong in the dangerous direction |
+| Per-finding **`Assessment`**, from the closed set in §6 | Two findings that were *wrong* had to be written as prose; one was wrong in the dangerous direction |
 | Negative results and settled-item challenges | A challenge to a settled item has nowhere to go |
 | **Surface** recorded (terminal / `-p` / host app) | Missing structured verdicts misdiagnosed as reviewer failure |
 | **Scope echo** vs the range prep asked for | Nothing checked that a review honoured its scope |
@@ -88,7 +88,28 @@ The executed-angle roster and the "not covered" section are **distinct**: one is
 
 **Verbatim capture stops at personal data, and the fragment is where this bites.** `CLAUDE.md` confines personal health values, results, diagnoses, medications and identifying information to `specs/personal/`. Neither half of the risk is new — verbatim capture is an old obligation and containment is an old rule — but **this ADR creates the combination**: before it, a report lived in the session scratchpad, untracked and never pushed, while a fragment and a digest are committed and travel to a public remote. So: a review source quoting personal data is recorded by **data category alone** — never the value, and **never the path**. `CLAUDE.md` is explicit that "the provenance or sequence of the owner's actual records — which lab, which panel, in what order — is personal even with no values attached", and a path under the containment directory *is* that provenance: it names the lab and the panel in the filename. An earlier draft of this rule said "by path and data category", which would have published exactly what the rule exists to withhold — a containment defect inside the containment remedy, recorded here rather than quietly corrected because it is the second time on this branch that a fix has been aimed one step past where the property still holds. Where a reference must be re-findable, use an **opaque source id** the orchestrator can resolve locally, not a path. Quote the finding, not the value, and not where the value lives. The enumeration gate ([ADR-0070](0070-personal-data-containment-gate.md)) will not catch a violation here, because the path is `specs/reviews/`, not `specs/personal/` — this is the content half, which stays human judgement, and the ledger is now one of the places it must be exercised.
 
-**`/review-brief` allocates `N`, and nothing else does.** A round begins when a brief is issued for the external loop, so `N` is assigned there and flows brief → prep → handoff → apply unchanged; every later step reads it and none derives it. It increments by one per brief issued on the branch — **not** per report written, per apply performed, or per file found on disk, which is what the retired heuristic did. Three consequences follow and are stated because each is a case the heuristic got wrong: a **re-run of `/review-handoff`** for the same brief reuses `N` and rewrites that round's fragment in place rather than adding a second one; a **round abandoned before apply** keeps its number and leaves a fragment whose analysis is recorded as not performed, which is a different fact from a round that found nothing; and a **local smoke round never consumes a number at all** (§7). Allocation at the brief is what makes the number exist before anything can be counted, which is the property the counting heuristic could never have.
+**`/review-brief` allocates `N`, and it does so by creating the round's fragment.** A round begins when a brief is issued for the external
+loop, so `N` is assigned there and flows brief → prep → handoff → apply unchanged; every later step reads it and none derives it. It
+increments by one per **round begun** — not per report written, per apply performed, per brief file issued, or per file found on disk, which
+is what the retired heuristic did.
+
+**Allocation writes something, or the number is not durable.** `/review-brief` creates `angle-ledger/branches/<b6>/round-<N>.md` at
+allocation, holding the round's scope and angle roster and nothing else; `/review-handoff` fills it, `/apply-review` amends it. Without that
+write, a round briefed and then abandoned before handoff leaves no trace on the branch that `N` was consumed — fragments were previously
+written by handoff — and the next brief, especially from a fresh orchestrator session, re-issues the same number to a different round.
+Creating the fragment at allocation is also what makes `max(existing)+1` a sound derivation rather than the counting heuristic in disguise:
+the files being counted are written *by the allocator at allocation*, not discovered afterwards.
+
+Four consequences follow, each a case the earlier design got wrong:
+
+- A **re-run of `/review-handoff`** for the same round reuses `N` and rewrites `round-<N>.md` in place — reachable because the name is a
+  function of `(branch, round)`, with no glob and no month-boundary hazard.
+- A **round abandoned before apply** keeps its number and leaves its fragment, with the analysis recorded as not performed — a different fact
+  from a round that found nothing, and a different fact again from a number nobody can account for.
+- A **revised brief does not consume a number.** §4 requires a corrected brief to be a new file with a new name, for the same round; since
+  `N` is consumed by fragment creation rather than by brief issuance, the revision is the same round and the earlier "increments per brief
+  issued" reading — under which every brief correction would silently advance the ledger — does not arise.
+- A **local smoke round** consumes no number at all (§7).
 
 The last row is there because its absence would reproduce this ADR's own thesis. The fragment's name is a timestamp from the **reviewer** session's clock (§8); `/apply-review` runs in the orchestrator session and amends that fragment in place. Without a recorded path it would have to glob a shard and guess, which is a consumer keying on something no producer is obliged to write — the exact failure the rest of this document exists to remove.
 
@@ -118,9 +139,9 @@ Two sections, three blocks, and the list above names all three — including the
 
 **Angle record** — the durable half, and the input to every future brief: round number and date, loop, surface, pinned scope (`<base>...<head>` with `<base>` **resolved to a SHA**, `HEAD`, `HEAD^{tree}` — the three anchors of §4), effort level, brief revision stamp, **angles briefed**, **angles executed**, **angles briefed but not executed**, the do-not-re-run list carried with its evidence, and the diff size stated against the ~1,000-line detection cliff with the split recommendation if it exceeds it.
 
-**Round record** — the budget half: finding count, the severity tally from §6, per-finding verdicts (applied / rejected-as-wrong / deferred), the **fraction of the round's findings that sat inside the previous round's fixes** (the number that distinguishes real convergence from writing less new material — one measured round was 8 of 8), any scope mismatch, and the convergence call.
+**Round record** — the budget half: finding count, the severity tally from §6, per-finding `Assessment` and `Disposition` from the closed sets in §6, the **fraction of the round's findings that sat inside the previous round's fixes** (the number that distinguishes real convergence from writing less new material — one measured round was 8 of 8), any scope mismatch, and the convergence call.
 
-The fragment is written by `/review-handoff` and **amended in place** by `/apply-review`, which owns the severity and verdict columns because they are apply-time facts.
+The fragment is written by `/review-handoff` and **amended in place** by `/apply-review`, which owns the severity and `Disposition` columns because they are apply-time facts.
 
 **Round record, second half — the analysis.** Not a third section: this is the prose half of the block above, sitting under its counts. It is the reading rather than the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
 
@@ -137,7 +158,25 @@ The type set is closed, for the reason §6's severity set is: an open list of ex
 | `overreach` | A claim may well be true, but nothing measured it |
 | `cosmetic` | Wording, ordering, or a count, with nothing resting on it |
 
-Like severity, the type is applied by the fixer from this set, never taken from the reviewer's own label. The type is `cosmetic`, not `hygiene`, deliberately: `hygiene` is a **severity** value in §6, and one string meaning two things across two columns of one record is how a tally stops being reproducible.
+Like severity, the type is applied by the fixer from this set, never taken from the reviewer's own label.
+
+**`Assessment` and `Disposition` are two different questions and get two different names.** They were one word, `Verdict`, used in the report for whether a finding is real and in the fragment for what the fixer did about it — one column name, two vocabularies, two sessions, and neither set closed. That is the defect this section refuses to tolerate for a severity or a type, so it is not tolerated here either.
+
+| `Assessment` — the report's, by the reviewer or re-verifier | Meaning |
+|---|---|
+| `real` | The defect is present and reachable |
+| `wrong` | Verified, and the finding is incorrect |
+| `already-resolved` | Real when written, since fixed or never applicable |
+| `unverified` | Could not be established either way, and why |
+
+| `Disposition` — the fragment's, by `/apply-review` | Meaning |
+|---|---|
+| `fixed` | An edit landed |
+| `declined` | Real, and deliberately not fixed — with the reason |
+| `deferred` | Real, routed to a later work item |
+| `no-action` | `Assessment` was `wrong`, `already-resolved`, or `unverified` |
+
+`unverified` and `declined` exist because the earlier open sets had no home for them: a round whose surface emitted no per-finding judgement at all had to omit the column, and a finding accepted-but-not-fixed had nowhere to sit. A tally that silently drops those is not reproducible across rounds, which is the whole reason the ledger exists. The type is `cosmetic`, not `hygiene`, deliberately: `hygiene` is a **severity** value in §6, and one string meaning two things across two columns of one record is how a tally stops being reproducible.
 
 **`false-claim` and `overreach` are the pair that will be confused, so the tiebreaker is stated rather than left to taste: ask whether the statement was shown *false* or merely *unsupported*.** A statement contradicted by the mechanism is `false-claim` however cautiously it was worded; a statement nothing contradicts, and nothing establishes either, is `overreach`. Both live on this branch and the pair is worth carrying as the worked example. "Remedy churn is readable from the `[x<N>s<M>]` tags" is `false-claim` — `/ship`'s collapse demonstrably removes them. "The local half dominates the CI half" was `overreach` — plausibly true, never measured, and it was corrected by hedging rather than by reversing. Reaching for `overreach` because it sounds gentler is the error the tiebreaker exists to stop.
 
@@ -156,21 +195,50 @@ Two rules keep it honest. **A section with no pattern to report says so** rather
 ### 8. Ledger location, naming, and collapse
 **Path.** `specs/reviews/angle-ledger/`, a subfolder of the existing review-records directory — not the `specs/` root, which a landed PR deliberately cleared of review artifacts. The directory keeps the name `angle-ledger/` after the reconciliation in §7 because the angle record is its durable half — the part read on every future round and every future branch.
 
-**Naming.** `<YYYY-MM-DD>T<HHMMSS>Z-<b6>.md`, e.g. `2026-08-09T143211Z-a3f9c1.md`, where `<b6>` is the first six hex characters of `sha256` over the branch name. This is a **hybrid — extended date, basic time — and is deliberately not conformant ISO 8601**, because colons are illegal in Windows filenames and the primary development machine is Windows. Do not describe it as ISO 8601 anywhere. UTC with an explicit `Z` is mandatory: local time sorts wrong across a DST boundary and is genuinely ambiguous for one hour every autumn, and the ledger's ordering *is* its index.
+**Naming — reproducible, never derived from write time.** Two paths, both computable from values that are known before the write and
+identical on a re-run:
 
-**Which instant.** The timestamp records the moment `/review-handoff` **writes the fragment**. It is locally derivable, needs no state carried across skills, and is the only instant the writing skill reliably knows. Round-start would be more faithful to ordering but must be threaded brief → prep → handoff — one more field a consumer keys on and a producer must be obliged to write, which is the failure shape this ADR exists to close.
+| Artifact | Path | Derived from |
+|---|---|---|
+| Fragment | `angle-ledger/branches/<b6>/round-<N>.md` | `<b6>` = first six hex of `sha256` over the branch name; `<N>` = the round |
+| Digest | `angle-ledger/digests/<N/100>/pr<N>.md` | the PR number alone |
 
-**No branch name in the filename — but a hash of it, deliberately.** The timestamp alone is a bounded charset with no user-controlled text, which is what makes it immune to the Windows branch-name hazard measured in §9. A hex digest of the branch name keeps that property exactly: the hazard is the branch name used **as a path component** — trailing dots normalized by one API and not another — and a digest is not the name, it is six characters from `[0-9a-f]`. What it buys is the thing a one-second timestamp cannot: **two branches handing off in the same second no longer produce the same path.** Without it, §8's claim that simultaneously-open branches never touch the same path is false — rare, and loud when it fires (an add/add merge conflict rather than a silent overwrite, since fragments are committed), but a stated invariant that is merely improbable is not one. Digests inherit the same protection from their `-pr<N>` suffix, PR numbers being unique by construction, so a collapse that runs twice overwrites its own digest rather than colliding with another branch's. A human label for a round goes in the file's first heading, never in its name.
+**An earlier draft named both from the writing clock**, and that one choice made four separate things unimplementable: a `/review-handoff`
+re-run could not reproduce its own fragment's path, a re-entered `/squash-merge` created a second digest instead of overwriting the first, an
+abandoned round left no record that its number had been consumed, and a revised brief could not be told apart from a new round. All four
+dissolve once a name is a *function of identity* rather than of when the write happened. This is the general rule worth carrying: **anything
+that may be re-entered must be addressable by what it is, not by when it was made.**
 
-**Why one file per round rather than one growing file.** Fragments exist so that two simultaneously-open branches never touch the same path. That need ends at merge — so the two requirements separate cleanly: conflict-freedom while branches are open (one file per round), and bounded growth on `main` (collapse at merge).
+**The shard falls out of the same change.** `<YYYY-MM>` was the old shard and it derived from the timestamp, so removing the timestamp
+removes it. What replaces it is better, because each new shard is bounded by something real rather than by the calendar: a branch's fragments
+live under that branch's `<b6>/`, bounded by rounds-per-branch and **deleted wholesale at collapse**; a digest lives in a bucket of a hundred
+PRs, so `digests/0/` holds PRs 0–99 and no digest directory ever exceeds a hundred entries, permanently, at any merge rate.
 
-**Collapse, and how "the branch's fragments" is determined.** `/squash-merge` collapses the branch's fragments into a single **per-PR digest** under `specs/reviews/angle-ledger/`. The set is selected by **git provenance — the fragments this branch added over `origin/main...HEAD` — never by listing the shard directory.** A directory listing is correct only while every prior branch collapsed successfully: one skipped collapse leaves an earlier branch's fragments on `main`, the next branch inherits them at its next merge, and a listing-based collapse then sweeps another branch's rounds into this PR's digest. Concurrently open branches cannot collide — each commits its fragments on its own branch, so neither tree holds the other's — but that is a property of the *commit*, not of the path, and the selection rule must not rest on the path. This is **new machinery in that skill**, not an extension of something already there: the `/savepoint` collapse belongs to `/ship`, and `/squash-merge` today performs no collapse of any kind. The philosophy is borrowed — branch-local scaffolding folded away at a single seam — but the implementation is not, and BRIEF-5 must size it as new work. This applies to **both** sections; an earlier framing put the round record's collapse at `/ship`, which cannot work, because `/ship`'s collapse fires only before the **first** push while external rounds continue on the open PR. The digest **inlines** fragment content and must not link to it: `scripts/check_spec_links.py` resolves every relative markdown link, so a digest linking to deleted fragments fails CI.
+**Why a hash of the branch and not the branch.** §9 measured the hazard of a branch name used as a **path component** — a trailing dot
+normalized by one API and not another, two correct-looking files on disk, git refusing outright at exit 128 — and a branch name also contains
+`/`, so it would nest unpredictably. `<b6>` is six characters from `[0-9a-f]` and carries none of that. Its collision bound is honest rather
+than absolute: 24 bits, so two *concurrently open* branches colliding is negligible at any plausible number of them, and a collision would
+surface as an add/add merge conflict rather than a silent overwrite, since fragments are committed.
 
-**Shard rule, and it covers digests too.** Fragments and digests both live under `angle-ledger/<YYYY-MM>/`, **each filed by its own timestamp's month** — which for a digest is the month it was written, not the month its fragments were. A branch whose rounds ran in one month and merged in the next therefore empties one shard and adds its digest to another. That is correct rather than a defect: the shard exists to bound a directory's size, not to group a branch's history, and an empty shard costs nothing. Do not add a rule making the digest inherit a fragment's month — it would put a file's shard out of step with its own name, which is the ambiguity the single grammar avoids. Sharding fragments alone would close the unbounded-growth hazard on the transient half and leave it open on the permanent one, where several hundred digests a year (see the measured merge rate below) would otherwise land flat in a single directory. This is insurance, cheap to specify now and expensive to retrofit once paths are baked into four skills: if a collapse is ever skipped or deferred, no single directory grows unbounded.
+**Why one file per round rather than one growing file.** Fragments exist so that two simultaneously-open branches never touch the same path — now true by construction rather than by probability, since each branch's fragments live under its own `<b6>/` directory. That need ends at merge — so the two requirements separate cleanly: conflict-freedom while branches are open (one file per round), and bounded growth on `main` (collapse at merge).
 
-**A digest's name follows the same grammar, plus the PR number** — `<YYYY-MM-DD>T<HHMMSS>Z-pr<N>.md`, the timestamp recording when `/squash-merge` writes it. The suffix is digits only, so the filename stays the bounded, no-user-text charset the fragment rule requires; the branch name is no safer in a digest's name than in a fragment's. It also makes the two **distinguishable by path alone** — a name whose suffix is `pr<N>` is a digest, one whose suffix is six hex characters is a fragment — so a skill or a reader can tell a collapsed round from a live one without opening a file. Collapse status is a property of the **file**, never of the shard: because each file is filed by its own month, one shard can hold live fragments from branches still in-round beside digests from PRs merged that same month.
+**Collapse, and how "the branch's fragments" is determined.** `/squash-merge` collapses the branch's fragments into a single **per-PR
+digest**. The set is `angle-ledger/branches/<b6>/` — the whole directory, since a branch's fragments are the only things in it — with git
+provenance (`origin/main...HEAD`) as the cross-check that the directory holds nothing the branch did not add. A directory listing was
+previously forbidden here for a good reason, now dissolved: the hazard was listing a *shared* shard where another branch's uncollapsed
+fragments could be swept up, and per-branch directories mean there is nothing of another branch's to sweep.
 
-**The PR number is always knowable**, so the grammar's `-pr<N>` component is mandatory rather than best-effort — and the reason belongs here rather than only in the skill: `/squash-merge` refuses to run unless an open PR exists for the branch, so no path in this pipeline produces a digest without one, and the number is known before the digest is composed. If that precondition is ever relaxed, this naming rule needs a fallback and does not have one. Leaving digests unnamed would reopen exactly the branch-derived-filename hazard §9 measures, in the one file that persists.
+**The collapse is idempotent, and this is the property the write-time grammar could not offer.** A re-run writes the same
+`digests/<N/100>/pr<N>.md` and overwrites it. A re-run that finds `branches/<b6>/` already gone finds a digest already there and stops —
+it does not compose a second, empty digest over an emptied directory, which is exactly what the earlier grammar produced when a collapse
+failed part-way and was retried forty seconds later.
+
+This is **new machinery in `/squash-merge`**, not an extension of something already there: the `/savepoint` collapse belongs to `/ship`, and
+`/squash-merge` performs no collapse of any kind today. The philosophy is borrowed — branch-local scaffolding folded away at a single seam —
+but the implementation is not, and BRIEF-5 must size it as new work. The digest **inlines** fragment content and must not link to it:
+`scripts/check_spec_links.py` resolves every relative markdown link, so a digest linking to deleted fragments fails CI.
+
+**The PR number is always knowable**, which is what lets a digest be addressed by it alone — and the reason belongs here rather than only in the skill: `/squash-merge` refuses to run unless an open PR exists for the branch, so no path in this pipeline produces a digest without one, and the number is known before the digest is composed. If that precondition is ever relaxed, this naming rule needs a fallback and does not have one. Leaving digests addressable only by write time is what made a re-entered collapse produce a second file, which is the defect this naming rule exists to remove.
 
 **Why collapse is required rather than optional.** At roughly ten ledger-worthy rounds per PR, and a merge rate **measured** on this repository — 44 PR-numbered squash commits on `main` in the month to 2026-08-09, against 83 over the 4.6 months since 2026-03-21, so ~18/month lifetime and ~44/month recently — uncollapsed fragments reach somewhere between ~2,000 and ~5,000 files per year. The round figure remains an assumption rather than a measurement, and a conservative one, since one branch recorded 28 local plus 11 external rounds. **An earlier draft of this paragraph assumed ten merged PRs a month and presented it as grounded** — roughly 4× low, and by §7's own taxonomy that is `overreach`: a claim nothing contradicted and nothing established. It is recorded rather than quietly corrected because the same error would have made the shard-sizing insurance and the one-digest-per-PR granularity comparison wrong by the same factor. Against 266 tracked files and 121 tracked markdown files today, that is the ledger becoming several times the rest of the repository by file count within a year. The cost is not the filesystem; it is that five O(tracked-files) paths pay for every fragment, and two of them carry a multiplier:
 
