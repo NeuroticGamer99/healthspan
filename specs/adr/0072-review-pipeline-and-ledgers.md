@@ -101,7 +101,12 @@ Severity is assigned by the **fixer**, who knows the consequence, not by the rev
 Reviewer-supplied categories are recorded verbatim and never overwritten; the scale above is a **separate column**. Deliberately not adopted: the bot vocabulary (`Critical`/`Major`/`Minor`), because it is the axis that already failed to separate a loud `exit 1` from a silently passing gate.
 
 ### 7. What the ledger records
-One **fragment per external round**, carrying two sections.
+One **fragment per external round**, and its layout is the template `/review-handoff` writes and `/apply-review` amends:
+
+1. **Angle record** — what was reviewed and how.
+2. **Round record** — what it cost and what it meant, in two halves: the **counts**, then the **analysis** that reads them.
+
+Two sections, three blocks of prose. The analysis is the round record's second half, never a third section — a fragment format read off this list rather than off the paragraph headings below is the one that will match.
 
 **Angle record** — the durable half, and the input to every future brief: round number and date, loop, surface, pinned scope (`<base>...<head>`, `HEAD`, `HEAD^{tree}`), effort level, brief revision stamp, **angles briefed**, **angles executed**, **angles briefed but not executed**, the do-not-re-run list carried with its evidence, and the diff size stated against the ~1,000-line detection cliff with the split recommendation if it exceeds it.
 
@@ -109,7 +114,7 @@ One **fragment per external round**, carrying two sections.
 
 The fragment is written by `/review-handoff` and **amended in place** by `/apply-review`, which owns the severity and verdict columns because they are apply-time facts.
 
-**Round analysis — the third part of the round record, not a third section.** The fragment still carries two sections; this is the round record's prose half, sitting under its counts. It is the reading rather than the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
+**Round record, second half — the analysis.** Not a third section: this is the prose half of the block above, sitting under its counts. It is the reading rather than the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
 
 - **Mechanically filled** — *locus* (which files and which sections took the findings, and which were reviewed clean); *type mix*, from the closed set below; *precision* (how many findings survived re-verification); *remedy churn* (how many fixes needed a second attempt); *cross-lens delta* (what this round caught that the local smokes had not, and the reverse).
 - **Prompted, never substituted** — the causal read, and the convergence call's reasoning.
@@ -121,10 +126,12 @@ The type set is closed, for the reason §6's severity set is: an open list of ex
 | `false-claim` | A statement about existing machinery is not true of that machinery |
 | `contradiction` | The document disagrees with itself |
 | `gap` | A rule is specified with a hole in it |
-| `overreach` | A claim asserts more than what was measured |
-| `hygiene` | Wording, ordering, or a count, with nothing resting on it |
+| `overreach` | A claim may well be true, but nothing measured it |
+| `cosmetic` | Wording, ordering, or a count, with nothing resting on it |
 
-Like severity, the type is applied by the fixer from this set, never taken from the reviewer's own label.
+Like severity, the type is applied by the fixer from this set, never taken from the reviewer's own label. The type is `cosmetic`, not `hygiene`, deliberately: `hygiene` is a **severity** value in §6, and one string meaning two things across two columns of one record is how a tally stops being reproducible.
+
+**`false-claim` and `overreach` are the pair that will be confused, so the tiebreaker is stated rather than left to taste: ask whether the statement was shown *false* or merely *unsupported*.** A statement contradicted by the mechanism is `false-claim` however cautiously it was worded; a statement nothing contradicts, and nothing establishes either, is `overreach`. Both live on this branch and the pair is worth carrying as the worked example. "Remedy churn is readable from the `[x<N>s<M>]` tags" is `false-claim` — `/ship`'s collapse demonstrably removes them. "The local half dominates the CI half" was `overreach` — plausibly true, never measured, and it was corrected by hedging rather than by reversing. Reaching for `overreach` because it sounds gentler is the error the tiebreaker exists to stop.
 
 **Remedy churn is the field with no other home**, and on the round that motivated this section it was the highest-yield number: two of seven remedies were wrong on the first attempt and together generated four of the six findings the subsequent smokes returned. Nothing else in this pipeline sees a fix's own error rate — every other artifact records the finding and stops at the edit.
 
