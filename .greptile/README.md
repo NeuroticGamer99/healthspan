@@ -164,8 +164,11 @@ imply. Five shapes so far:
   already chosen an HTML marker for `summary_marker` on exactly that reasoning
   while leaving `count` on a visible sentence in an optional block. The repair
   needs no new regex — `clean_marker` is not in that block and already told the
-  poller this run was not clean — and it is deliberately **not** in this change;
-  the toggle stays off so the reproduction survives.
+  poller this run was not clean — and it is deliberately **not** in this change.
+  **The durable reproduction is the regression test that repair must carry**,
+  encoding this artifact shape directly: a reproduction that depends on a
+  dashboard setting outside the repository is the same defect one level up. The
+  toggle stays off meanwhile, but nothing should rest on that.
 
 The summary comment is the only artifact present in every one of those, which is
 why it — and not the reviews endpoint — is what the tooling polls. Its footer

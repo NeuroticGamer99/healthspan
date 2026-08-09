@@ -42,11 +42,12 @@ The "Re-trigger Greptile" link in the summary comment's footer is **not** usable
 authenticates to the repository owner's Greptile account, not to the GitHub App, and redirects an
 unauthenticated caller to a login page. The comment is the only agent-accessible trigger.
 
-**This step is right whether or not a review already exists.** `skipReview` is documented but not
-yet confirmed by measurement here (`.greptile/README.md` says so and names the observation that
-settles it), and if the App did review on creation after all, this is simply a re-review: the floor
-is stamped before the trigger, the summary is edited in place, and step 3 waits for that edit.
-Report an unasked review if you see one — it is the measurement.
+**Confirmed on PR #84: nothing arrives unasked.** That PR drew no Greptile artifact on opening; its
+summary was created *after* the trigger and the footer read `Reviews (1)` — one review, caused by
+the ask. `.greptile/README.md` carries the measurement, including that the App reads `config.json`
+from the **PR head**, so a change to that file binds the PR that makes it. **An unasked review is
+therefore a regression — report it.** The step stays safe if one somehow exists: the floor is
+stamped before the trigger, a re-review edits the summary in place, and step 3 waits for that edit.
 
 ## 3. Wait for the review
 
