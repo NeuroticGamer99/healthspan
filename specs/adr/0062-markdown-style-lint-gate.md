@@ -75,7 +75,7 @@ PyMarkdown (`pymarkdownlnt`), run via `uvx pymarkdownlnt@<version>` with the ver
 ### 2. Rule configuration (the tuned corpus profile)
 Authoritative in `pyproject.toml` `[tool.pymarkdown]`, mirrored in [`.markdownlint.yaml`](../../.markdownlint.yaml):
 
-- **Disabled** (house style): `MD013` line-length, `MD022` blanks-around-headings, `MD032` blanks-around-lists.
+- **Disabled** (house style): `MD013` line-length, `MD022` blanks-around-headings, `MD032` blanks-around-lists, and (added by the 2026-08-08 scope widening) `MD038` no-space-in-code — the skill and reviewer-isolation docs quote literal command output in code spans (e.g. the launcher's two-space-indented `?? <path>` lines) where the spaces *are* the content; "fixing" them would falsify a documented interface.
 - **`MD024` duplicate-heading**: configured `siblings_only = true`. Repeated subsection names (`### Architecture`) under distinct `##` parents are legitimate structure, not duplication; this scopes the rule to true siblings and resolves the single corpus hit without a content edit.
 - **All other rules: default-enabled**, including `MD040` (fenced-code-language), `MD031` (blanks-around-fences), `MD012` (no-multiple-blanks), and `MD036` (emphasis-as-heading).
 
@@ -83,9 +83,11 @@ Authoritative in `pyproject.toml` `[tool.pymarkdown]`, mirrored in [`.markdownli
 The two config files are a manual mirror. Each carries a header comment stating that any rule enable/disable/parameter change in one **must** be mirrored in the other, because our CI gate reads `pyproject.toml` and CodeRabbit reads `.markdownlint.yaml`. (Two asymmetries are PyMarkdown-only and so have no mirror line: the front-matter extension — markdownlint handles front matter natively — and `mode.strict-config`, which governs how PyMarkdown reacts to a bad *own* config, not any shared rule decision. Both are noted in-file so their absence on the markdownlint side does not read as drift.)
 
 ### 4. Scope boundary
-Same as [ADR-0061](0061-markdown-link-check-gate.md): tracked `*.md` under `specs/` plus root `README.md` and `CLAUDE.md`; `specs/personal/` is neither scanned (gitignored, absent in CI) nor otherwise touched. Tooling docs under `.claude/` are out of scope for now; widening is a config change if a need appears.
+Same as [ADR-0061](0061-markdown-link-check-gate.md), and revised with it 2026-08-08 (twice — the second revision aligned the enumeration with the link gate's after external review 2 found the two gates disagreeing): **every `*.md` git considers part of the repo** — tracked plus untracked-but-not-ignored, `git ls-files --cached --others --exclude-standard` in `ci.yml` — so a new markdown file is gated from the moment it is written, with no enumerated pathspec to go stale. (In CI a checkout carries no untracked files, so the `--others` half is live only in local runs of the same command.) (The original boundary — specs/ plus root `README.md`/`CLAUDE.md`, with `.claude/` "out of scope for now; widening is a config change if a need appears" — went stale exactly that way: 17 tracked files under `.claude/` accumulated 23 violations invisible to CI, finding J8.) `specs/personal/` is neither scanned nor otherwise touched — enforced by the command's explicit `:(exclude)specs/personal/**` pathspec, which holds even for a force-added tracked file; gitignore (and the tree's absence in CI) makes that case abnormal but is not the exclusion mechanism. The widening cleanup fixed the corpus rather than the config wherever the violation was genuine — notably `.claude/skills/land/SKILL.md`'s frontmatter `description:` was invalid YAML (an unquoted internal colon), which made PyMarkdown read its `---` delimiters as a phantom setext heading and produced 12 of the 23 findings; the two GitHub issue templates carried a blank line inside their front matter with the same phantom-heading effect.
 
 ### 5. Phasing — what this PR does, and what it defers
+**Both phases are complete** (recorded 2026-08-08, in the same revision that widened §4): the deferred CI wiring and corpus cleanup landed in the follow-up PR (#47, 2026-07-21), so the gate described below as "not yet wired" has been live and blocking since then, and now runs over the widened all-repo file set. The two-step text is kept as the phasing record it was:
+
 This decision is landed in two steps to separate the low-risk configuration from the corpus cleanup:
 
 - **This PR**: this ADR (Proposed); both config files with the sync discipline; the three MD036 hits (across two files) fixed ([ADR-0044](0044-derived-data-points.md) option labels 1–2; [data-model.md](../data-model.md) HealthKit subsection); the MD024 hit resolved via `siblings_only`. The CI gate itself is **not yet wired**, so nothing new blocks merges.
@@ -103,7 +105,7 @@ This decision is landed in two steps to separate the low-risk configuration from
 - Two config files encode one intent and can drift; the guard is a header comment in each, not yet a mechanized check (option E, deferred).
 - Disabling MD022/MD032 means the tight-heading convention is never enforced, only tolerated — a new doc that spaces its headings is equally accepted; consistency of *that* axis is no longer gated.
 - MD040 is enabled but not auto-fixable, so the 28 untagged fences are hand-work in the follow-up, and future untagged fences are a hard failure a contributor must fix (the intended behavior).
-- The style gate lands a step behind its own config: between this PR and the follow-up, the rules are advisory (via CodeRabbit) but not CI-blocking.
+- The style gate lands a step behind its own config: between this PR and the follow-up, the rules are advisory (via CodeRabbit) but not CI-blocking. (Closed by PR #47 — see §5's completion note; the gate has been CI-blocking since.)
 
 ## Links
 - Extends: [ADR-0061](0061-markdown-link-check-gate.md) — the link-check gate on the same docs-consistency job; this adds the style facet. ADR-0061 gains an `Extended by: ADR-0062` navigation link (Proposed, edited without ceremony)

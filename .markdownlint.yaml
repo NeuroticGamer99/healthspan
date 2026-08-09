@@ -12,6 +12,7 @@
 default: true
 
 MD013: false   # line-length — house style: long em-dash prose
+MD038: false   # no-space-in-code — house style: code spans quote literal command output whose spaces ARE the content
 MD022: false   # blanks-around-headings — house style: value tight under its `##`
 MD032: false   # blanks-around-lists — same tight-heading convention
 

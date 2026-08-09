@@ -1,6 +1,6 @@
 ---
 name: land
-description: Pre-commit landing checklist — run the local gates, verify personal-data containment and ADR governance, draft the Decisions: section, and propose the commit message. Use when a work item is ready to commit.
+description: "Pre-commit landing checklist — run the local gates, verify personal-data containment and ADR governance, draft the Decisions: section, and propose the commit message. Use when a work item is ready to commit."
 ---
 
 # /land — pre-commit landing procedure

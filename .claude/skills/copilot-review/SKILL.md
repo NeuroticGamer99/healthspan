@@ -33,7 +33,7 @@ Do not retry blindly. There is no auto-review ruleset on this repo — Copilot r
 
 **It prints the floor to use next**, stamped before the request:
 
-```
+```text
 requested copilot; requested_reviewers now: Copilot
 since: 2026-07-16T22:20:00Z
   pass that to: wait/fetch --bot copilot --pr 27 --since 2026-07-16T22:20:00Z
