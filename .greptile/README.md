@@ -60,10 +60,24 @@ need, ADR-0067 §2 records the detector as part of the gate's contract, and its
 tests now drive it through a synthetic always-reviewing spec so it stays proven
 rather than merely present.
 
-**This is verified in Greptile's docs but not yet by measurement here**, and the
-measurement is cheap: the first PR opened after this lands should attract no
-Greptile review until one is asked for. If one arrives unasked, the key was not
-honored — record that here rather than re-deriving it later.
+**Measured on PR #84, the PR that introduced the key — it is honored.** That PR
+opened at 19:14:52Z and attracted no Greptile artifact; the summary comment was
+*created* at 19:18:08Z, after the `@greptileai review` trigger posted at
+19:15:33Z, and its footer read `Reviews (1)`. One review, and the trigger caused
+it. Greptile was demonstrably up, answering in 2m35s, and `main` did not carry
+the key at the time — so the App read `config.json` from the **PR head**, which
+is worth knowing on its own: a config change to this file takes effect on the PR
+that makes it, not one PR later.
+
+**No ADR records this posture, deliberately.** Greptile's own review of PR #84
+raised the opposite — that CLAUDE.md's routing rule 4 sends a config default to
+its owning ADR — and the owner's decision was that this predates the convention
+of writing ADRs for tooling and is too small a change to start now. Rule 4's
+wording presumes an owning ADR exists and is silent on what to do when none ever
+did; the sibling reviewers are in the same position (CodeRabbit's
+`auto_review.enabled: false` and Gemini's opt-in default have no ADR either), so
+this file is the owning record for all three. Recorded here rather than left in a
+PR thread, because the question will be asked again.
 
 - **`triggerOnUpdates: false`** — set explicitly although it is also the
   default, because it is a *choice*, not a limitation someone should later
@@ -77,10 +91,10 @@ honored — record that here rather than re-deriving it later.
 
   Note what this key does **not** control: a `Greptile Review` check is posted
   by the App itself — observed passing on PR #71 with this set to `false`, on a
-  PR the App had reviewed automatically. Whether it still appears on a PR the
-  App never reviews is unmeasured, and the same first-PR observation that
-  confirms `skipReview` will answer it. So "it would add a new check" is *not* a
-  reason to leave it off, and the check it posts is not in the ADR-0045 required set
+  PR the App had reviewed **automatically**. It is tied to that path, not to
+  reviewing as such: PR #84's checks carried no Greptile entry at all, listed
+  after its triggered review had completed. So "it would add a new check" is
+  *not* a reason to leave it off, and no check it posts is in the ADR-0045 required set
   (`ci-ok` is), so nothing here interacts with the branch ruleset today.
   Enabling `statusCheck` later would still want checking against that ruleset,
   but the blocking objection is the summary comment, not the check.
@@ -126,7 +140,7 @@ convention added or changed in one must be mirrored in the others.
 
 The artifacts Greptile posts are not the shape the other bots use, and
 `scripts/bot_review.py` encodes what was observed live rather than what the docs
-imply. Four shapes so far:
+imply. Five shapes so far:
 
 - **Findings run** — a review object with an **empty body**, its inline
   comments, and a summary issue comment (PRs #67, #69).
@@ -137,6 +151,21 @@ imply. Four shapes so far:
 - **Findings with no comments at all** — a summary stating a finding count, with
   no review object *and* no inline comment; the findings exist only as prose in
   the summary, where nothing can reply to them (PR #72).
+- **Findings with no comments and no count either** — the shape above with its
+  one detector disabled (PR #84). The summary said `Files Needing Attention:`
+  and encoded its issue in the "Fix All in Claude Code" badge href, but carried
+  no `Fix the following N code review issue` line, which is the only pattern the
+  `greptile` spec's `count` regex matches — so `stated_count` returned `None`,
+  the cross-check was skipped, and `outstanding` cleared the merge gate on a PR
+  holding a real unanswered finding. **The cause is a Greptile dashboard toggle,
+  outside this repository**, disabled while the owner was looking for the
+  skip-review option. That is the finding, not the toggle: a merge gate must not
+  depend on a setting that leaves no trace in a diff, and the same file had
+  already chosen an HTML marker for `summary_marker` on exactly that reasoning
+  while leaving `count` on a visible sentence in an optional block. The repair
+  needs no new regex — `clean_marker` is not in that block and already told the
+  poller this run was not clean — and it is deliberately **not** in this change;
+  the toggle stays off so the reproduction survives.
 
 The summary comment is the only artifact present in every one of those, which is
 why it — and not the reviews endpoint — is what the tooling polls. Its footer
