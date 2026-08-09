@@ -39,12 +39,12 @@ Finally, the owner needs the loop to be a **budget instrument**. The decision "k
 ### 1. The skill chain
 | Skill | Runs in | Produces |
 |---|---|---|
-| `/review-brief` | **orchestrator** session | the briefing file |
+| `/review-brief` | **orchestrator** session | the briefing file, **and the round's fragment**, created when it allocates `N` (§5) |
 | `/review-prep` | **reviewer** session | the carrier (absorbing the brief) and the exact command to run |
-| `/review-handoff` | **reviewer** session | the report and the round's ledger fragment |
-| `/apply-review` | **orchestrator** session | the fixes, and the fragment's severity and verdict columns |
+| `/review-handoff` | **reviewer** session | the report, and the round's fragment **filled in** — it does not create it |
+| `/apply-review` | **orchestrator** session | the fixes, and the fragment's severity and `Disposition` columns |
 
-Four skills in the table, **five that must change**. The **pipeline** is the first three — brief → prep → handoff, one artifact out of each — and `/apply-review` is its consumer; but it writes back to the round's fragment, so it is a producer of the ledger even though it produces no review artifact. The fifth is `/squash-merge`, which appears in no row above because it produces nothing for a review, yet it gains the fragment-collapse step (§8) and is the only one of the five gaining **new** machinery rather than a rewrite. Any count of "how many skills must change" is **five**, and dropping the fifth drops the highest-risk item in the plan.
+Four skills in the table, **five that must change**. The **pipeline** is the first three — brief → prep → handoff — and `/apply-review` is its consumer; but it writes back to the round's fragment, so it is a producer of the ledger even though it produces no review artifact. The fifth is `/squash-merge`, which appears in no row above because it produces nothing for a review, yet it gains the fragment-collapse step (§8) and is the only one of the five gaining **new** machinery rather than a rewrite. Any count of "how many skills must change" is **five**, and dropping the fifth drops the highest-risk item in the plan.
 
 `/review-brief` serves **both** loops. The external `/code-review` pass is primary, but the local `spec-reviewer`/`test-reviewer` smokes are where the measured savings landed (one briefed round went 172k → 85k tokens and produced the first clean report in 24 rounds), and a brief skill that serves only the external pass leaves the more frequent case improvised.
 
@@ -82,7 +82,7 @@ The discriminator: the *heuristic* is recordable and stable, so encode it; the *
 | Negative results and settled-item challenges | A challenge to a settled item has nowhere to go |
 | **Surface** recorded (terminal / `-p` / host app) | Missing structured verdicts misdiagnosed as reviewer failure |
 | **Scope echo** vs the range prep asked for | Nothing checked that a review honoured its scope |
-| **Fragment path** — the ledger fragment this round wrote | `/apply-review` runs in the *other* session and cannot otherwise identify which fragment to amend |
+| **Fragment path** — the ledger fragment this round wrote | A cross-check, not a necessity: under §8's naming the path is computable from branch and `Round: N`, so a recorded value that disagrees is a signal something went wrong |
 
 The executed-angle roster and the "not covered" section are **distinct**: one is about angles run, the other about scope reached.
 
@@ -141,7 +141,7 @@ Two sections, three blocks, and the list above names all three — including the
 
 **Round record** — the budget half: finding count, the severity tally from §6, per-finding `Assessment` and `Disposition` from the closed sets in §6, the **fraction of the round's findings that sat inside the previous round's fixes** (the number that distinguishes real convergence from writing less new material — one measured round was 8 of 8), any scope mismatch, and the convergence call.
 
-The fragment is written by `/review-handoff` and **amended in place** by `/apply-review`, which owns the severity and `Disposition` columns because they are apply-time facts.
+The fragment is **created by `/review-brief`** at allocation (§5), filled by `/review-handoff`, and **amended in place** by `/apply-review`, which owns the severity and `Disposition` columns because they are apply-time facts.
 
 **Round record, second half — the analysis.** Not a third section: this is the prose half of the block above, sitting under its counts. It is the reading rather than the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
 
@@ -173,8 +173,8 @@ Like severity, the type is applied by the fixer from this set, never taken from 
 |---|---|
 | `fixed` | An edit landed |
 | `declined` | Real, and deliberately not fixed — with the reason |
-| `deferred` | Real, routed to a later work item |
-| `no-action` | `Assessment` was `wrong`, `already-resolved`, or `unverified` |
+| `deferred` | Routed onward rather than settled now — a later work item, or an `open-questions.md` entry. Reachable from `real` **and** from `unverified`, since a question worth tracking is a legitimate outcome for a finding nobody could establish |
+| `no-action` | `Assessment` was `wrong` or `already-resolved`; or `unverified` and deliberately dropped rather than tracked |
 
 `unverified` and `declined` exist because the earlier open sets had no home for them: a round whose surface emitted no per-finding judgement at all had to omit the column, and a finding accepted-but-not-fixed had nowhere to sit. A tally that silently drops those is not reproducible across rounds, which is the whole reason the ledger exists. The type is `cosmetic`, not `hygiene`, deliberately: `hygiene` is a **severity** value in §6, and one string meaning two things across two columns of one record is how a tally stops being reproducible.
 
@@ -216,7 +216,9 @@ PRs, so `digests/0/` holds PRs 0–99 and no digest directory ever exceeds a hun
 
 **Why a hash of the branch and not the branch.** §9 measured the hazard of a branch name used as a **path component** — a trailing dot
 normalized by one API and not another, two correct-looking files on disk, git refusing outright at exit 128 — and a branch name also contains
-`/`, so it would nest unpredictably. `<b6>` is six characters from `[0-9a-f]` and carries none of that. Its collision bound is honest rather
+`/`, so it would nest unpredictably. `<b6>` is six characters from `[0-9a-f]` and carries none of that. **And the fragility it trades into, said plainly.** Deriving identity from the branch *name* assumes the name is stable, and a branch name is a label rather than a fact. Rename a branch mid-flight and `<b6>` changes: the next `/review-brief` computes `max(existing)+1` against a new, empty directory and restarts at round 1, while the old fragments sit under the stale hash where collapse — which keys on the current name — will never look, and are orphaned permanently. That is the one re-entry case this scheme does not cover, and it is the same shape as the defect it fixed: the old grammar was addressable by *when*, this one by a *what* that can be edited. No stable branch identity is available at brief time — the PR number is not known until `/ship`, and the branch's first commit SHA is rewritten by the collapse — so the limitation is accepted rather than designed away. The remedy is procedural and belongs with the rule: **rename before the first round, or move `branches/<b6>/` to the new hash as part of the rename.** Nothing enforces it; §10 carries it.
+
+Its collision bound is honest rather
 than absolute: 24 bits, so two *concurrently open* branches colliding is negligible at any plausible number of them, and a collision would
 surface as an add/add merge conflict rather than a silent overwrite, since fragments are committed.
 
@@ -231,7 +233,7 @@ fragments could be swept up, and per-branch directories mean there is nothing of
 **The collapse is idempotent, and this is the property the write-time grammar could not offer.** A re-run writes the same
 `digests/<N/100>/pr<N>.md` and overwrites it. A re-run that finds `branches/<b6>/` already gone finds a digest already there and stops —
 it does not compose a second, empty digest over an emptied directory, which is exactly what the earlier grammar produced when a collapse
-failed part-way and was retried forty seconds later.
+failed part-way and was retried forty seconds later. A crash *between* those two — digest written, directory only partly deleted — resolves the same way: the digest is authoritative, the re-run overwrites it from whatever fragments remain and finishes the deletion, because overwriting a correct digest with one composed from a subset of its own inputs is the case the inlining rule already makes safe.
 
 This is **new machinery in `/squash-merge`**, not an extension of something already there: the `/savepoint` collapse belongs to `/ship`, and
 `/squash-merge` performs no collapse of any kind today. The philosophy is borrowed — branch-local scaffolding folded away at a single seam —
@@ -269,7 +271,7 @@ The alternative was measured and is real: a branch-derived path does not name on
 **This does not reopen the checkpoint collapse.** The collapse's rejection of a repo-scoped message rests on durability *and* visibility; the option above addresses only durability, leaving intact the argument that decided it — the composed message as the branch's first commit is PR-visible, reviewable by every lens, and verifiably what `/squash-merge` extracts.
 
 ### 10. Where the rules are written
-Reasoning lives here; the rule is **carried into the skill file that must obey it, citing this ADR**. An ADR-only rule reproduces a failure found three times on one branch: a prohibition "stated in the ADR, enforced by nothing, and invisible to an editor who opens the file directly". Mechanization where it is cheap, per the `tests/test_except_convention.py` precedent: the agent-output-pointer rule is already gated by `tests/test_no_task_output_citations.py`, and a sync check in the shape of `scripts/check_markdownlint_config_sync.py` should pin the self-contained-capture rule into `review-handoff`. **Three** of this ADR's rules are enforced by **nothing**, and are named here rather than left to read as settled — the third is the layout priority rule two paragraphs down, which counts because "an editor remembering it" is not enforcement. **The containment rule on verbatim capture** (§5) cannot be gated: ADR-0070's enumeration gate keys on the path, and a fragment's path is `specs/reviews/`, so a personal value quoted into a fragment passes every mechanical check the repo has. It is human judgement at capture time, exactly as ADR-0070 concluded for the content half generally — and the ledger is a *new* place that judgement must be exercised, which is the whole reason it is listed. **Round-number allocation** (§5) is the second: nothing verifies that `N` came from `/review-brief` rather than from a session counting files, which is the heuristic it replaces; the cheap mechanization, if one is ever wanted, is that a fragment whose `N` is not `max(existing)+1` for the branch is a detectable error.
+Reasoning lives here; the rule is **carried into the skill file that must obey it, citing this ADR**. An ADR-only rule reproduces a failure found three times on one branch: a prohibition "stated in the ADR, enforced by nothing, and invisible to an editor who opens the file directly". Mechanization where it is cheap, per the `tests/test_except_convention.py` precedent: the agent-output-pointer rule is already gated by `tests/test_no_task_output_citations.py`, and a sync check in the shape of `scripts/check_markdownlint_config_sync.py` should pin the self-contained-capture rule into `review-handoff`. **Four** of this ADR's rules are enforced by **nothing**, and are named here rather than left to read as settled — the third is the layout priority rule two paragraphs down, and the fourth is §8's rename remedy — move a branch's ledger directory when the branch is renamed, or its fragments orphan silently. All four count because "an editor remembering it" is not enforcement. **The containment rule on verbatim capture** (§5) cannot be gated: ADR-0070's enumeration gate keys on the path, and a fragment's path is `specs/reviews/`, so a personal value quoted into a fragment passes every mechanical check the repo has. It is human judgement at capture time, exactly as ADR-0070 concluded for the content half generally — and the ledger is a *new* place that judgement must be exercised, which is the whole reason it is listed. **Round-number allocation** (§5) is the second: nothing verifies that `N` came from `/review-brief` rather than from a session counting files, which is the heuristic it replaces; the cheap mechanization, if one is ever wanted, is that a fragment whose `N` is not `max(existing)+1` for the branch is a detectable error.
 
 A third candidate, named because its absence is what let one representation drift from another three times while this ADR was being written: §7 gives the fragment layout as a numbered list *and* as bold-lead paragraphs, and states that the list wins. That priority rule is enforced by an editor remembering it. When the fragment template becomes a real artifact, a sync check in the same shape should pin the two representations to each other. The generate-vs-structure line (§3) is **not** mechanizable and is stated at the top of `/review-brief` with the twenty-unchecked-guards example attached, so an editor meets the reasoning rather than a bare rule.
 
