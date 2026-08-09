@@ -5,44 +5,82 @@
 Greptile's configuration surface — it reads `config.json`, `rules.md` and
 `files.json` — it is for whoever edits those next.
 
-## The posture: automatic at creation, manual afterwards
+## The posture: nothing reviews unasked
 
-Greptile reviews this repository **automatically when a PR is opened**. That is
-the GitHub App's own behaviour and needs no configuration; the repo ran four
-reviews on stock defaults before this config existed.
+Greptile's GitHub App reviews every new PR on its own. That is its default and
+needs no configuration — the repo ran four reviews on stock defaults before this
+file existed. **`skipReview: "AUTOMATIC"` turns that off**, leaving the
+`@greptileai review` comment as the only trigger, which is what
+`scripts/bot_review.py request --bot greptile` posts. The value is a
+case-sensitive enum and the uppercase spelling is the documented one
+([controlling nitpickiness](https://www.greptile.com/docs/code-review/controlling-nitpickiness)).
 
-That is deliberate and differs from every other reviewer here — CodeRabbit is
-`auto_review.enabled: false`, Copilot and the Antigravity workflow are asked
-explicitly. Greptile is kept automatic because it is free, it answers in two to
-eight minutes while the rest of the ship flow is still running, and across its
-first four runs it produced two findings, both legitimate, one of which
-(PR #69's silent ACL lockout) two handed-off `/code-review` passes and both other
-bots had missed. The cost that made the others opt-in was triage attention, and
-Greptile has not spent any.
+Until now it was the other way round, and deliberately so: the automatic review
+was free, it answered in two to eight minutes while the rest of the ship flow
+was still running, and it spent little triage attention — which was the cost
+that had made every other reviewer opt-in. Its record over that period is mixed
+rather than uniform, and both halves are worth keeping: PR #69's silent ACL
+lockout was a real defect that two handed-off `/code-review` passes and both
+other bots missed, while PR #81's three findings were every one refuted by
+measurement. **Neither half is what changed here.** What changed is which commit
+the free review lands on.
 
-What automatic review does create is the risk of a finding nobody collects.
-That is closed on the tooling side, not by suppressing the review:
-`/greptile-review` collects it, and `/squash-merge` refuses to merge while any
-bot's finding — Greptile's included — lacks a threaded reply. The gate is keyed
-on unanswered findings rather than on the review's freshness, because fix
-commits land *after* a review by definition: a triaged PR reaches merge time
-with the review one or more commits behind, and a freshness gate would fire on
-that ordinary end state while staying silent on the finding nobody read.
+**Measured on PR #83.** Greptile reviewed the commit the PR was opened at and
+raised two legitimate P1s. The branch then moved fifteen commits, including a
+redesign that replaced the mechanism both findings were about. Because
+`triggerOnUpdates` is `false` — correctly, see below — nothing re-reviewed it,
+so the automatic run had been spent on a head that stopped existing within the
+hour and the review that mattered had to be asked for anyway. A creation trigger
+fires at the one moment in a PR's life when its diff is least likely to be the
+diff that merges.
+
+So the spend is now made where the other three are made: deliberately, on a
+commit someone chose. `/greptile-review` triggers, waits and triages as one
+chain, and `/ship greptile` runs that chain after the push. This also ends a
+carve-out nothing else in the repository had — `/ship`, `/squash-merge` and
+`.claude/bot-review-triage.md` each had to name Greptile as the exception to
+"nothing reviews unasked", and each now does not.
+
+What the old posture created was the risk of a finding nobody collects, and
+that risk is what the merge gate was built around; the gate is unchanged and
+still earns its keep. `/squash-merge` refuses to merge while any bot's finding
+lacks a threaded reply, keyed on unanswered findings rather than on the review's
+freshness — fix commits land *after* a review by definition, so a triaged PR
+reaches merge time with its review a commit or two behind, and a freshness gate
+would fire on that ordinary end state while staying silent on the finding nobody
+read.
+
+One piece of that gate did change with the trigger. `scripts/bot_review.py`
+carried a `silent_always_reviewers` detector whose only subject was Greptile: a
+bot that reviews unasked has no legitimate silence, so silence had to block the
+merge. Under a manual trigger Greptile's silence means what CodeRabbit's means —
+the chain was not spent — so its `always_reviews` flag is now `False`. The flag
+and the detector stay: they are what a future unasked reviewer would set and
+need, ADR-0067 §2 records the detector as part of the gate's contract, and its
+tests now drive it through a synthetic always-reviewing spec so it stays proven
+rather than merely present.
+
+**This is verified in Greptile's docs but not yet by measurement here**, and the
+measurement is cheap: the first PR opened after this lands should attract no
+Greptile review until one is asked for. If one arrives unasked, the key was not
+honored — record that here rather than re-deriving it later.
 
 - **`triggerOnUpdates: false`** — set explicitly although it is also the
   default, because it is a *choice*, not a limitation someone should later
-  "fix". A re-review of a fixed commit is a deliberate spend
-  (`.claude/bot-review-triage.md` §4), asked for with an `@greptileai review`
-  comment.
+  "fix". Every review is a deliberate spend (`.claude/bot-review-triage.md` §4),
+  asked for with an `@greptileai review` comment; a push is not a decision to
+  review, and with `skipReview` set neither is opening the PR.
 - **`statusCheck: false`** — because Greptile's docs describe this as creating a
   status check *instead of* the summary comment, and that summary comment is the
   completion signal `scripts/bot_review.py` polls for both outcomes. Enabling it
   would make every wait time out.
 
-  Note what this key does **not** control: a `Greptile Review` check is posted on
-  every PR regardless, by the App itself — observed passing on PR #71 with this
-  set to `false`. So "it would add a new check" is *not* a reason to leave it
-  off, and the check it already posts is not in the ADR-0045 required set
+  Note what this key does **not** control: a `Greptile Review` check is posted
+  by the App itself — observed passing on PR #71 with this set to `false`, on a
+  PR the App had reviewed automatically. Whether it still appears on a PR the
+  App never reviews is unmeasured, and the same first-PR observation that
+  confirms `skipReview` will answer it. So "it would add a new check" is *not* a
+  reason to leave it off, and the check it posts is not in the ADR-0045 required set
   (`ci-ok` is), so nothing here interacts with the branch ruleset today.
   Enabling `statusCheck` later would still want checking against that ruleset,
   but the blocking objection is the summary comment, not the check.

@@ -11,14 +11,13 @@ Runs after `/land` has surveyed the change, run the gates, and proposed a commit
 Takes an optional reviewer argument choosing which bot chain to spend on this PR — reviews are
 opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every PR:
 
-- **`/ship`** — ship only. **Greptile is the exception to "nothing reviews unasked": its GitHub
-  App reviews every new PR on its own**, so opening a PR always starts one. After reporting the PR
-  URL, say that Greptile is already reviewing and offer `/greptile-review` to collect it, then
-  remind the user of the chains they can additionally spend: the two reliable lenses
-  `/coderabbit-review` and `/copilot-review`, a local `/code-review`, and — only if explicitly
-  asked — the best-effort `/gemini-review` (see below). Do not wait for anything here.
-- **`/ship greptile`** — ship, then run the **`/greptile-review`** chain (step 4) to collect the
-  review the PR creation already started. No trigger is posted; the chain begins at the wait.
+- **`/ship`** — ship only. **Nothing reviews unasked** — Greptile was the last exception to that,
+  until `skipReview: "AUTOMATIC"` put it on the same manual trigger as the rest. After reporting
+  the PR URL, remind the user of the chains they can spend: the two reliable lenses
+  `/coderabbit-review` and `/copilot-review`, `/greptile-review`, a local `/code-review`, and —
+  only if explicitly asked — the best-effort `/gemini-review` (see below). Do not wait for
+  anything here; nothing is coming.
+- **`/ship greptile`** — ship, then run the **`/greptile-review`** chain (step 4).
 - **`/ship coderabbit`** — ship, then run the **`/coderabbit-review`** chain (step 4).
 - **`/ship gemini`** — ship, then run the **`/gemini-review`** chain (step 4). **Best-effort, not a
   routine chain member** (demoted 2026-07-24): on the free tier it usually fails without producing a
@@ -292,14 +291,16 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
 
 ## 4. The chosen reviewer chain
 
-Bare `/ship` ends at step 3: report the PR URL, note that Greptile is already reviewing, and list
-the chains available. **Do not wait for anything** — `/ship greptile` is how the user asks for the
-Greptile wait, and no *other* review is coming unasked (`auto_review.enabled: false`), so waiting
-for one polls a silent PR to a 30-minute timeout.
+Bare `/ship` ends at step 3: report the PR URL and list the chains available. **Do not wait for
+anything** — no review is coming unasked (`auto_review.enabled: false` for CodeRabbit,
+`skipReview: "AUTOMATIC"` for Greptile, and the other two are asked explicitly), so waiting polls
+a silent PR to a 30-minute timeout.
 
-`/ship greptile`: continue with the **`/greptile-review`** skill, **skipping its step 2** — the
-review was triggered by opening the PR, and posting `@greptileai review` on top of it would ask
-twice for the same thing. Use the PR's `createdAt` as the floor, wait, then fetch and triage.
+`/ship greptile`: continue with the **`/greptile-review`** skill from its step 2 — it posts the
+`@greptileai review` trigger through `scripts/bot_review.py request` (which stamps and prints the
+floor), waits, then fetches and triages. Structurally the same chain as CodeRabbit's below; what
+is Greptile-specific is which artifacts carry the verdict, and that skill and
+`scripts/bot_review.py` own it.
 
 `/ship coderabbit`: continue with the **`/coderabbit-review`** skill from its step 2 — it posts
 the `@coderabbitai review` trigger through `scripts/bot_review.py request` (which stamps and

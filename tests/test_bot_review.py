@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -2074,27 +2075,16 @@ def _outstanding(
 ) -> int:
     """Drive cmd_outstanding.
 
-    ``issues`` defaults to a clean Greptile summary, because Greptile is
-    declared ``always_reviews`` and its absence is an alarm in its own right —
-    so a fixture that says nothing about it would otherwise fail every test for
-    a reason the test is not about.
+    ``issues`` defaults to none posted. It used to default to a clean Greptile
+    summary, because Greptile declared ``always_reviews`` and its absence was an
+    alarm in its own right — a fixture saying nothing about it would have failed
+    every test for a reason the test was not about. `skipReview: "AUTOMATIC"`
+    ended that: no live bot is obliged to have posted anything.
     """
     import bot_review
 
     posted_reviews = reviews or []
-    posted_issues = (
-        [
-            _comment(
-                5081386528,
-                "greptile-apps[bot]",
-                "2026-07-26T01:00:00Z",
-                "2026-07-26T01:00:00Z",
-                body=_greptile_summary(ATTENTION_CLEAN),
-            )
-        ]
-        if issues is None
-        else issues
-    )
+    posted_issues = [] if issues is None else issues
 
     def the_comments(repo: str, pr: int) -> list[dict[str, Any]]:
         return comments
@@ -2248,25 +2238,12 @@ def test_outstanding_is_the_only_command_that_needs_no_bot(
     def nothing(repo: str, pr: int) -> list[dict[str, Any]]:
         return []
 
-    def the_summary(repo: str, pr: int) -> list[dict[str, Any]]:
-        # Greptile is `always_reviews`, so its artifact must be present or the
-        # sweep refuses on that alone — a different outcome than this test is about.
-        return [
-            _comment(
-                5081386528,
-                "greptile-apps[bot]",
-                "2026-07-26T01:00:00Z",
-                "2026-07-26T01:00:00Z",
-                body=_greptile_summary(ATTENTION_CLEAN),
-            )
-        ]
-
     def the_repo() -> str:
         return "o/r"
 
     monkeypatch.setattr(bot_review, "pull_comments", nothing)
     monkeypatch.setattr(bot_review, "list_reviews", nothing)
-    monkeypatch.setattr(bot_review, "issue_comments", the_summary)
+    monkeypatch.setattr(bot_review, "issue_comments", nothing)
     monkeypatch.setattr(bot_review, "default_repo", the_repo)
     argv = ["outstanding", "--pr", "71", "--since", "2026-07-26T00:00:00Z"]
     assert bot_review.main(argv) == EXIT_CLEAN
@@ -2408,28 +2385,39 @@ def test_a_consolidated_multi_finding_comment_is_not_an_alarm(
     assert _outstanding(monkeypatch, [one, reply], reviews=[review]) == EXIT_CLEAN
 
 
-def test_greptile_leaving_no_artifact_at_all_refuses_to_clear_the_gate(
+def test_a_bot_that_reviews_unasked_and_left_nothing_cannot_clear_the_gate(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Greptile reviews every PR unasked, so its silence is never legitimate. A
+    # A bot that reviews every PR unasked has no legitimate silence. A
     # comments-only sweep counts that silence as zero findings and reads green —
     # making the one bot whose absence is always anomalous the one whose absence
     # looks cleanest.
-    assert GREPTILE.always_reviews is True
+    #
+    # Driven through a SYNTHETIC spec because no live bot declares
+    # `always_reviews` any more — `BotSpec.always_reviews` says why it is kept
+    # anyway. What belongs here is the consequence: a kept detector with no live
+    # subject is exactly the shape that passes by having nothing to check.
+    import bot_review
+
+    unasked = replace(GREPTILE, always_reviews=True)
+    monkeypatch.setattr(bot_review, "BOTS", {**BOTS, GREPTILE.key: unasked})
     assert _outstanding(monkeypatch, [], issues=[]) == 1
     err = capsys.readouterr().err
     assert "reviews every PR unasked" in err
     assert "Silence here is never a clean verdict" in err
 
 
-def test_a_bot_that_does_not_always_review_may_be_silent(
+def test_no_live_bot_reviews_unasked_so_silence_alone_blocks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The converse: an unspent CodeRabbit/Copilot chain is a legitimate state,
-    # so only the always-reviews bot's silence is an alarm.
-    for spec in (CODERABBIT, COPILOT, GEMINI):
+    # The converse, and the live posture: every chain here is spent
+    # deliberately, so no artifact means the chain was not spent — a legitimate
+    # state. Pinned across ALL specs rather than the three that were never
+    # automatic, because the day one is set back to True this sweep starts
+    # blocking merges and that must be a decision, not a surprise.
+    for spec in BOTS.values():
         assert spec.always_reviews is False
-    assert _outstanding(monkeypatch, []) == EXIT_CLEAN
+    assert _outstanding(monkeypatch, [], issues=[]) == EXIT_CLEAN
 
 
 def test_copilot_cannot_answer_its_own_finding_under_either_login() -> None:
@@ -2808,25 +2796,13 @@ def test_an_acknowledged_body_only_review_clears_the_gate(
 ) -> None:
     # The second detector (ADR-0067 covers both): Gemini's body bullets are
     # prose findings by construction, not by accident, so they take the same
-    # acknowledgement. The greptile clean summary must ride along — passing
-    # `issues` explicitly drops the helper's default, and Greptile's silence
-    # is its own alarm.
+    # acknowledgement.
     review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_BODY_ONLY)
-    greptile_clean = _comment(
-        5081386529,
-        "greptile-apps[bot]",
-        "2026-07-26T01:00:00Z",
-        "2026-07-26T01:00:00Z",
-        body=_greptile_summary(ATTENTION_CLEAN),
-    )
     ack = _ack(
         "All three unanchored findings verified and answered.\n"
         f"Acknowledges gemini review {GEMINI_REVIEW_ID}"
     )
-    assert (
-        _outstanding(monkeypatch, [], reviews=[review], issues=[greptile_clean, ack])
-        == EXIT_CLEAN
-    )
+    assert _outstanding(monkeypatch, [], reviews=[review], issues=[ack]) == EXIT_CLEAN
 
 
 def test_a_body_only_ack_is_held_to_the_same_three_conditions(
@@ -2838,13 +2814,6 @@ def test_a_body_only_ack_is_held_to_the_same_three_conditions(
     # function stayed correct. So each rejection is pinned through THIS
     # detector too.
     review = _review_by("github-actions[bot]", "2026-07-26T01:00:00Z", GEMINI_BODY_ONLY)
-    greptile_clean = _comment(
-        5081386529,
-        "greptile-apps[bot]",
-        "2026-07-26T01:00:00Z",
-        "2026-07-26T01:00:00Z",
-        body=_greptile_summary(ATTENTION_CLEAN),
-    )
     rejected = [
         _ack(f"Acknowledges gemini review {GEMINI_REVIEW_ID}", login="Copilot"),
         _ack(
@@ -2856,12 +2825,7 @@ def test_a_body_only_ack_is_held_to_the_same_three_conditions(
         _ack(f"Acknowledges greptile review {GEMINI_REVIEW_ID}"),  # wrong bot
     ]
     for ack in rejected:
-        assert (
-            _outstanding(
-                monkeypatch, [], reviews=[review], issues=[greptile_clean, ack]
-            )
-            == 1
-        )
+        assert _outstanding(monkeypatch, [], reviews=[review], issues=[ack]) == 1
         assert "Acknowledges gemini review 4780620978" in capsys.readouterr().err
 
 
@@ -3183,7 +3147,12 @@ def test_silence_cannot_be_acknowledged(
     # silent_always_reviewers honors no ack for any bot: silence leaves no
     # artifact to read, so there is nothing an acknowledgement could honestly
     # assert. A stray valid-form reference must not stand in for the missing
-    # run.
+    # run. Synthetic spec for the same reason as the detector's own test — no
+    # live bot reviews unasked since `skipReview: "AUTOMATIC"`.
+    import bot_review
+
+    unasked = replace(GREPTILE, always_reviews=True)
+    monkeypatch.setattr(bot_review, "BOTS", {**BOTS, GREPTILE.key: unasked})
     stray = _ack(f"Acknowledges greptile summary {GREPTILE_SUMMARY_ID}")
     assert _outstanding(monkeypatch, [], issues=[stray]) == 1
     err = capsys.readouterr().err
