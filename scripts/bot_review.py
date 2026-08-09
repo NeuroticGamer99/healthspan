@@ -34,11 +34,11 @@ this can:
   without resubmitting the review or posting a new comment. Both its outcomes
   are therefore read from that one summary comment, never from the reviews
   endpoint — which a re-review leaves frozen at the original ``submitted_at``.
-* **Reviews of the wrong commit.** A bot that reviews on PR creation and then
-  stays quiet leaves a report that no timestamp can distinguish from a fresh
-  one: the summary is newer than any floor minted at PR creation, however many
-  commits have landed since. Greptile names the commit it reviewed, so that is
-  checked against the PR head and a mismatch is reported as *stale*, not ready.
+* **Reviews of the wrong commit.** A bot that reviewed once and then stayed
+  quiet leaves a report that no timestamp can distinguish from a fresh one: its
+  summary is newer than the floor, however many commits have landed since.
+  Greptile names the commit it reviewed, so that is checked against the PR head
+  and a mismatch is reported as *stale*, not ready.
 
 Commands. For the per-bot commands (``request``/``wait``/``fetch``): exit 0 =
 findings review ready, 1 = failure or timeout, 2 = clean review — the bot
@@ -58,8 +58,9 @@ outstanding. Its 2 covers two states it prints differently and never conflates
   workflow, ``.github/workflows/gemini-review.yml``) is asked by dispatching
   that workflow and confirming a run actually started — the dispatch endpoint
   answers 204 whether or not a run will ever exist. Greptile is asked with its
-  own ``@greptileai review`` trigger comment — needed only for a *re*-review,
-  since the App reviews new PRs on its own. All paths stamp the floor *before*
+  own ``@greptileai review`` trigger comment, for every review including the
+  first (``skipReview: "AUTOMATIC"`` in ``.greptile/config.json`` turns off the
+  App's review-on-creation default). All paths stamp the floor *before*
   asking and print it on success, so the caller never mints one; a failed ask
   prints no floor, because there is nothing to wait on.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
@@ -194,10 +195,18 @@ class BotSpec:
     # by failing to look, which is worse than no gate at all. Verified on PR
     # #71, where Copilot's single finding is authored `Copilot`.
     comment_login: str | None = None
-    # Whether this bot reviews every PR whether or not it was asked. True only
-    # for Greptile, whose GitHub App triggers on PR creation. It makes silence
-    # *anomalous* rather than merely uninformative: for every other bot, no
+    # Whether this bot reviews every PR whether or not it was asked. It makes
+    # silence *anomalous* rather than merely uninformative: for an asked bot, no
     # artifact means the chain was not spent, which is a legitimate state.
+    #
+    # **No bot sets this today.** Greptile did — its GitHub App triggers on PR
+    # creation — until `skipReview: "AUTOMATIC"` turned that default off and put
+    # it on the same manual trigger as the rest (`.greptile/README.md` has the
+    # measurement behind that). The flag and `silent_always_reviewers` stay
+    # because they are what any future unasked reviewer would set and need, and
+    # because ADR-0067 §2 records that detector as part of the merge gate's
+    # contract. Its tests drive it through a synthetic spec rather than a live
+    # one, so an empty category does not silently become an unexercised one.
     always_reviews: bool = False
     # Captures the number of findings this bot renders in its review *body*
     # rather than as comment objects. Gemini does: anything it cannot anchor to
@@ -234,9 +243,9 @@ class BotSpec:
     summary_marker: re.Pattern[str] | None = None
     # Captures the commit SHA the summary comment reports it last reviewed.
     # Only meaningful alongside `summary_marker`. This is a freshness signal no
-    # timestamp can give: a bot that reviews on PR creation and then stays quiet
-    # leaves a summary comment whose `updated_at` is newer than any floor minted
-    # at PR creation, even after three more commits have landed. Observed live
+    # timestamp can give: a bot that answered once and then stayed quiet leaves
+    # a summary comment whose `updated_at` is newer than the floor, however many
+    # further commits have landed since. Observed live
     # on PR #69 — the footer read `Reviews (1) … 72550f1` while the branch was
     # already three commits ahead. Compared against the PR head, it turns "a
     # review exists" into "a review of *this* commit exists".
@@ -437,10 +446,11 @@ BOTS: dict[str, BotSpec] = {
     #                  undercount is only "still arriving" inside COMMENT_GRACE.
     #
     # So the summary comment is the only artifact present in every outcome, and
-    # the only one that moves on a re-review — hence `summary_marker`. Unlike
-    # every other bot here, Greptile is also asked for nothing at PR creation:
-    # the App reviews new PRs on its own (`.greptile/README.md` explains why that
-    # is kept), and `trigger_body` is for re-reviews only.
+    # the only one that moves on a re-review — hence `summary_marker`. Those
+    # four shapes were all observed while the App still reviewed on PR creation;
+    # they are properties of how Greptile reports, not of what triggered it, and
+    # the trigger has since moved to `trigger_body` for every review
+    # (`skipReview: "AUTOMATIC"`, see `.greptile/README.md`).
     "greptile": BotSpec(
         key="greptile",
         review_login="greptile-apps[bot]",
@@ -476,8 +486,9 @@ BOTS: dict[str, BotSpec] = {
         reviewed_commit=re.compile(
             r"Last reviewed commit:[^\n]*?/commit/([0-9a-f]{7,40})"
         ),
-        # The only bot here that is never legitimately unspent.
-        always_reviews=True,
+        # `always_reviews` is deliberately left at its default: Greptile set it
+        # while its App reviewed on creation, and an unspent chain is now as
+        # legitimate for it as for every other bot here.
     ),
 }
 
@@ -2099,11 +2110,17 @@ def silent_always_reviewers(
 ) -> list[str]:
     """Bots that always review, yet left no artifact on this PR at all.
 
-    Greptile's App reviews every non-draft PR unasked, so its silence is never
-    legitimate — it means the App did not run, or ran and its output was not
-    found. Under a comments-only sweep that silence contributes zero findings
-    and reads as green, which makes the one bot whose absence is always
-    anomalous the one whose absence looks cleanest.
+    A bot that reviews unasked has no legitimate silence: no artifact means it
+    did not run, or ran and its output was not found. Under a comments-only
+    sweep that silence contributes zero findings and reads as green, which makes
+    the one bot whose absence is always anomalous the one whose absence looks
+    cleanest.
+
+    **No bot declares ``always_reviews`` today** — Greptile did until its App's
+    review-on-creation default was turned off. This is kept rather than deleted
+    for the reasons at that field, and :mod:`tests.test_bot_review` exercises it
+    through a synthetic spec so an empty category cannot pass by having no
+    members.
     """
     alarms: list[str] = []
     for bot in report:

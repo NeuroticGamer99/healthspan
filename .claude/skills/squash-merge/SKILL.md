@@ -6,10 +6,9 @@ description: Squash-merge the current branch's PR with a clean composed commit m
 # /squash-merge — merge the PR with a clean squash message
 
 The last step of the chain: `/land` → `/ship` → the review chains the user chose to spend
-(`/coderabbit-review`, `/copilot-review` — reviews are opt-in per PR, except Greptile, which
-reviews every PR unasked and is collected with `/greptile-review`) → `/squash-merge`. Invoking
-it is the user's approval to merge — but never past a red or pending gate. Stop and report at any
-step that fails.
+(`/coderabbit-review`, `/greptile-review`, `/copilot-review` — reviews are opt-in per PR) →
+`/squash-merge`. Invoking it is the user's approval to merge — but never past a red or pending
+gate. Stop and report at any step that fails.
 
 ## 1. Preconditions
 
@@ -37,7 +36,8 @@ step that fails.
   read the output to know which kind. Under a `CANNOT CLEAR THE GATE` banner the sweep found a
   zero it could not *prove*: a bot posted a review but none of its comments matched the author
   filter, a summary states more findings than were matched, a bot renders findings in its review
-  body where no reply can reach them, or a bot that reviews every PR left no artifact at all.
+  body where no reply can reach them, or a bot declared to review every PR left no artifact at all
+  (no bot declares that today — Greptile did until `skipReview: "AUTOMATIC"`).
   Those are findings the sweep could not read, not findings that do not exist. Where the findings
   live in prose — a summary stating more than its comments, a review rendering findings in its
   body, and (for a summary-comment bot only) a review whose inline comments never landed — the
@@ -56,9 +56,11 @@ step that fails.
 
 - **Every review that was triggered has answered.** This is a separate precondition and it is
   yours to track, not the sweep's. A chain that was requested and is still pending stops the
-  merge; a chain deliberately not spent has nothing to wait for (reviews are opt-in per PR, and
-  Greptile is never legitimately unspent since its App reviews every PR unasked) — say plainly
-  which reviewers ran and merge on the user's explicit say-so.
+  merge; a chain deliberately not spent has nothing to wait for, and every chain here is now
+  opt-in per PR — Greptile included, since `skipReview: "AUTOMATIC"`. Say plainly which reviewers
+  ran and merge on the user's explicit say-so. **The sweep cannot do this for you**: it reads
+  posted comments, so an unspent chain and a clean run are indistinguishable to it, and nothing
+  now reviews unasked to make silence anomalous.
 
   **Do not delegate this to `gh pr checks`.** Its coverage is partial and bot-specific: CodeRabbit
   posts a commit *status*, Copilot and Greptile post *check-runs*, and Gemini posts nothing at all

@@ -1,6 +1,7 @@
 {
   "strictness": 1,
   "commentTypes": ["logic", "syntax", "info"],
+  "skipReview": "AUTOMATIC",
   "triggerOnUpdates": false,
   "statusCheck": false,
   "ignorePatterns": "*.db\n*.db-shm\n*.db-wal\n*.db.lock\n*.sqlite*\n*recovery-kit*\nexports/\nexport/\ndata/\n__pycache__/\n.venv/\npytest-output.log\nparallel-output.log\ncanary-logs/\nspecs/personal/\n",

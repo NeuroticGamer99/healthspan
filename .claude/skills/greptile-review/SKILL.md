@@ -1,40 +1,29 @@
 ---
 name: greptile-review
-description: Collect the Greptile review of the current PR — it reviews automatically at PR creation — then verify each finding against the code and reply. Use after /ship, or to re-trigger a review on a fixed commit.
+description: Trigger a Greptile review on the current PR, wait for it to complete, verify each finding against the code, and reply. Use after /ship, or any time a PR is open and wants the Greptile lens.
 ---
 
-# /greptile-review — collect, verify, and triage a Greptile review
+# /greptile-review — trigger, await, and triage a Greptile review
 
-**Greptile is the one reviewer here that is not asked.** The GitHub App reviews every non-draft PR
-on creation, on its own, with no repo configuration involved; `.greptile/config.json` deliberately
-leaves `triggerOnUpdates: false` so it does *not* re-review later pushes. So this skill's usual job
-is to **collect** a review that is already running or already done — not to trigger one.
+Greptile no longer reviews on PR creation — `skipReview: "AUTOMATIC"` in `.greptile/config.json`
+made it opt-in, and `triggerOnUpdates: false` keeps a push from re-triggering it, so **every
+Greptile review on this repository is one somebody asked for**. This skill is how that choice is
+spent. `/ship greptile` runs this chain automatically after shipping; invoke it directly on any PR
+that is already open.
 
-That is also the gap it exists to close: a review nobody collects is worse than no review, because
-the PR looks reviewed. `/squash-merge` will not merge with an uncollected Greptile review
-outstanding.
-
-`.greptile/README.md` explains why the automatic trigger is kept and why the config values are what
+`.greptile/README.md` explains why the trigger is manual — including the PR whose automatic review
+was spent on a commit that stopped existing within the hour — and why the config values are what
 they are.
 
-## 1. Find the PR and the floor
+## 1. Find the PR
 
 ```bash
-gh pr view --json number,url,state,createdAt,headRefOid
+gh pr view --json number,url,headRefName,state
 ```
 
 If there is no open PR for the current branch, stop and say so — run `/ship` first.
 
-**The floor is the PR's `createdAt`** when collecting the automatic review: Greptile's summary
-comment is posted a few minutes after the PR opens, so PR creation is the one floor guaranteed to
-precede it and to exclude nothing. Do not improvise a later one.
-
-## 2. Only if you need a *re*-review
-
-Skip this step when collecting the automatic run — it is already in flight.
-
-After fixes land, the existing review is stale (it reviewed the old commit) and a push does not
-re-trigger anything. Ask for a fresh one:
+## 2. Trigger the review
 
 ```bash
 uv run python scripts/bot_review.py request --bot greptile --pr <N>
@@ -43,36 +32,43 @@ uv run python scripts/bot_review.py request --bot greptile --pr <N>
 That posts `@greptileai review` and verifies the created comment reads back exactly as written —
 the body starts with `@`, which `gh api` field flags can treat as a read-from-file directive, and a
 mangled trigger summons nothing while still buying a full 30-minute poll. **The handle is
-`@greptileai`, not `@greptile`.** It prints a floor stamped *before* the trigger; use that value in
-steps 3 and 4 instead of `createdAt`.
+`@greptileai`, not `@greptile`.**
+
+**It prints the floor to use next**, stamped before the trigger. Use that exact value in steps 3
+and 4 — do not mint your own. A floor stamped after the trigger can exclude the very review it
+caused, and improvising one is how that bug arrives.
 
 The "Re-trigger Greptile" link in the summary comment's footer is **not** usable here: it
 authenticates to the repository owner's Greptile account, not to the GitHub App, and redirects an
 unauthenticated caller to a login page. The comment is the only agent-accessible trigger.
 
+**Confirmed on PR #84: nothing arrives unasked.** That PR drew no Greptile artifact on opening; its
+summary was created *after* the trigger and the footer read `Reviews (1)` — one review, caused by
+the ask. `.greptile/README.md` carries the measurement, including that the App reads `config.json`
+from the **PR head**, so a change to that file binds the PR that makes it. **An unasked review is
+therefore a regression — report it.** The step stays safe if one somehow exists: the floor is
+stamped before the trigger, a re-review edits the summary in place, and step 3 waits for that edit.
+
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot greptile --pr <N> --since <the floor>
+uv run python scripts/bot_review.py wait --bot greptile --pr <N> --since <the floor from step 2>
 ```
 
-Run with `run_in_background: true`. Creation runs have taken 2–8 minutes, a re-trigger ~5.5.
-Exit codes:
+Run with `run_in_background: true`. Runs have taken 2–8 minutes. Exit codes:
 
 - **0** — there is something to triage; continue to step 4. It reports how many findings are open.
 - **2** — the run was **clean**: no files needing attention, no stated count, and nothing left
   unanswered. Report and stop.
 - **1** — failure or timeout. Read the message: it distinguishes two very different states.
-  "no findings review after Ns" means Greptile has not answered. **"STALE, not missing"** means it
-  *has* answered, but about a superseded commit — its summary names the commit it reviewed and that
-  is not the PR head. Nothing has looked at the current code; go to step 2 and re-trigger. Do not
-  read the existing summary as this commit's verdict.
+  "no findings review after Ns" means Greptile has not answered — **silence is not a clean
+  review**, so report and stop. **"STALE, not missing"** means it *has* answered, but about a
+  superseded commit: its summary names the commit it reviewed and that is not the PR head. Nothing
+  has looked at the current code. Do not read the existing summary as this commit's verdict — go
+  back to step 2 and trigger again.
 
-The wait deliberately keeps polling on a stale summary, because that is precisely what the
-re-trigger in step 2 is expected to clear. **When you are merely collecting** — no trigger posted,
-`triggerOnUpdates` false — a summary that is already stale can never become fresh on its own, and
-the poll will run the full 30 minutes to tell you what it knew on the first pass. Pass a short
-`--timeout` (say `--timeout 120`) when collecting, and keep the default only after a re-trigger.
+The wait deliberately keeps polling on a stale summary, because that is precisely what the trigger
+in step 2 is expected to clear.
 
 It also keeps polling when the summary states a finding count that the inline comments have not
 reached yet: Greptile posts its summary about four seconds before the comments it counts, and
@@ -81,7 +77,7 @@ returning inside that window hands step 4 a review whose findings have not lande
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <the floor>
+uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <the floor from step 2>
 ```
 
 This prints the summary comment and **the findings that have no reply yet**, with the `id` to reply
@@ -131,12 +127,14 @@ read. Step 4's `fetch` is where it becomes an exit 1.
 
 Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
 against the real code, reply per finding, report the verdict table, **stop for the user's go before
-changing any code**, and close out per its §4.
+changing any code**, and close out per its §4 — a re-review of the fixed commit is a fresh
+`/greptile-review` run, spent deliberately.
 
 Two Greptile-specific notes for triage:
 
-- **Its P1/P2/P3 badge is a claim like any other.** Calibration so far is 2 findings across 4 runs,
-  both legitimate — including one silent-lockout defect that two handed-off `/code-review` passes
-  and both other bots missed — but a clean record earns attention, not assent.
+- **Its P1/P2/P3 badge is a claim like any other**, and its calibration here cuts both ways: a
+  silent-lockout defect on PR #69 that two handed-off `/code-review` passes and both other bots
+  missed, and three findings on PR #81 that measurement refuted one by one. Neither record earns
+  assent; both earn attention.
 - **Replies and 👍/👎 reactions are claimed to tune future reviews.** Unlike the other bots, triage
   here may have a lasting effect, so a declined finding is worth a reason rather than a bare "no".

@@ -5,12 +5,22 @@ The shared procedure for handling an automated PR review. Used by `/coderabbit-r
 `/ship greptile`), `/gemini-review` (the Antigravity SDK Gemini workflow — directly or via
 `/ship gemini`), and `/copilot-review` (GitHub Copilot). The bots are useful; none is trusted.
 
-Greptile is the only one that reviews **unasked** — its GitHub App reviews every new PR — so it is
-also the only one whose findings can exist without anyone having decided to look at them. Collect
-it with `/greptile-review`. §2's "never leave a finding unanswered" is mechanically enforced for
-**every** bot — the reply *is* the record, so an unanswered finding reads to the tooling exactly
-like one nobody ever collected — and `/squash-merge` refuses to merge while any of them lacks a
-threaded reply. See §4 for the command.
+**None of them reviews unasked.** Greptile was the last that did — its GitHub App reviews every
+new PR by default — until `skipReview: "AUTOMATIC"` in `.greptile/config.json` put it on the same
+manual trigger as the rest (`.greptile/README.md` has the reasoning). So every finding on a PR is
+one somebody decided to go looking for.
+
+**But silence does not run the other way.** A bot that posted nothing is *consistent with* an
+unspent chain and is never proof of one: a spent chain leaves no artifact too. Gemini usually fails
+without producing a report on the free tier (`/ship` says so outright), Copilot's request guard has
+false-negatived on three consecutive PRs while the review was already being written, and a Greptile
+review has landed on a PR while the tooling reported no summary at all. Track what you triggered
+and read its `wait` result; never infer the spend from the silence. `/squash-merge`'s "every review
+that was triggered has answered" is the same rule stated where it blocks a merge.
+§2's "never leave a finding unanswered" is mechanically enforced for **every** bot — the reply *is*
+the record, so an unanswered finding reads to the tooling exactly like one nobody ever collected —
+and `/squash-merge` refuses to merge while any of them lacks a threaded reply. See §4 for the
+command.
 
 **Governing principle: a bot finding is a hypothesis, not a defect.** Verify every one against the
 actual code before acting on it or replying to it. The record from PR #26 (seven findings across
@@ -150,7 +160,7 @@ the metered bot re-review this project requires prompting for and cannot un-spen
 
 ## 4. After the fixes land
 
-Nothing re-reviews a push on its own — not even Greptile, whose `triggerOnUpdates` is deliberately
+Nothing re-reviews a push on its own — Greptile included, whose `triggerOnUpdates` is deliberately
 `false`. Re-reviewing the new commit is a fresh run of the bot's own skill (`/coderabbit-review`,
 `/greptile-review`, `/gemini-review`, or `/copilot-review`), spent deliberately. **A review that
 ran before the fixes is stale, not clean** — it reports on code that no longer exists. Greptile
