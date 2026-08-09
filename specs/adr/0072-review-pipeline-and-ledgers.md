@@ -109,14 +109,28 @@ One **fragment per external round**, carrying two sections.
 
 The fragment is written by `/review-handoff` and **amended in place** by `/apply-review`, which owns the severity and verdict columns because they are apply-time facts.
 
-**Round analysis** — the reading, not the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
+**Round analysis — the third part of the round record, not a third section.** The fragment still carries two sections; this is the round record's prose half, sitting under its counts. It is the reading rather than the numbers, written by `/apply-review` once its reviewer loop has settled. The counts above say what a round cost; this says what it *means*, and it exists because that reading was previously produced only when someone thought to ask for it. `/apply-review` is the only step that can write it: it alone holds the report, the re-verification verdicts, the churn of its own remedies, and the smoke rounds, and the last of those is unknown until the loop terminates. The generate-vs-structure line of §3 applies unchanged:
 
-- **Mechanically filled** — *locus* (which files and which sections took the findings, and which were reviewed clean); *type mix* (findings grouped by kind — a false claim about existing machinery, an internal contradiction, and a design gap are three different problems and the severity scale of §6 deliberately does not separate them); *precision* (how many findings survived re-verification); *remedy churn* (how many fixes needed a second attempt, readable from the `[x<N>s<M>]` tags); *cross-lens delta* (what this round caught that the local smokes had not, and the reverse).
+- **Mechanically filled** — *locus* (which files and which sections took the findings, and which were reviewed clean); *type mix*, from the closed set below; *precision* (how many findings survived re-verification); *remedy churn* (how many fixes needed a second attempt); *cross-lens delta* (what this round caught that the local smokes had not, and the reverse).
 - **Prompted, never substituted** — the causal read, and the convergence call's reasoning.
+
+The type set is closed, for the reason §6's severity set is: an open list of examples is a self-label, and a self-label is what produced a round where every finding read `correctness`.
+
+| Type | The finding says |
+|---|---|
+| `false-claim` | A statement about existing machinery is not true of that machinery |
+| `contradiction` | The document disagrees with itself |
+| `gap` | A rule is specified with a hole in it |
+| `overreach` | A claim asserts more than what was measured |
+| `hygiene` | Wording, ordering, or a count, with nothing resting on it |
+
+Like severity, the type is applied by the fixer from this set, never taken from the reviewer's own label.
 
 **Remedy churn is the field with no other home**, and on the round that motivated this section it was the highest-yield number: two of seven remedies were wrong on the first attempt and together generated four of the six findings the subsequent smokes returned. Nothing else in this pipeline sees a fix's own error rate — every other artifact records the finding and stops at the edit.
 
-Two rules keep it honest. **A section with no pattern to report says so** rather than composing one; an invented reading is the same defect as an invented brief angle, and harder to spot because it is a narrative. And **smoke rounds are cited here as evidence but never counted as rounds** — the headline metric stays external-only per the paragraph below, while *precision*, *remedy churn* and *cross-lens delta* are unmeasurable without referring to them. A later reader should not reconcile that by deleting the smoke references.
+**Its source is the apply's own smoke rounds, and it must be written while they are still reachable.** `/apply-review` tags each smoke `[x<N>s<M>]`, so churn is readable from the branch log *during* the apply that produced it — and only then. `/ship` collapses `merge-base..HEAD` into one commit ([ADR-0069](0069-local-checkpoint-commits.md)), taking every one of those tags with it; the branch carrying this ADR lost five that way. So this is not a field a later step can recompute, which is the argument for the fragment holding it rather than a reader deriving it: **write it at the end of the apply, or it is gone.** An apply resumed after a collapse, or one whose earlier rounds are on the far side of a `/ship`, has no tags to read — it records what it can and says the rest is unavailable, which is a different statement from zero churn.
+
+Two rules keep it honest. **A section with no pattern to report says so** rather than composing one; an invented reading is the same defect as an invented brief angle, and harder to spot because it is a narrative. And **smoke rounds are cited here as evidence but never counted as rounds** — the headline metric stays external-only per the paragraph below, while *precision*, *remedy churn* and *cross-lens delta* are unmeasurable without referring to them. The line between citing and counting is operational, not rhetorical: a smoke never increments the round number, never appears in the finding count or the severity tally, and never contributes to the repeat-fraction — the four values the keep-sharpening-or-ship decision is read from. It may be named in the prose that explains those values. A later reader should not reconcile the tension by deleting the smoke references; the exclusion protects the numbers, not the narrative.
 
 **Local rounds produce no fragment.** The owner classes the `spec-reviewer`/`test-reviewer` smokes as tests he would run by hand; counting them inflates the metric the decision is bought with. They still get a brief (§1).
 
@@ -180,7 +194,7 @@ Reasoning lives here; the rule is **carried into the skill file that must obey i
 ### Negative / Tradeoffs
 - The ledger adds tracked markdown to a repository whose gates are O(tracked files) and whose reviewer worktrees materialize all of them. Collapse at merge is what keeps this bounded, so **a skipped collapse is a real cost, not a cosmetic one** — the shard rule is the insurance and the growth figures above are the argument.
 - `specs/reviews/` acquires a *living* subfolder inside a directory its README describes as immutable historical artifacts. The README is amended to draw that line explicitly; the ambiguity is real and is paid for with one sentence rather than a new directory.
-- The obligations in §5 make `/review-handoff` heavier. A report that satisfies all ten is longer than what the current skill produces, and on a large round that cost is paid every round.
+- The obligations in §5 make `/review-handoff` heavier. A report that satisfies all eleven is longer than what the current skill produces, and on a large round that cost is paid every round.
 - Severity is assigned by the fixer, so it is unavailable until apply. A round abandoned before apply leaves a fragment with a finding count and no severity tally — recorded as a known-empty column, not backfilled by guesswork.
 - The digest inlines rather than links, so per-round detail on `main` is reachable only through git history. This is deliberate: a linking digest fails the link check the moment fragments are removed.
 
