@@ -1414,9 +1414,16 @@ def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
     # version of this comment asserted an exclusivity it had not run, and three
     # of its four claims were wrong. T means the mutant pattern matches, i.e.
     # that case goes red. **Scoped to this test's own cases**, which is a real
-    # limit rather than a hedge: `letters only` reddens 42 tests across the file
-    # because it stops the real marker matching at all, and a table that showed
+    # limit rather than a hedge: `letters only` also stops the real marker
+    # matching at all, so most of the file fails with it — every fixture here
+    # routes through `_greptile_summary`'s literal marker — and a table showing
     # only the column below would read as though one case caught it.
+    #
+    # No file-wide figure is quoted on purpose. Two were, and both were wrong:
+    # the first because the run was scoped by a `-k` filter nobody noticed, the
+    # second because the script counting it split parametrized ids on
+    # whitespace and merged distinct failures. A count also expires the next
+    # time a test is added. The mechanism above does not.
     #
     #   mutation (against `<!--\s*greptile_\w+`)  bare  handle  hyphen  sep-only
     #   `<!--\s*greptile\w+`     drop separator     .      T       .       T
@@ -2960,6 +2967,14 @@ def test_a_re_edited_summary_is_not_answered_by_the_previous_runs_findings(
     err = capsys.readouterr().err
     assert "nothing it posted is newer than that summary" in err
     assert "Acknowledges greptile summary 5081386528" in err
+    # The clause must stay true of *this* shape, where a matched comment does
+    # exist and is merely older. It once read "no review and no comment this
+    # sweep could match" — flatly false here, and contradicted two sentences
+    # later by the same message. Nothing pinned it, so the regression could
+    # have returned silently on prose whose only job is telling a human the
+    # truth about what evidence exists.
+    assert "only ones that predate the text now standing" in err
+    assert "no review and no comment this sweep could match" not in err
 
 
 def test_a_review_newer_than_the_summary_is_not_evidence_for_it(

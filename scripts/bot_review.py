@@ -2234,7 +2234,13 @@ def unprovable_summaries(
     nothing fired. What accounts for a summary is evidence *newer than it*.
 
     ``clean_marker`` is what makes the rule usable rather than a permanent
-    block, and it is load-bearing: a *clean* Greptile run posts the summary and
+    block — **which stopped being true in practice on 2026-08-09**, when
+    Greptile's summary template dropped the line that marker keys on. Until it
+    is re-derived this check blocks every run and each one needs an
+    acknowledgement; the caveat is recorded rather than the sentence rewritten,
+    because it becomes true again the moment the marker matches something (see
+    ``specs/open-questions.md`` § Development Workflow for the trigger). It is
+    load-bearing regardless: a *clean* Greptile run posts the summary and
     nothing else — no review, no comments — which is the same evidence-free
     shape. Only the marker separates them. It is also the signal that already
     worked on #84, where ``wait`` correctly returned "ready" rather than
