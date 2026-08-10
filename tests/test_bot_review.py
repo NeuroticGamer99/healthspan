@@ -1423,12 +1423,19 @@ def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
     # silently scoped by a `-k` filter. Then `44`, when the script recounting it
     # split parametrized ids on whitespace and merged distinct failures. Then
     # "most of the file", which 44 of 201 is not. Then "every test whose fixture
-    # carries a Greptile summary" — and twelve of those stay green, because
-    # building a fixture through `_greptile_summary` only puts the literal in
-    # the body; it does not mean the assertion reaches it through
-    # `summary_marker`. `reviewed_sha` keys on `reviewed_commit`, `stated_count`
-    # on `count`, and several negative tests stay False for reasons that have
-    # nothing to do with the marker.
+    # carries a Greptile summary" — and twelve of those stay green.
+    #
+    # That last one is the useful correction, so keep the reason and not the
+    # tally: building a fixture through `_greptile_summary` only puts the
+    # literal in the body. It does not mean the assertion reaches it *through*
+    # `summary_marker` — a test may key on a different field of the same spec
+    # (`reviewed_commit`, `count`, `clean_marker`), or build its `SummaryState`
+    # by hand and parse no body, or substitute the marker or the author so its
+    # spelling never decides the outcome.
+    #
+    # Nothing is claimed about how the twelve divide among those, or which way
+    # any of them asserts. A fifth version said "negative tests stay False" and
+    # at least three assert the opposite. The sixth stops enumerating.
     #
     # The table below is measured and scoped to what it shows. That is the
     # whole claim.
