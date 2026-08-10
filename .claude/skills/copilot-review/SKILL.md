@@ -77,17 +77,14 @@ The bot's identity is a minefield (it is requested under one login and displayed
 map and its rationale live in `scripts/bot_review.py`, with `tests/test_bot_review.py` holding the
 rules in place. Do not re-derive them by hand.
 
-**The review's depth is not yours to choose, and this is where to say so rather than discover it.**
-Copilot's review effort level is a **repository setting** — Settings → Copilot → Code review →
-"Review effort level" — overriding an organization default. It is not a per-PR selector and not a
-per-request argument, so neither this skill nor `scripts/bot_review.py` can set it, and a session
-that goes looking for a flag will not find one. Docs research on 2026-08-09 found no REST, GraphQL
-or `gh` surface for it at all; that is a finding with a date on it, not a permanent property, and
-`specs/open-questions.md` carries what would reopen it.
+**The review's depth is not yours to choose *from here*, and this is where to say so rather than
+discover it.** The effort level has an **organization** default that a **repository** may override
+(Settings → Copilot → Code review → "Review effort level"), and a session that goes looking for a
+flag to pass on this skill's request will not find one.
 
-**A per-review choice does exist, and it is UI-only — which is not the same as "no choice exists".**
-GitHub's GA changelog is explicit: when you request a review from the PR page you may pick `Lite` or
-`Balanced` for *that review*, without changing either default. What has no documented REST, GraphQL
+**But a per-review choice does exist, and it is UI-only — which is not the same as "no choice
+exists".** GitHub's GA changelog is explicit: when you request a review from the PR page you
+may pick `Lite` or `Balanced` for *that review*, without changing either default. What has no documented REST, GraphQL
 or `gh` surface is *setting* it — and this skill's request goes through the `requested_reviewers`
 endpoint, which takes no effort parameter. So a review asked for from here always runs at whatever
 the repository (or organization) default is, and **that is a consequence of automating the ask, not
@@ -99,7 +96,9 @@ other level is `Balanced`, which reviews more deeply and costs more Copilot AI c
 Actions minutes; the two were renamed from the preview's Low/Medium and went GA on 2026-08-07. A
 third, `Max`, has been seen in the PR sidebar marked "coming soon"; the GA docs enumerate only two
 levels and use that word as a *plan* name, so treat it as a sighting to re-check rather than as a
-level that exists — the sidebar is the thing looking at this account.
+level that exists. It is recorded rather than dropped because a sidebar showing "coming soon" is
+evidence of something scheduled, and docs omitting it is not evidence against — but until it
+appears, two is the count.
 
 **If you want a deeper review on one PR, that is a human action in the UI**: request Copilot from
 the PR page and choose `Balanced` there. Do not try to reach it from this skill. `specs/open-questions.md`
