@@ -186,8 +186,9 @@ recollection of them, and it counts a reply from the bot itself as no reply at a
 acks threads routinely, and a bot agreeing with itself is not triage.
 
 When the banner names findings that live where no reply can reach — a summary stating more
-findings than its comments, a review rendering findings in its body, or (for a summary-comment bot
-only) a review whose inline comments never landed — the exit is §2's acknowledgement, not an
+findings than its comments, a summary that does not read clean while nothing at all was posted to
+match, a review rendering findings in its body, or (for a summary-comment bot only) a review whose
+inline comments never landed — the exit is §2's acknowledgement, not an
 override: the refusal line prints the exact `Acknowledges <bot> (summary|review) <id>` string, and
 a PR-level comment answering those findings and carrying it clears the gate on the next run
 (ADR-0067). The same authorship rule applies as for threaded replies — an acknowledgement from any

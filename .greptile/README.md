@@ -140,7 +140,7 @@ convention added or changed in one must be mirrored in the others.
 
 The artifacts Greptile posts are not the shape the other bots use, and
 `scripts/bot_review.py` encodes what was observed live rather than what the docs
-imply. Five shapes so far:
+imply. Six shapes so far:
 
 - **Findings run** — a review object with an **empty body**, its inline
   comments, and a summary issue comment (PRs #67, #69).
@@ -163,17 +163,38 @@ imply. Five shapes so far:
   depend on a setting that leaves no trace in a diff, and the same file had
   already chosen an HTML marker for `summary_marker` on exactly that reasoning
   while leaving `count` on a visible sentence in an optional block. The repair
-  needs no new regex — `clean_marker` is not in that block and already told the
-  poller this run was not clean — and it is deliberately **not** in this change.
-  **The durable reproduction is the regression test that repair must carry**,
-  encoding this artifact shape directly: a reproduction that depends on a
-  dashboard setting outside the repository is the same defect one level up. The
-  toggle stays off meanwhile, but nothing should rest on that.
+  needed no new regex — `clean_marker` is not in that block and already told the
+  poller this run was not clean — and it landed separately, as
+  `unprovable_summaries` (ADR-0067 §2): a summary-marker bot whose summary does
+  not read clean, and which posted nothing *newer than that summary*, cannot
+  clear the gate. It reads a marker's absence and two timestamps, so no toggle
+  can take any of them away. Freshness rather than mere existence, and that was
+  a correction: keyed on "has this bot any findings at all", a re-review editing
+  the summary in place still cleared the gate whenever an earlier run's finding
+  had been answered. **The durable reproduction is that repair's
+  regression test**, which encodes this artifact shape directly rather than
+  depending on a dashboard setting outside the repository — a reproduction
+  resting on the toggle would be the same defect one level up. The toggle
+  stays off, but nothing rests on that any more.
+- **A summary with comments outside the diff** — a summary carrying a
+  "Comments Outside Diff" section emits the marker `greptile_failed_comments`
+  where every shape above emits `greptile_other_comments_section` (PR #81).
+  Which sections a body carries is the configurable part, so the marker
+  *suffix* is variable and only the `greptile_` namespace is stable. Keyed on
+  the one literal, `wait` burned its full 1800s on a review that had landed in
+  3.5 minutes, `fetch` refused with "no greptile summary" while the summary was
+  plainly on the PR, and — quietest and worst — `outstanding` read the comments
+  endpoint, cleared the gate normally, and never listed a P1 that existed only
+  as summary prose. This shape is why `summary_marker` matches the namespace
+  rather than a section, and it is recorded here because that code comment
+  cites *this list* as what a future maintainer should re-derive the pattern
+  from: without this entry, following the instruction would re-derive the
+  narrow marker it replaced.
 
 The summary comment is the only artifact present in every one of those, which is
 why it — and not the reviews endpoint — is what the tooling polls. Its footer
 names the commit actually reviewed, which is how a stale review is told from a
-fresh one. The last shape is also why a stated count exceeding the comments
+fresh one. The **findings-with-no-comments-at-all** shape (PR #72) is also why a stated count exceeding the comments
 found is only treated as "still arriving" within a two-minute grace window: past
 it, the missing findings are not late, they were never comments. The full set of
 failure modes each rule prevents is documented at the `greptile` entry in

@@ -1329,6 +1329,147 @@ def test_a_findings_summary_is_not_clean_but_is_still_the_summary() -> None:
     assert is_summary_comment(comment, GREPTILE) is True
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "<!-- greptile_other_comments_section -->",
+        "<!-- greptile_failed_comments -->",
+        "<!-- greptile_a_section_not_yet_observed -->",
+        "<!--  greptile_other_comments_section  -->",
+        "<!--greptile_other_comments_section-->",
+    ],
+    ids=[
+        "other-comments",
+        "outside-diff",
+        "unobserved",
+        "extra-spacing",
+        "no-spacing",
+    ],
+)
+def test_the_summary_is_recognized_through_any_section_marker(marker: str) -> None:
+    # A summary carrying a "Comments Outside Diff" section emits
+    # `greptile_failed_comments` where the observed bodies emitted
+    # `greptile_other_comments_section`. Keyed on the latter literal, `wait`
+    # burned its full 1800s on a review that had landed in 3.5 minutes and
+    # `fetch` then refused with "no greptile summary" while the summary was
+    # plainly on the PR (PR #81).
+    #
+    # The last two ids are the spacing half, and they are not hypothetical
+    # either: PR #85 measured this vendor changing its summary template
+    # unannounced — the `Files Needing Attention:` line `clean_marker` keys on
+    # simply vanished — so the whitespace inside its HTML comments is exactly
+    # the kind of presentation detail this whole change refuses to gate on.
+    # A one-space pattern rejected both of them.
+    #
+    # The third id is not an observed shape and is the point of this test:
+    # matching the marker *namespace* is what makes a section this repo has
+    # never seen — added or renamed by a dashboard toggle, outside any diff —
+    # unable to take the summary away again. A pattern listing the two known
+    # literals would pass the first two cases and fail this one.
+    body = _greptile_summary(ATTENTION_CLEAN).replace(
+        "<!-- greptile_other_comments_section -->", marker
+    )
+    assert is_summary_comment(_greptile_comment(body), GREPTILE) is True
+
+
+def test_a_foreign_html_comment_is_not_a_greptile_summary() -> None:
+    # The namespace pattern is deliberately loose about which section it sees,
+    # but it is not loose about whose section it is: another tool's marker in a
+    # comment that greptile happened to author must not be read as a summary,
+    # or the freshness and count logic downstream reads a body that states
+    # neither.
+    body = _greptile_summary(ATTENTION_CLEAN).replace(
+        "<!-- greptile_other_comments_section -->", "<!-- coderabbitai_section -->"
+    )
+    assert is_summary_comment(_greptile_comment(body), GREPTILE) is False
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "<!-- greptile -->",
+        "<!-- greptileai -->",
+        "<!-- greptile-other-section -->",
+        "<!-- greptile_ -->",
+    ],
+    ids=["bare", "app-handle", "hyphenated", "separator-only"],
+)
+def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
+    # `<!-- greptile_\w+` widened the marker on purpose, and this is the half of
+    # it that is NOT widened: a section *name* is still required, separated by
+    # the underscore Greptile writes. Without this the pattern could be weakened
+    # all the way to a bare `<!-- greptile` prefix and every other test here
+    # would stay green — `search()` is unanchored, so all the positive cases
+    # differ only in which greptile-namespaced suffix they carry, and the
+    # foreign-marker case above carries no "greptile" substring at all. Neither
+    # separates "demands a section name" from "demands nothing".
+    #
+    # It matters because these are the shapes a loosened prefix would swallow:
+    # a bare mention, the App's own `@greptileai` handle, a hyphenated spelling.
+    # Any of them appearing in some future non-summary comment the App posts
+    # would be selected AS the summary, and the count, freshness and clean
+    # verdicts would then all be read off a body that states none of them.
+    #
+    # Which case earns its place, measured rather than reasoned — an earlier
+    # version of this comment asserted an exclusivity it had not run, and three
+    # of its four claims were wrong. T means the mutant pattern matches, i.e.
+    # that case goes red. **Scoped to this test's own cases**, which is a real
+    # limit rather than a hedge: `letters only` also stops the real marker
+    # matching at all, so its effects reach well past the four cases below, and
+    # a table showing only this column would read as though one case caught it.
+    #
+    # **How far past is deliberately not characterized**, because four attempts
+    # to say it were all wrong, each written to fix the last. `42`, from a run
+    # silently scoped by a `-k` filter. Then `44`, when the script recounting it
+    # split parametrized ids on whitespace and merged distinct failures. Then
+    # "most of the file", which 44 of 201 is not. Then "every test whose fixture
+    # carries a Greptile summary" — and twelve of those stay green.
+    #
+    # That last one is the useful correction, so keep the reason and not the
+    # tally: building a fixture through `_greptile_summary` only puts the
+    # literal in the body. It does not mean the assertion reaches it *through*
+    # `summary_marker` — a test may key on a different field of the same spec
+    # (`reviewed_commit`, `count`, `clean_marker`), or build its `SummaryState`
+    # by hand and parse no body, or substitute the marker or the author so its
+    # spelling never decides the outcome.
+    #
+    # Nothing is claimed about how the twelve divide among those, or which way
+    # any of them asserts. A fifth version said "negative tests stay False" and
+    # at least three assert the opposite. The sixth stops enumerating.
+    #
+    # The table below is measured and scoped to what it shows. That is the
+    # whole claim.
+    #
+    #   mutation (against `<!--\s*greptile_\w+`)  bare  handle  hyphen  sep-only
+    #   `<!--\s*greptile\w+`     drop separator     .      T       .       T
+    #   `<!--\s*greptile[-_]\w+` widen it           .      .       T       .
+    #   `<!--\s*greptile[a-z]+`  letters only       .      T       .       .
+    #   `<!--\s*greptile`        full collapse      T      T       T       T
+    #   `<!--\s*greptile_\w*`    quantifier soft    .      .       .       T
+    #   `<!--\s*greptile_`       quantifier gone    .      .       .       T
+    #   `<!-- greptile_\w+`      spacing rigid      .      .       .       .
+    #
+    # The last row is caught by nothing here on purpose — it is a *positive*
+    # regression (a real marker stops matching), so it belongs to the
+    # recognition test above, where the `extra-spacing` and `no-spacing` cases
+    # both go red on it.
+    #
+    # So three cases each catch something nothing else does: `app-handle` the
+    # letters-only class, `hyphenated` the widened separator, `separator-only`
+    # the soft or absent quantifier — that last being the mutation which
+    # otherwise survives every test in this file, since no other fixture carries
+    # `greptile_` with nothing word-like after it. `bare` uniquely catches
+    # nothing: the full collapse is caught by all four independently, none of
+    # them needing its help. It stays because it is the likeliest accidental
+    # shape a future non-summary comment would carry, which is documentation
+    # value rather than detection value — and saying so is the point, because
+    # claiming otherwise is what this comment got wrong before.
+    body = _greptile_summary(ATTENTION_CLEAN).replace(
+        "<!-- greptile_other_comments_section -->", marker
+    )
+    assert is_summary_comment(_greptile_comment(body), GREPTILE) is False
+
+
 def test_a_summary_from_another_author_is_not_the_bots() -> None:
     comment = _comment(
         1,
@@ -1476,6 +1617,43 @@ def test_cmd_wait_reports_a_clean_summary_as_clean(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _greptile_wait(monkeypatch, _greptile_summary(ATTENTION_CLEAN)) == EXIT_CLEAN
+
+
+def test_cmd_wait_calls_a_countless_findings_summary_ready_not_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PR #84's shape: not clean, no stated count (the block holding the only
+    # countable sentence was toggled off), no comments. `wait` answered this
+    # correctly at the time — "ready", not "clean" — which is why the repair
+    # for that PR changed `outstanding` and `fetch` and left `wait` alone.
+    #
+    # That "wait is unchanged" reasoning is true of the code and is not a
+    # substitute for a test. Three documents now assert this behavior —
+    # `unprovable_summaries`'s docstring, `.greptile/README.md`, and ADR-0067
+    # §2 — and a later edit to `undercounted`, `comments_pending` or
+    # SummaryState's construction could turn the one correct answer in that
+    # incident into a wrong one, silently.
+    #
+    # What is new here is narrower than "nothing held this": the outward
+    # ready-not-clean behavior is already exercised by two to four sibling
+    # tests for adjacent shapes. The uncovered slice is the `stated is None`
+    # short-circuit in `comments_pending` — measured, mutating its
+    # `if not self.undercounted: return False` to `return True` is caught here
+    # and by two siblings, but *not* by the PR #72 test, whose `stated=1`
+    # takes a different branch. That slice is exactly PR #84's shape.
+    assert _greptile_wait(monkeypatch, _greptile_summary(ATTENTION_FINDINGS)) == 0
+    out = capsys.readouterr().out
+    assert "is ready" in out
+    # Not the clean verdict. Reporting this run clean is precisely the failure
+    # `outstanding` and `fetch` committed on #84.
+    assert "CLEAN:" not in out
+    # And it must say there is something to read. "ready — 0 open finding(s)"
+    # is true of the comments endpoint and useless to the operator, who then
+    # meets the merge gate's refusal with no warning — the sibling of the same
+    # incident's `fetch` lie, and what this line said before it was fixed. No
+    # number, because the count lives in the block the toggle removed.
+    assert "exists only in the summary text" in out
+    assert "states no count" in out
 
 
 def test_cmd_wait_reports_a_findings_summary_as_ready(
@@ -2668,6 +2846,315 @@ def test_a_summary_claiming_more_findings_than_were_matched_blocks(
     # The refusal prints the exact acknowledgement to post (ADR-0067), so the
     # one exit it has is never composed from memory.
     assert "Acknowledges greptile summary 5081386528" in err
+
+
+# --------------------------------------------------------------------------
+# A summary that is not clean, with no evidence anywhere the sweep can read.
+# Measured on PR #84: Greptile stated a finding in its "Files Needing
+# Attention" prose, posted no inline comment and no review object, and the one
+# countable sentence lived in the "Prompt To Fix All With AI" block — which a
+# dashboard toggle, outside this repository, had switched off. So `stated_count`
+# was None, the cross-check was skipped, `undercounted_summaries` had no count
+# to find an undercount in, `unmatched_reviews` had no review to examine, and
+# the gate cleared a PR holding a real unanswered finding.
+#
+# The rule these pin is structural rather than textual, which is the point: it
+# reads only signals no toggle can remove — the clean marker's ABSENCE, zero
+# matched comments, and zero review objects.
+# --------------------------------------------------------------------------
+
+
+def _evidence_free_summary(
+    attention: str = ATTENTION_FINDINGS, updated_at: str = "2026-07-26T01:00:00Z"
+) -> dict[str, Any]:
+    """PR #84's shape: a verdict in prose, and nothing countable or repliable.
+
+    Leaving `_greptile_summary`'s `fix_prompt` at its default `False` is what
+    makes this the measured body rather than a weaker one: that block holds the
+    only sentence Greptile states a number in, and it is precisely what the
+    toggle removed, so the summary states no count at all.
+
+    Passing `True` would **break this section**, not merely blur it — measured,
+    not reasoned. `unprovable_summaries` fires either way, since its guard is
+    only that `bot.findings` is empty and it never reads a count; a stated count
+    trips `undercounted_summaries` as well, and that detector does **not**
+    consult the clean marker. So the two not-clean tests below would still pass
+    on `unprovable_summaries`' own wording, while
+    `test_a_clean_summary_with_no_evidence_anywhere_still_clears` would fail
+    outright — a stated count it cannot match blocks the gate on a *clean* run,
+    flipping that test's exit from EXIT_CLEAN to blocked.
+
+    That test is the load-bearing one here (a clean run posts the summary and
+    nothing else, the same evidence-free shape), so the historically faithful
+    body is not merely the tidier choice — it is the one this section works at
+    all under.
+    """
+    return _comment(
+        5081386528,
+        "greptile-apps[bot]",
+        "2026-07-26T01:00:00Z",
+        updated_at,
+        body=_greptile_summary(attention),
+    )
+
+
+def test_a_not_clean_summary_with_no_evidence_anywhere_blocks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _outstanding(monkeypatch, [], issues=[_evidence_free_summary()]) == 1
+    err = capsys.readouterr().err
+    assert "does not read clean" in err
+    # The refusal prints the exact acknowledgement, like its sibling alarms:
+    # this is the moment the workflow asks a human to write one, and a
+    # reference composed from memory fails closed with no hint of the typo.
+    assert "Acknowledges greptile summary 5081386528" in err
+
+
+def test_a_clean_summary_with_no_evidence_anywhere_still_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The innocent case, and the one that decides whether this rule is usable:
+    # a clean Greptile run posts the summary and NOTHING else — no review, no
+    # comments — which is the same evidence-free shape. Only the clean marker
+    # separates them, so a rule keyed on "no evidence" rather than on "no
+    # evidence AND not clean" would block every clean run on the repo.
+    assert (
+        _outstanding(monkeypatch, [], issues=[_evidence_free_summary(ATTENTION_CLEAN)])
+        == EXIT_CLEAN
+    )
+
+
+def test_a_not_clean_summary_whose_findings_were_matched_and_answered_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ordinary findings run: not clean, but the findings reached the
+    # comments endpoint and carry replies. Nothing here is unprovable, so this
+    # rule must stay silent — it fires on missing evidence, not on a verdict.
+    #
+    # It also pins the freshness comparison's tie, which is why the shared
+    # `2026-07-26T01:00:00Z` below is load-bearing rather than incidental: the
+    # finding and `_evidence_free_summary`'s default carry the same stamp, so
+    # `>=` reads it as the ordinary run and clears while `>` would call it stale
+    # and block. GitHub stamps to the second and Greptile posts the summary
+    # about four seconds ahead of its comments, so a tie is a rounding artifact,
+    # not a signal. Changing either stamp drops that coverage silently — a
+    # duplicate test asserting it separately was written and deleted, because a
+    # second copy of these exact fixtures proved nothing this one does not.
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:00Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert (
+        _outstanding(monkeypatch, [finding, reply], issues=[_evidence_free_summary()])
+        == EXIT_CLEAN
+    )
+
+
+def test_a_re_edited_summary_is_not_answered_by_the_previous_runs_findings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The hole this detector had on arrival, one PR-history step over the shape
+    # it was built for. The first run posts an inline finding, which is matched
+    # and answered. A re-review then edits the summary IN PLACE with a
+    # prose-only, countless finding — posting no new comment and no new review,
+    # which is the documented re-review shape. Every detector went silent:
+    # this one skipped on `bot.findings`, `unmatched_reviews` skipped on the
+    # same condition, and `undercounted_summaries` had no count to compare.
+    # Measured before the fix: "NOTHING OUTSTANDING: all 1 finding(s) have a
+    # reply", exit EXIT_CLEAN, over an unanswered finding.
+    #
+    # A reply to the earlier run's comment cannot answer text written after it,
+    # which is why the guard is freshness rather than mere existence.
+    finding = _pull_comment(
+        1, "greptile-apps[bot]", "2026-07-26T01:00:00Z", review_id=4780620978
+    )
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    review = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    reviewed_again = _evidence_free_summary(updated_at="2026-07-26T03:00:00Z")
+    assert (
+        _outstanding(
+            monkeypatch, [finding, reply], reviews=[review], issues=[reviewed_again]
+        )
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "nothing it posted is newer than that summary" in err
+    assert "Acknowledges greptile summary 5081386528" in err
+    # The clause must stay true of *this* shape, where a matched comment does
+    # exist and is merely older. It once read "no review and no comment this
+    # sweep could match" — flatly false here, and contradicted two sentences
+    # later by the same message. Nothing pinned it, so the regression could
+    # have returned silently on prose whose only job is telling a human the
+    # truth about what evidence exists.
+    #
+    # Both strings appear once in this file, which makes this a weaker pin than
+    # the `"does not read clean"` idiom five tests share — there, a wording
+    # change reddens five at once and that breadth is itself evidence the phrase
+    # is a contract. Here a legitimate rewrite of this one sentence reddens only
+    # this test, with nothing to say whether wording or behavior moved. Kept
+    # anyway: measured, the positive assertion catches a full revert and the
+    # negative catches the false clause returning *alongside* the true one,
+    # which the positive alone does not.
+    assert "only ones that predate the text now standing" in err
+    assert "no review and no comment this sweep could match" not in err
+
+
+def test_a_review_newer_than_the_summary_is_not_evidence_for_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only comments count as evidence, and this pins the case that decided it.
+    # The freshness rule briefly credited a *review object* newer than the
+    # summary too, which looks reasonable and is not: the one shape where that
+    # clause acted alone is a re-trigger posting a new review and editing the
+    # summary while posting no new comment — and there it cleared the gate over
+    # an unanswered summary, resurrecting the bug the freshness rule exists to
+    # fix. Everywhere else it merely duplicated the deferral below.
+    #
+    # A body-less review proves the bot ran. It never proves anything it found
+    # can be read, and this detector's whole subject is findings that cannot be.
+    finding = _pull_comment(
+        1, "greptile-apps[bot]", "2026-07-26T01:00:00Z", review_id=4780620978
+    )
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    first = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    # The re-trigger's own review, submitted after the summary it re-wrote.
+    retriggered = dict(first, id=901, submitted_at="2026-07-26T03:00:00Z")
+    summary = _evidence_free_summary(updated_at="2026-07-26T03:00:00Z")
+    assert (
+        _outstanding(
+            monkeypatch,
+            [finding, reply],
+            reviews=[first, retriggered],
+            issues=[summary],
+        )
+        == 1
+    )
+    assert "nothing it posted is newer than that summary" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("login", "submitted"),
+    [
+        ("NeuroticGamer99", "2026-07-26T01:00:00Z"),
+        ("greptile-apps[bot]", "2026-07-25T23:00:00Z"),
+    ],
+    ids=["another-author", "before-the-floor"],
+)
+def test_the_deferral_credits_only_this_bots_reviews_since_the_floor(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    login: str,
+    submitted: str,
+) -> None:
+    # The deferral hands this shape to `unmatched_reviews` — but only a review
+    # that detector will actually look at counts, which means this bot's own,
+    # submitted after the floor. `reviews_by` applies both filters, and dropping
+    # it for a bare `reviews` went unnoticed by every other test in this file:
+    # a human's review on the PR, or this bot's review from an earlier floor,
+    # would then clear a gate `unmatched_reviews` never examines. That is the
+    # PR #84 shape once more — a detector going quiet while the run it was
+    # asked about stays unaccounted for.
+    review = _review_by(login, submitted, body="")
+    assert (
+        _outstanding(
+            monkeypatch, [], reviews=[review], issues=[_evidence_free_summary()]
+        )
+        == 1
+    )
+    assert "does not read clean" in capsys.readouterr().err
+
+
+def test_a_findings_run_whose_summary_precedes_its_comments_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ordinary run, and the reason the freshness test cannot simply demand
+    # that findings postdate the summary by a margin: Greptile posts the summary
+    # about four seconds BEFORE the comments it counts (PRs #67 and #69). So on
+    # every healthy findings run the evidence is newer, and this must stay
+    # silent — a rule keyed the other way would block every reviewed PR.
+    summary = _evidence_free_summary(updated_at="2026-07-26T01:00:00Z")
+    finding = _pull_comment(1, "greptile-apps[bot]", "2026-07-26T01:00:04Z")
+    reply = _pull_comment(
+        2, "NeuroticGamer99", "2026-07-26T01:30:00Z", in_reply_to_id=1
+    )
+    assert _outstanding(monkeypatch, [finding, reply], issues=[summary]) == EXIT_CLEAN
+
+
+def test_an_acknowledged_evidence_free_summary_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without this the rule is a permanent block, not a gate: findings that
+    # exist only as summary prose have no comment object, so the threaded reply
+    # the sweep counts is physically impossible and the ack is the only
+    # honest exit (ADR-0067) — the same reasoning that reversed
+    # `body_only_findings`.
+    ack = _ack(
+        "Read the summary; the naming point is answered in 34730887.\n\n"
+        "Acknowledges greptile summary 5081386528"
+    )
+    assert (
+        _outstanding(monkeypatch, [], issues=[_evidence_free_summary(), ack])
+        == EXIT_CLEAN
+    )
+
+
+def test_an_ack_predating_a_re_edited_summary_does_not_clear(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A re-review edits the summary in place and posts nothing else, so an ack
+    # of the previous text would silently carry over onto findings nobody has
+    # read. Same freshness condition `undercounted_summaries` already imposes.
+    summary = _evidence_free_summary(updated_at="2026-07-26T03:00:00Z")
+    stale_ack = _ack("Acknowledges greptile summary 5081386528")
+    assert _outstanding(monkeypatch, [], issues=[summary, stale_ack]) == 1
+    assert "does not read clean" in capsys.readouterr().err
+
+
+def test_a_not_clean_summary_with_a_review_object_is_left_to_its_sibling(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Complementary by construction: where a review object exists and nothing
+    # matched, `unmatched_reviews` already alarms and says the author filter is
+    # what to suspect. This rule covers only the case it cannot see — no review
+    # at all — so the gate still blocks here, with the sibling's diagnosis
+    # rather than a second, vaguer one.
+    #
+    # The **negative** assertion is what pins the deferral: drop the
+    # `reviews_by` guard from `unprovable_summaries` and only that line goes
+    # red. The positive one is a liveness check on the sibling — it comes from
+    # `unmatched_reviews`, which this change does not touch, so it stays true
+    # whether or not the deferral works and would break on a rewording there.
+    # Kept anyway, because "the gate still blocks" is only half the claim; the
+    # other half is that it blocks with the *better* diagnosis, and nothing but
+    # this assertion says which one arrived.
+    review = _review_by("greptile-apps[bot]", "2026-07-26T01:00:00Z", body="")
+    assert (
+        _outstanding(
+            monkeypatch, [], reviews=[review], issues=[_evidence_free_summary()]
+        )
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "review 4780620978 exists" in err
+    assert "does not read clean" not in err
+
+
+def test_cmd_fetch_refuses_an_evidence_free_summary(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same blindness, one command over, and the louder half of it: on PR
+    # #84 `fetch` did not merely stay quiet — it printed "NOTHING OUTSTANDING:
+    # all 0 finding(s) have a reply" about a summary that stated a finding.
+    # A command that reports zero must be able to prove the zero.
+    body = _greptile_summary(ATTENTION_FINDINGS)
+    assert _greptile_fetch(monkeypatch, body, []) == 1
+    out, err = capsys.readouterr()
+    assert "NOTHING OUTSTANDING" not in out
+    assert "does not read clean" in err
 
 
 # --------------------------------------------------------------------------

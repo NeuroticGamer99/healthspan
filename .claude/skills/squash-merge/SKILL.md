@@ -35,11 +35,13 @@ gate. Stop and report at any step that fails.
   its path, id and URL, which is exactly what this gate exists to catch. **Exit 1 also stops it** —
   read the output to know which kind. Under a `CANNOT CLEAR THE GATE` banner the sweep found a
   zero it could not *prove*: a bot posted a review but none of its comments matched the author
-  filter, a summary states more findings than were matched, a bot renders findings in its review
-  body where no reply can reach them, or a bot declared to review every PR left no artifact at all
+  filter, a summary states more findings than were matched, a summary does not read clean while
+  nothing at all was posted to match, a bot renders findings in its review body where no reply can
+  reach them, or a bot declared to review every PR left no artifact at all
   (no bot declares that today — Greptile did until `skipReview: "AUTOMATIC"`).
   Those are findings the sweep could not read, not findings that do not exist. Where the findings
-  live in prose — a summary stating more than its comments, a review rendering findings in its
+  live in prose — a summary stating more than its comments, a not-clean summary with nothing posted
+  to match, a review rendering findings in its
   body, and (for a summary-comment bot only) a review whose inline comments never landed — the
   banner prints the exit: an `Acknowledges <bot> (summary|review) <id>` PR-level comment answering
   them (`.claude/bot-review-triage.md` §2, ADR-0067) — an artifact so acknowledged no longer

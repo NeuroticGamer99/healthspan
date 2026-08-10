@@ -478,7 +478,53 @@ BOTS: dict[str, BotSpec] = {
         # for machines and survives the section toggles in `.greptile/config.json`
         # that could restyle the heading. Same reasoning as CodeRabbit's
         # auto-generated-comment marker above.
-        summary_marker=re.compile(r"<!-- greptile_other_comments_section -->"),
+        #
+        # What the widening below can and cannot cost, since the two halves have
+        # very different evidence. **Ruled out structurally:** a threaded reply
+        # of Greptile's being mistaken for a summary. `select_summary_comment`
+        # is only ever handed `issue_comments()` — `issues/{pr}/comments` — and
+        # threaded review-line replies live in `pulls/{pr}/comments`, which it
+        # never sees. **Not ruled out:** some future *issue-level* comment the
+        # App posts for an unrelated purpose that happens to carry a
+        # `greptile_`-prefixed marker. Nothing observable from this repository
+        # settles that; it rests on the assumption that the App's issue comments
+        # are summaries and nothing else — which every run enumerated under
+        # "Observed review shapes" in `.greptile/README.md` supports and none
+        # proves. Deliberately *not* restated as a count here: that list has
+        # grown twice already, and a number copied out of it is wrong from the
+        # next observation onward while still reading as evidence. If Greptile
+        # ever starts posting a second kind of issue comment, this is the line
+        # that needs re-deriving.
+        #
+        # The *namespace*, not one section's literal. This was
+        # `greptile_other_comments_section` and a summary carrying a "Comments
+        # Outside Diff" section emits `greptile_failed_comments` instead: on
+        # PR #81 `wait` burned its full 1800s on a review that had landed in
+        # 3.5 minutes, `fetch` then refused with "no greptile summary" while
+        # the summary was on the PR, and — the worse half — `outstanding` read
+        # the comments endpoint, cleared normally, and never listed the P1 that
+        # existed only as summary prose. Adding the second literal would fix
+        # that instance; it would not answer the question the instance raises,
+        # which is what *else* a section toggle can rename. Every marker
+        # Greptile writes shares this prefix, and which sections a body carries
+        # is exactly the configurable part, so the prefix is the stable half
+        # and the suffix is the half that moves. `\w+` still demands a section
+        # name, so another tool's marker cannot pass for a summary.
+        #
+        # `\s*` rather than one literal space, for the same reason the suffix is
+        # a namespace: the spacing inside an HTML comment is presentation, and
+        # this vendor reformats without notice. Measured on PR #85 — the
+        # `Files Needing Attention:` line that `clean_marker` keys on vanished
+        # from the summary template between #71 and #85, which is a live
+        # demonstration that its markup is not a stable contract. A one-space
+        # pattern rejected both `<!--  greptile_x -->` and `<!--greptile_x-->`.
+        # The closing `-->` is deliberately still not required: it would guard
+        # only against this bot writing a marker in prose without closing it,
+        # while adding one more way for the pattern to go dark on a reformat —
+        # a multi-line marker already matches today and a tighter anchor would
+        # break it. Authorship, plus the only-summaries assumption recorded
+        # above, is what actually keeps foreign comments out.
+        summary_marker=re.compile(r"<!--\s*greptile_\w+"),
         # The footer, one line: `Reviews (N): Last reviewed commit:
         # ["<subject>"](https://github.com/<owner>/<repo>/commit/<sha>) |
         # [Re-trigger Greptile](...)`. Bounded to a single line so the capture
@@ -1470,17 +1516,48 @@ class SummaryState:
         return (datetime.now(UTC) - comment_ts(self.comment)) < COMMENT_GRACE
 
     @property
+    def unprovable_zero(self) -> str | None:
+        """Set when a *not-clean* summary has no finding this caller can show.
+
+        The count is optional; the verdict is not. ``stated`` comes from the
+        "Prompt To Fix All With AI" block, which a dashboard toggle outside
+        this repository can switch off — and on PR #84 it was, so ``stated``
+        was None, :attr:`undercounted` was False, and ``fetch`` printed
+        "NOTHING OUTSTANDING: all 0 finding(s) have a reply" about a summary
+        that stated a finding in prose. This reads only the clean marker's
+        absence and an empty finding list, neither of which any toggle removes.
+
+        Distinct from :attr:`undercounted` by what it can say, not just by
+        when it fires: that one knows how many findings are missing, this one
+        knows only that the run was not clean and produced nothing readable.
+        Ordered after it in :attr:`contradiction` so the more specific message
+        wins whenever both apply.
+        """
+        if self.clean or self.findings:
+            return None
+        return (
+            "the summary does not read clean, but no finding was fetched — "
+            "whatever it reported exists only in the summary text, where no "
+            "threaded reply can reach it. It may state no count at all: that "
+            "sentence lives in an optional block a dashboard toggle removes "
+            "(PR #84), so its absence is not a zero. Read the summary on the "
+            "PR and answer it there, in a PR-level comment carrying its own "
+            f"line 'Acknowledges {self.bot} summary {self.comment.get('id')}' "
+            "(ADR-0067; .claude/bot-review-triage.md §2)."
+        )
+
+    @property
     def contradiction(self) -> str | None:
         """Why a single-shot caller cannot classify this summary, if it cannot.
 
-        Composes both causes for ``fetch``. ``wait`` deliberately does not use
-        this: it must distinguish the conflict it should fail on from the race
-        it should wait out.
+        Composes all three causes for ``fetch``. ``wait`` deliberately does not
+        use this: it must distinguish the conflict it should fail on from the
+        race it should wait out.
         """
         if self.signals_conflict is not None:
             return self.signals_conflict
         if not self.undercounted:
-            return None
+            return self.unprovable_zero
         gap = (
             f"the summary states {self.stated} finding(s) but only {len(self.findings)}"
         )
@@ -1613,6 +1690,21 @@ def cmd_wait(
                         missing = state.stated - len(state.findings)
                         summary_only = (
                             f", and {missing} that exist only in the summary text"
+                        )
+                    elif state.unprovable_zero is not None:
+                        # The countless variant of the same condition, and
+                        # without this clause the loudest thing `wait` could say
+                        # about it was "ready — 0 open finding(s)". A count is
+                        # what the branch above needs to say *how many* live
+                        # only in the summary, and that count comes from a block
+                        # a dashboard toggle removes (PR #84) — so on the shape
+                        # the toggle produces, the operator was told zero with
+                        # nothing to read, and met the merge gate's refusal
+                        # afterwards with no warning. Not a number here, because
+                        # there is none to state honestly.
+                        summary_only = (
+                            ", and at least one that exists only in the summary "
+                            "text — it states no count, so how many is unknown"
                         )
                     print(
                         f"{spec.key} findings summary {state.comment.get('id')} "
@@ -2102,6 +2194,146 @@ def undercounted_summaries(
     return alarms
 
 
+def unprovable_summaries(
+    report: list[BotFindings],
+    reviews: list[Review],
+    issue_comments_: list[Comment],
+    since: datetime,
+) -> list[str]:
+    """Summary-comment bots whose summary is not clean and left nothing to read.
+
+    The structural sibling of :func:`undercounted_summaries`, and the reason it
+    exists: that one needs a *count* to find an undercount in, and the count is
+    the part that can disappear.
+
+    **Measured on PR #84.** Greptile stated a finding in its "Files Needing
+    Attention" prose, posted no inline comment and no review object, and the
+    one sentence anywhere that states a number heads the "Prompt To Fix All
+    With AI" block — which a dashboard toggle, outside this repository, had
+    switched off. ``stated_count`` returned None, so the cross-check was
+    skipped, ``undercounted_summaries`` had no count to compare, and
+    ``unmatched_reviews`` had no review to examine. All four detectors missed
+    and ``outstanding`` cleared the merge gate on a PR holding a real
+    unanswered finding.
+
+    The finding is not the toggle. **A merge gate must not depend on a setting
+    that leaves no trace in a diff** — and this module had already reasoned
+    exactly that hazard one field over, choosing an HTML marker for
+    ``summary_marker`` because it "survives the section toggles that could
+    restyle the heading", while leaving ``count`` on a visible sentence inside
+    an optional block. So this check reads no configurable text at all: the
+    clean marker's *absence*, and two timestamps. A bot that reported
+    something, in a shape where nothing it reported can be read.
+
+    **Freshness, not mere existence** — and that distinction is a correction,
+    not a flourish. Keyed on "does this bot have findings at all", this skipped
+    whenever any earlier finding had been matched, so a re-review that edited
+    the summary in place with a prose-only countless finding cleared the gate
+    on any PR whose first run had been triaged. `unmatched_reviews` skipped on
+    the same condition and `undercounted_summaries` had no count, so again
+    nothing fired. What accounts for a summary is evidence *newer than it*.
+
+    ``clean_marker`` is what makes the rule usable rather than a permanent
+    block — **which stopped being true in practice on 2026-08-09**, when
+    Greptile's summary template dropped the line that marker keys on. Until it
+    is re-derived this check blocks every *otherwise-clean* run and each one
+    needs an acknowledgement — not every run: a findings run posts comments
+    after its summary, and the freshness test above skips this detector as soon
+    as one of them postdates it. The caveat is recorded rather than the sentence
+    rewritten,
+    because it becomes true again the moment the marker matches something (see
+    ``specs/open-questions.md`` § Development Workflow for the trigger). It is
+    load-bearing regardless: a *clean* Greptile run posts the summary and
+    nothing else — no review, no comments — which is the same evidence-free
+    shape. Only the marker separates them. It is also the signal that already
+    worked on #84, where ``wait`` correctly returned "ready" rather than
+    "clean"; the tooling knew the run was not clean and merely had nothing to
+    show for it.
+
+    Scoped away from a bot that posted a review **and matched no comment**:
+    there :func:`unmatched_reviews` already alarms and names the author filter
+    as what to suspect, which is a strictly better diagnosis than this one can
+    give. Both halves of that condition are load-bearing — it skips on any
+    matched comment, so on the stale-findings shape above it says nothing at
+    all, and deferring to it merely because a review exists is what let the gate
+    clear. The two are complementary by construction rather than additive.
+
+    Cleared by an acknowledgement naming the summary (ADR-0067), on the same
+    terms as its siblings. Without that it would be unclearable, since findings
+    living only in summary prose have no comment object for a threaded reply to
+    hang off — the permanent block ADR-0067 was written to reverse, rebuilt one
+    detector to the left.
+    """
+    alarms: list[str] = []
+    for bot in report:
+        spec = BOTS[bot.key]
+        if spec.summary_marker is None:
+            continue
+        summary = select_summary_comment(issue_comments_, spec, since)
+        if summary is None or is_clean_comment(summary, spec):
+            continue
+        # Evidence *newer than this summary* is what accounts for it — not the
+        # mere existence of evidence, which is what this guard first tested.
+        #
+        # A re-review edits the summary in place and posts no new comment and no
+        # new review object (the shape recorded at the greptile spec). So on a
+        # PR whose first run posted an inline finding that was then answered, a
+        # re-review turning up a prose-only countless finding left every
+        # detector silent: this one skipped on `bot.findings`, `unmatched_reviews`
+        # skipped on the same condition, and `undercounted_summaries` had no
+        # count to compare. Measured — `outstanding` printed "NOTHING
+        # OUTSTANDING: all 1 finding(s) have a reply" and cleared the gate over
+        # an unanswered finding, which is the very failure this detector was
+        # added for, one PR-history step over.
+        #
+        # A findings run posts its summary about four seconds *before* the
+        # comments it counts, so on a fresh run the evidence is newer and this
+        # skips, as it must. `>=` rather than `>` because the two stamps can
+        # coincide at one-second resolution, and a tie is the ordinary run.
+        # Only the *comments* count as evidence here, deliberately. A review
+        # object newer than the summary looks like evidence and is not: this
+        # check briefly also skipped on one, and the single shape where that
+        # clause acted alone — findings all older than the summary, a review
+        # newer than it — is a re-trigger that posted a new review and edited
+        # the summary while posting no new comment. Measured: it cleared the
+        # gate over an unanswered summary, resurrecting the very bug the
+        # freshness rule was written to fix. Everywhere else it was redundant
+        # with the deferral below. A body-less review proves the bot ran, never
+        # that anything it found can be read, which is why the readable
+        # artifact is the only one credited.
+        edited = comment_ts(summary)
+        if any(comment_ts(found) >= edited for found in bot.findings):
+            continue
+        # Defer to `unmatched_reviews` only where it actually fires. It skips
+        # whenever this bot matched any comment, so on the stale-findings shape
+        # above it says nothing at all — deferring to it there is what let the
+        # gate clear. Its trigger is "zero matched, review present", and that is
+        # exactly the condition reproduced here rather than assumed.
+        if not bot.findings and reviews_by(reviews, spec, since):
+            continue  # unmatched_reviews owns this shape, and diagnoses it better
+        summary_id = int(str(summary.get("id", 0)))
+        if acknowledged(
+            issue_comments_, spec, "summary", summary_id, comment_ts(summary)
+        ):
+            continue
+        alarms.append(
+            f"{bot.key}: its summary {summary_id} does not read clean, and "
+            "nothing it posted is newer than that summary — it left no comment "
+            "this sweep could match, or only ones that predate the text now "
+            "standing. Whatever the summary reports "
+            "exists only as prose in it, where no threaded reply can reach it. "
+            "Older findings do not answer it: a re-review edits the summary in "
+            "place and posts nothing else, so replies to an earlier run's "
+            "comments say nothing about this text. Its stated count may be "
+            "absent rather than zero — that sentence lives in an optional "
+            "block a dashboard toggle removes (PR #84). Read the summary; once "
+            "everything it states is answered, record that in a PR-level "
+            "comment carrying its own line "
+            f"'Acknowledges {bot.key} summary {summary_id}' (ADR-0067)"
+        )
+    return alarms
+
+
 def silent_always_reviewers(
     report: list[BotFindings],
     reviews: list[Review],
@@ -2165,12 +2397,20 @@ def cmd_outstanding(repo: str, pr: int, since: datetime) -> int:
     found = sum(len(b.findings) for b in report)
     still_open = sum(len(b.open_findings) for b in report)
 
-    # The four detectors are additive and may double-report: a Greptile review
+    # The five detectors are additive and may double-report: a Greptile review
     # that matched nothing while its summary states a count trips both
     # unmatched_reviews and undercounted_summaries. That is deliberate — each
     # states a different true fact about the same PR, and suppressing one to
     # tidy the output would drop evidence a human is about to act on. None can
     # mask another; any non-empty list blocks.
+    #
+    # unprovable_summaries is the one exception to "additive", and it excludes
+    # itself rather than being suppressed here: where the bot posted a review
+    # and matched no comment, it defers to unmatched_reviews, whose diagnosis of
+    # that shape is strictly more specific. Both halves matter — a review alone
+    # is not the condition, since unmatched_reviews stays silent whenever any
+    # comment matched. The distinction is written where the rule lives, not at
+    # this call site, so it cannot be lost by reordering.
     # Fetched when some bot's evidence lives in an issue comment rather than in
     # a review — a summary-comment bot's stated count, an always-reviews bot's
     # proof of having run, or the ADR-0067 acknowledgements that answer a
@@ -2187,6 +2427,7 @@ def cmd_outstanding(repo: str, pr: int, since: datetime) -> int:
     unprovable = unmatched_reviews(report, reviews, comments, issues, since)
     unprovable += body_only_findings(report, reviews, issues, since)
     unprovable += undercounted_summaries(report, issues, since)
+    unprovable += unprovable_summaries(report, reviews, issues, since)
     unprovable += silent_always_reviewers(report, reviews, issues, since)
     if unprovable:
         print("\nCANNOT CLEAR THE GATE:", file=sys.stderr)
