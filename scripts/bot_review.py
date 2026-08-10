@@ -2236,8 +2236,11 @@ def unprovable_summaries(
     ``clean_marker`` is what makes the rule usable rather than a permanent
     block — **which stopped being true in practice on 2026-08-09**, when
     Greptile's summary template dropped the line that marker keys on. Until it
-    is re-derived this check blocks every run and each one needs an
-    acknowledgement; the caveat is recorded rather than the sentence rewritten,
+    is re-derived this check blocks every *otherwise-clean* run and each one
+    needs an acknowledgement — not every run: a findings run posts comments
+    after its summary, and the freshness test above skips this detector as soon
+    as one of them postdates it. The caveat is recorded rather than the sentence
+    rewritten,
     because it becomes true again the moment the marker matches something (see
     ``specs/open-questions.md`` § Development Workflow for the trigger). It is
     load-bearing regardless: a *clean* Greptile run posts the summary and

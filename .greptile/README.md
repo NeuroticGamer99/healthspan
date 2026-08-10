@@ -194,7 +194,7 @@ imply. Six shapes so far:
 The summary comment is the only artifact present in every one of those, which is
 why it — and not the reviews endpoint — is what the tooling polls. Its footer
 names the commit actually reviewed, which is how a stale review is told from a
-fresh one. The last shape is also why a stated count exceeding the comments
+fresh one. The **findings-with-no-comments-at-all** shape (PR #72) is also why a stated count exceeding the comments
 found is only treated as "still arriving" within a two-minute grace window: past
 it, the missing findings are not late, they were never comments. The full set of
 failure modes each rule prevents is documented at the `greptile` entry in

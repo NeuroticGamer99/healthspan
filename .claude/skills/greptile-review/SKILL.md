@@ -60,12 +60,15 @@ Run with `run_in_background: true`. Runs have taken 2–8 minutes. Exit codes:
 - **0** — there is something to triage; continue to step 4. It reports how many findings are open.
 - **2** — the run was **clean**: no files needing attention, no stated count, and nothing left
   unanswered. Report and stop.
-- **1** — failure or timeout. Read the message: it distinguishes two very different states.
+- **1** — failure or timeout. Read the message: it distinguishes three very different states.
   "no findings review after Ns" means Greptile has not answered — **silence is not a clean
   review**, so report and stop. **"STALE, not missing"** means it *has* answered, but about a
   superseded commit: its summary names the commit it reviewed and that is not the PR head. Nothing
   has looked at the current code. Do not read the existing summary as this commit's verdict — go
-  back to step 2 and trigger again.
+  back to step 2 and trigger again. **"the two signals disagree"** means the summary reads clean
+  *and* states a count: `wait` ends here rather than polling, because waiting cannot resolve a
+  contradiction, and `fetch` would refuse identically. Read the summary on the PR — step 4's first
+  bullet has the rest.
 
 The wait deliberately keeps polling on a stale summary, because that is precisely what the trigger
 in step 2 is expected to clear.
@@ -128,9 +131,14 @@ thing: it has not reported, which is not a clean review. Beyond that:
   a PR-level comment carrying the `Acknowledges greptile summary <id>` reference — and re-running
   will never help, because nothing is in flight.
 
-**`wait` never emits any of those three messages** — do not look for them in its output. Inside
-the grace window it simply keeps polling; past it, it *succeeds* with exit **0** and says so on the
-ready line, naming what lives only in the summary:
+**`wait` never emits the two marked `fetch` only** — but it *does* emit the first, the
+signals-disagree error, and fails with exit **1** on it, because no amount of polling resolves a
+clean marker sitting beside a stated count. `bot_review.py`'s own
+`test_wait_and_fetch_agree_when_the_two_signals_disagree` asserts that string on `wait`'s stderr.
+This line read "never emits either of those two messages" while there were two bullets and was
+already wrong about this one then; a later edit changed the count to three rather than noticing.
+For the other two: inside the grace window `wait` simply keeps polling; past it, it *succeeds*
+with exit **0** and says so on the ready line, naming what lives only in the summary:
 
 ```text
 … is ready — N open finding(s), and M that exist only in the summary text

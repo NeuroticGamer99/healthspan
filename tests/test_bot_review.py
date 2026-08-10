@@ -1415,15 +1415,19 @@ def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
     # of its four claims were wrong. T means the mutant pattern matches, i.e.
     # that case goes red. **Scoped to this test's own cases**, which is a real
     # limit rather than a hedge: `letters only` also stops the real marker
-    # matching at all, so most of the file fails with it — every fixture here
-    # routes through `_greptile_summary`'s literal marker — and a table showing
-    # only the column below would read as though one case caught it.
+    # matching at all, so **every test whose fixture carries a Greptile summary**
+    # fails with it — they all build their body through `_greptile_summary`,
+    # which hardcodes that literal — and a table showing only the column below
+    # would read as though one case caught it.
     #
-    # No file-wide figure is quoted on purpose. Two were, and both were wrong:
-    # the first because the run was scoped by a `-k` filter nobody noticed, the
-    # second because the script counting it split parametrized ids on
-    # whitespace and merged distinct failures. A count also expires the next
-    # time a test is added. The mechanism above does not.
+    # No magnitude is quoted, and that is the third attempt at this sentence.
+    # It said 42, from a run silently scoped by a `-k` filter; then 44, when the
+    # script recounting it split parametrized ids on whitespace and merged
+    # distinct failures; then "most of the file", which is 44 of 201 and so not
+    # most of anything. Each correction was written to stop the previous one
+    # asserting something unmeasured, and each asserted something unmeasured.
+    # Naming the affected *set* is exact, checkable, and does not expire the
+    # next time a test is added.
     #
     #   mutation (against `<!--\s*greptile_\w+`)  bare  handle  hyphen  sep-only
     #   `<!--\s*greptile\w+`     drop separator     .      T       .       T
@@ -2973,6 +2977,15 @@ def test_a_re_edited_summary_is_not_answered_by_the_previous_runs_findings(
     # later by the same message. Nothing pinned it, so the regression could
     # have returned silently on prose whose only job is telling a human the
     # truth about what evidence exists.
+    #
+    # Both strings appear once in this file, which makes this a weaker pin than
+    # the `"does not read clean"` idiom five tests share — there, a wording
+    # change reddens five at once and that breadth is itself evidence the phrase
+    # is a contract. Here a legitimate rewrite of this one sentence reddens only
+    # this test, with nothing to say whether wording or behavior moved. Kept
+    # anyway: measured, the positive assertion catches a full revert and the
+    # negative catches the false clause returning *alongside* the true one,
+    # which the positive alone does not.
     assert "only ones that predate the text now standing" in err
     assert "no review and no comment this sweep could match" not in err
 
