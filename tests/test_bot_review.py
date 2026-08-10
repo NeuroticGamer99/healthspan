@@ -1415,19 +1415,23 @@ def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
     # of its four claims were wrong. T means the mutant pattern matches, i.e.
     # that case goes red. **Scoped to this test's own cases**, which is a real
     # limit rather than a hedge: `letters only` also stops the real marker
-    # matching at all, so **every test whose fixture carries a Greptile summary**
-    # fails with it — they all build their body through `_greptile_summary`,
-    # which hardcodes that literal — and a table showing only the column below
-    # would read as though one case caught it.
+    # matching at all, so its effects reach well past the four cases below, and
+    # a table showing only this column would read as though one case caught it.
     #
-    # No magnitude is quoted, and that is the third attempt at this sentence.
-    # It said 42, from a run silently scoped by a `-k` filter; then 44, when the
-    # script recounting it split parametrized ids on whitespace and merged
-    # distinct failures; then "most of the file", which is 44 of 201 and so not
-    # most of anything. Each correction was written to stop the previous one
-    # asserting something unmeasured, and each asserted something unmeasured.
-    # Naming the affected *set* is exact, checkable, and does not expire the
-    # next time a test is added.
+    # **How far past is deliberately not characterized**, because four attempts
+    # to say it were all wrong, each written to fix the last. `42`, from a run
+    # silently scoped by a `-k` filter. Then `44`, when the script recounting it
+    # split parametrized ids on whitespace and merged distinct failures. Then
+    # "most of the file", which 44 of 201 is not. Then "every test whose fixture
+    # carries a Greptile summary" — and twelve of those stay green, because
+    # building a fixture through `_greptile_summary` only puts the literal in
+    # the body; it does not mean the assertion reaches it through
+    # `summary_marker`. `reviewed_sha` keys on `reviewed_commit`, `stated_count`
+    # on `count`, and several negative tests stay False for reasons that have
+    # nothing to do with the marker.
+    #
+    # The table below is measured and scoped to what it shows. That is the
+    # whole claim.
     #
     #   mutation (against `<!--\s*greptile_\w+`)  bare  handle  hyphen  sep-only
     #   `<!--\s*greptile\w+`     drop separator     .      T       .       T
