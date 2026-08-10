@@ -1311,6 +1311,23 @@ def timeline_events(repo: str, pr: int) -> list[dict[str, Any]]:
 def request_event_ids(events: list[dict[str, Any]], spec: BotSpec) -> set[int]:
     """Ids of the timeline events requesting *this bot* as a reviewer.
 
+    The ids-only view of :func:`request_events`, which is what the confirmation
+    diffs against. Delegates rather than re-implementing the match: two copies
+    of a matching rule are two copies that drift.
+    """
+    return set(request_events(events, spec))
+
+
+def request_events(events: list[dict[str, Any]], spec: BotSpec) -> dict[int, str]:
+    """This bot's request events, mapped from id to the login each *recorded*.
+
+    The login is carried out rather than discarded so a caller can report what
+    the timeline actually said instead of restating the spec constant it hoped
+    for. Both messages in :func:`_confirm_reviewer_request` used to name
+    ``requested_display`` while this function accepted either login — true
+    today, and a claim rather than an observation, which is the failure class
+    this whole change exists to remove (Copilot, PR #86).
+
     Matched against **both** of the bot's request-side logins. GitHub records
     ``requested_display`` here — ``Copilot``, measured on PR #85 — while
     ``request_login`` is what gets POSTed. Accepting either is not laxity: the
@@ -1335,8 +1352,8 @@ def request_event_ids(events: list[dict[str, Any]], spec: BotSpec) -> set[int]:
     """
     wanted = [login for login in (spec.requested_display, spec.request_login) if login]
     if not wanted:
-        return set()
-    found: set[int] = set()
+        return {}
+    found: dict[int, str] = {}
     for event in events:
         if str(event.get("event", "")) != "review_requested":
             continue
@@ -1358,7 +1375,7 @@ def request_event_ids(events: list[dict[str, Any]], spec: BotSpec) -> set[int]:
                 f"integer id (got {raw!r}) — refusing to confirm an ask "
                 "against an event this cannot tell apart from another"
             )
-        found.add(raw)
+        found[raw] = login
     return found
 
 
@@ -1512,11 +1529,17 @@ def _confirm_reviewer_request(
     # never queried the timeline.
     deadline = time.monotonic() + REQUEST_CONFIRM_TIMEOUT
     while True:
-        new = request_event_ids(timeline_events(repo, pr), spec) - before
+        found = request_events(timeline_events(repo, pr), spec)
+        new = set(found) - before
         if new:
+            # The login is read off the event, not restated from the spec: the
+            # match accepts either of this bot's two, so naming the constant
+            # would be a guess dressed as evidence on precisely the line whose
+            # job is to be evidence.
+            newest = max(new)
             print(
                 f"requested {spec.key}; timeline review_requested event "
-                f"{max(new)} names {spec.requested_display}"
+                f"{newest} names {found[newest]}"
             )
             return 0
         if time.monotonic() >= deadline:
@@ -1532,7 +1555,7 @@ def _confirm_reviewer_request(
     # this ask can predate it.
     raise BotReviewError(
         f"requested {spec.request_login!r} but no review_requested event "
-        f"naming {spec.requested_display!r} reached the timeline within "
+        f"naming it or {spec.requested_display!r} reached the timeline within "
         f"{REQUEST_CONFIRM_TIMEOUT}s — the ask is unconfirmed. Check the PR "
         "before concluding the bot is unavailable, and wait against the floor "
         "above if a review turns up: an unconfirmed ask is not a refused one."

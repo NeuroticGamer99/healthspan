@@ -593,6 +593,11 @@ def test_an_unconfirmed_ask_prints_the_floor_before_refusing(
     monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
     with pytest.raises(BotReviewError, match="unconfirmed") as caught:
         bot_review.cmd_request("o/r", 54, COPILOT)
+    # Names *both* logins it searched for. Asserting that each string is
+    # present would be vacuous — the message opens with `request_login`
+    # regardless, so both appear even when the search is described as
+    # narrower than it is. The conjunction is the load-bearing part.
+    assert "naming it or 'Copilot'" in str(caught.value)
     out = capsys.readouterr().out
     assert "since: " in out
     assert "--bot copilot --pr 54" in out
@@ -1001,6 +1006,42 @@ def test_either_of_the_bots_request_logins_confirms_the_ask() -> None:
     # Laxity would be a lookalike passing, and it does not: `same_login` is
     # whole-string, so nothing but those two accounts can confirm a Copilot ask.
     assert request_event_ids([_request_event(3, "copilot-fan")], COPILOT) == set()
+
+
+def test_the_success_line_reports_the_login_the_event_recorded(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The match accepts either of Copilot's two request-side logins, so naming
+    # `requested_display` on the confirmation line was a constant standing in
+    # for an observation — true today, and a guess dressed as evidence on the
+    # one line whose job is to be evidence. An event recorded under the *bot*
+    # login must print that, not "Copilot".
+    import bot_review
+
+    posted = [_request_event(29195776393, "copilot-pull-request-reviewer[bot]")]
+    monkeypatch.setattr(bot_review, "gh", _timeline_gh([posted]))
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    out = capsys.readouterr().out
+    assert "names copilot-pull-request-reviewer[bot]" in out
+    assert "names Copilot" not in out
+
+
+def test_the_refusal_names_both_logins_it_looked_for() -> None:
+    # Same overclaim at the other message: the refusal said no event naming
+    # `requested_display` arrived, having searched for either.
+    import bot_review
+
+    assert bot_review.request_event_ids([], COPILOT) == set()
+    # The refusal's own wording is pinned in
+    # `test_an_unconfirmed_ask_prints_the_floor_before_refusing`; this pins the
+    # pair the matcher actually accepts, which that wording must agree with.
+    both = {"Copilot", "copilot-pull-request-reviewer[bot]"}
+    seen = {
+        login
+        for login in both
+        if bot_review.request_events([_request_event(1, login)], COPILOT)
+    }
+    assert seen == both
 
 
 def test_only_review_requested_events_naming_a_reviewer_are_counted() -> None:
