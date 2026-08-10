@@ -1335,8 +1335,16 @@ def test_a_findings_summary_is_not_clean_but_is_still_the_summary() -> None:
         "<!-- greptile_other_comments_section -->",
         "<!-- greptile_failed_comments -->",
         "<!-- greptile_a_section_not_yet_observed -->",
+        "<!--  greptile_other_comments_section  -->",
+        "<!--greptile_other_comments_section-->",
     ],
-    ids=["other-comments", "outside-diff", "unobserved"],
+    ids=[
+        "other-comments",
+        "outside-diff",
+        "unobserved",
+        "extra-spacing",
+        "no-spacing",
+    ],
 )
 def test_the_summary_is_recognized_through_any_section_marker(marker: str) -> None:
     # A summary carrying a "Comments Outside Diff" section emits
@@ -1345,6 +1353,13 @@ def test_the_summary_is_recognized_through_any_section_marker(marker: str) -> No
     # burned its full 1800s on a review that had landed in 3.5 minutes and
     # `fetch` then refused with "no greptile summary" while the summary was
     # plainly on the PR (PR #81).
+    #
+    # The last two ids are the spacing half, and they are not hypothetical
+    # either: PR #85 measured this vendor changing its summary template
+    # unannounced — the `Files Needing Attention:` line `clean_marker` keys on
+    # simply vanished — so the whitespace inside its HTML comments is exactly
+    # the kind of presentation detail this whole change refuses to gate on.
+    # A one-space pattern rejected both of them.
     #
     # The third id is not an observed shape and is the point of this test:
     # matching the marker *namespace* is what makes a section this repo has
@@ -1398,15 +1413,24 @@ def test_the_namespace_still_demands_a_section_name(marker: str) -> None:
     # Which case earns its place, measured rather than reasoned — an earlier
     # version of this comment asserted an exclusivity it had not run, and three
     # of its four claims were wrong. T means the mutant pattern matches, i.e.
-    # that case goes red:
+    # that case goes red. **Scoped to this test's own cases**, which is a real
+    # limit rather than a hedge: `letters only` reddens 42 tests across the file
+    # because it stops the real marker matching at all, and a table that showed
+    # only the column below would read as though one case caught it.
     #
-    #   mutation                            bare  handle  hyphen  sep-only
-    #   `<!-- greptile\w+`   drop separator    .      T       .       T
-    #   `<!-- greptile[-_]\w+` widen it        .      .       T       .
-    #   `<!-- greptile[a-z]+` letters only     .      T       .       .
-    #   `<!-- greptile`      full collapse     T      T       T       T
-    #   `<!-- greptile_\w*`  quantifier soft   .      .       .       T
-    #   `<!-- greptile_`     quantifier gone   .      .       .       T
+    #   mutation (against `<!--\s*greptile_\w+`)  bare  handle  hyphen  sep-only
+    #   `<!--\s*greptile\w+`     drop separator     .      T       .       T
+    #   `<!--\s*greptile[-_]\w+` widen it           .      .       T       .
+    #   `<!--\s*greptile[a-z]+`  letters only       .      T       .       .
+    #   `<!--\s*greptile`        full collapse      T      T       T       T
+    #   `<!--\s*greptile_\w*`    quantifier soft    .      .       .       T
+    #   `<!--\s*greptile_`       quantifier gone    .      .       .       T
+    #   `<!-- greptile_\w+`      spacing rigid      .      .       .       .
+    #
+    # The last row is caught by nothing here on purpose — it is a *positive*
+    # regression (a real marker stops matching), so it belongs to the
+    # recognition test above, where the `extra-spacing` and `no-spacing` cases
+    # both go red on it.
     #
     # So three cases each catch something nothing else does: `app-handle` the
     # letters-only class, `hyphenated` the widened separator, `separator-only`

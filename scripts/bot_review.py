@@ -510,7 +510,21 @@ BOTS: dict[str, BotSpec] = {
         # is exactly the configurable part, so the prefix is the stable half
         # and the suffix is the half that moves. `\w+` still demands a section
         # name, so another tool's marker cannot pass for a summary.
-        summary_marker=re.compile(r"<!-- greptile_\w+"),
+        #
+        # `\s*` rather than one literal space, for the same reason the suffix is
+        # a namespace: the spacing inside an HTML comment is presentation, and
+        # this vendor reformats without notice. Measured on PR #85 — the
+        # `Files Needing Attention:` line that `clean_marker` keys on vanished
+        # from the summary template between #71 and #85, which is a live
+        # demonstration that its markup is not a stable contract. A one-space
+        # pattern rejected both `<!--  greptile_x -->` and `<!--greptile_x-->`.
+        # The closing `-->` is deliberately still not required: it would guard
+        # only against this bot writing a marker in prose without closing it,
+        # while adding one more way for the pattern to go dark on a reformat —
+        # a multi-line marker already matches today and a tighter anchor would
+        # break it. Authorship, plus the only-summaries assumption recorded
+        # above, is what actually keeps foreign comments out.
+        summary_marker=re.compile(r"<!--\s*greptile_\w+"),
         # The footer, one line: `Reviews (N): Last reviewed commit:
         # ["<subject>"](https://github.com/<owner>/<repo>/commit/<sha>) |
         # [Re-trigger Greptile](...)`. Bounded to a single line so the capture
@@ -2295,8 +2309,9 @@ def unprovable_summaries(
             continue
         alarms.append(
             f"{bot.key}: its summary {summary_id} does not read clean, and "
-            "nothing it posted is newer than that summary — no review and no "
-            "comment this sweep could match. Whatever the summary reports "
+            "nothing it posted is newer than that summary — it left no comment "
+            "this sweep could match, or only ones that predate the text now "
+            "standing. Whatever the summary reports "
             "exists only as prose in it, where no threaded reply can reach it. "
             "Older findings do not answer it: a re-review edits the summary in "
             "place and posts nothing else, so replies to an earlier run's "
