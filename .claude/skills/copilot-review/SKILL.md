@@ -24,9 +24,11 @@ uv run python scripts/bot_review.py request --bot copilot --pr <N>
 ```
 
 The script requests the review and then **confirms the ask reached GitHub**, failing loud if it
-cannot. That check is the point: requesting a login GitHub does not accept returns **HTTP 200 with
-an empty `requested_reviewers`** — a silent no-op with no error to catch, which otherwise buys a
-30-minute wait for a review nobody asked for.
+cannot. That check is the point: requesting a login GitHub does not accept returns **HTTP 200 and
+adds no reviewer** — a silent no-op with no error to catch, which otherwise buys a 30-minute wait
+for a review nobody asked for. Note what that sentence deliberately does *not* say: the empty
+`requested_reviewers` array is not the tell. It reads empty on a rejected ask and on an accepted one
+alike, which is the whole subject of the next paragraph.
 
 **What it confirms against is the issue timeline's `review_requested` event, not the
 `requested_reviewers` array the request populates.** Reading that array back is what the check used
@@ -83,13 +85,27 @@ that goes looking for a flag will not find one. Docs research on 2026-08-09 foun
 or `gh` surface for it at all; that is a finding with a date on it, not a permanent property, and
 `specs/open-questions.md` carries what would reopen it.
 
-**The expected setting for this repository is `Lite`** — which the GA docs label "Standard review
-(default)", so the expectation is that nothing has been changed rather than that something was
-configured. The other level is `Balanced`, which reviews more deeply and costs more Copilot AI
-credits *and* more Actions minutes; the two were renamed from the preview's Low/Medium and went GA
-on 2026-08-07. A third, `Max`, has been seen in the PR sidebar marked "coming soon" while the GA
-docs use that word as a *plan* name — if the sidebar and the docs disagree, the sidebar is the one
-looking at this account.
+**A per-review choice does exist, and it is UI-only — which is not the same as "no choice exists".**
+GitHub's GA changelog is explicit: when you request a review from the PR page you may pick `Lite` or
+`Balanced` for *that review*, without changing either default. What has no documented REST, GraphQL
+or `gh` surface is *setting* it — and this skill's request goes through the `requested_reviewers`
+endpoint, which takes no effort parameter. So a review asked for from here always runs at whatever
+the repository (or organization) default is, and **that is a consequence of automating the ask, not
+a missing feature.**
+
+**The expected default for this repository is `Lite`** — which the GA docs call the standard level,
+so the expectation is that nothing has been changed rather than that something was configured. The
+other level is `Balanced`, which reviews more deeply and costs more Copilot AI credits *and* more
+Actions minutes; the two were renamed from the preview's Low/Medium and went GA on 2026-08-07. A
+third, `Max`, has been seen in the PR sidebar marked "coming soon"; the GA docs enumerate only two
+levels and use that word as a *plan* name, so treat it as a sighting to re-check rather than as a
+level that exists — the sidebar is the thing looking at this account.
+
+**If you want a deeper review on one PR, that is a human action in the UI**: request Copilot from
+the PR page and choose `Balanced` there. Do not try to reach it from this skill. `specs/open-questions.md`
+records why the gap is structural rather than an unfinished job — briefly, the iteration loop is
+deliberately local and unmetered, so by the time anything reaches the cloud the code has settled,
+and a UI-side request would also bypass the floor `wait`/`fetch` are built on.
 
 Confirming the setting is a **human, one-time, in-the-UI** action; an agent cannot read it back. If
 a run comes back conspicuously shallower or more expensive than usual, that setting is the first
