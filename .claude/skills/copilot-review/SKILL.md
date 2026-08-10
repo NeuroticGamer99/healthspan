@@ -90,15 +90,12 @@ endpoint, which takes no effort parameter. So a review asked for from here alway
 the repository (or organization) default is, and **that is a consequence of automating the ask, not
 a missing feature.**
 
-**The expected default for this repository is `Lite`** — which the GA docs call the standard level,
-so the expectation is that nothing has been changed rather than that something was configured. The
-other level is `Balanced`, which reviews more deeply and costs more Copilot AI credits *and* more
-Actions minutes; the two were renamed from the preview's Low/Medium and went GA on 2026-08-07. A
-third, `Max`, has been seen in the PR sidebar marked "coming soon"; the GA docs enumerate only two
-levels and use that word as a *plan* name, so treat it as a sighting to re-check rather than as a
-level that exists. It is recorded rather than dropped because a sidebar showing "coming soon" is
-evidence of something scheduled, and docs omitting it is not evidence against — but until it
-appears, two is the count.
+**The expected default for this repository is `Lite`**, the standard level — so the expectation is
+that nothing has been changed rather than that something was configured. The other level is
+`Balanced`, which reviews more deeply and costs more Copilot AI credits *and* more Actions minutes.
+`specs/open-questions.md` carries the provenance (the GA date, the rename from the preview's
+Low/Medium, and a `Max` sighting that is not a level); it is deliberately not restated here, because
+two copies of a fact drift and this one is the operator's copy.
 
 **If you want a deeper review on one PR, that is a human action in the UI**: request Copilot from
 the PR page and choose `Balanced` there. Do not try to reach it from this skill. `specs/open-questions.md`
