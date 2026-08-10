@@ -33,6 +33,7 @@ from bot_review import (
     is_summary_comment,
     outstanding_findings,
     parse_ts,
+    request_event_ids,
     reviewed_sha,
     reviews_by,
     run_cmd,
@@ -473,49 +474,603 @@ def test_a_mangled_trigger_comment_fails_loudly_rather_than_waiting(
         bot_review.cmd_request("o/r", 54, CODERABBIT)
 
 
-def test_reviewer_request_verifies_the_ask_took_and_prints_the_floor(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # The Copilot branch, previously untested: POST to requested_reviewers,
-    # then read the PR back to prove GitHub actually added someone — under the
-    # *display* login, not the one that was posted.
-    import bot_review
+def _request_event(
+    event_id: int,
+    login: str,
+    created_at: str = "2026-08-10T00:05:18Z",
+) -> dict[str, Any]:
+    """One timeline `review_requested` entry, transcribed from PR #85."""
+    return {
+        "id": event_id,
+        "event": "review_requested",
+        "created_at": created_at,
+        "actor": {"login": "NeuroticGamer99"},
+        "requested_reviewer": {"login": login},
+    }
 
-    calls: list[str] = []
+
+def _timeline_gh(
+    pages: list[list[dict[str, Any]]],
+    *,
+    before: list[dict[str, Any]] | None = None,
+    posts: list[tuple[str, ...]] | None = None,
+) -> Any:
+    """A `gh` double serving a timeline and accepting the reviewer POST.
+
+    `pages` is what the timeline answers *after* the POST, keyed on the `page=`
+    parameter `gh_all` sends; `before` is the single page it answered up to
+    then. Reading the page out of the path rather than counting calls is not
+    fussiness — a per-call counter makes each *poll* iteration serve the next
+    page, so a confirmation reading only page 1 finds the event on its second
+    poll and the paging test passes against code with no paging in it.
+
+    Any other endpoint is a failure: the confirmation must read the timeline
+    and nothing else, and the one it must not consult (`pulls/<n>`) is
+    precisely the one it used to.
+    """
+    posted = False
 
     def fake_gh(path: str, *args: str) -> Any:
-        calls.append(path)
+        nonlocal posted
+        if path.endswith("/requested_reviewers"):
+            posted = True
+            if posts is not None:
+                posts.append((path, *args))
+            return None
+        if "/timeline" in path:
+            asked = re.search(r"[?&]page=(\d+)", path)
+            page = int(asked.group(1)) if asked else 1
+            source = pages if posted else [list(before or [])]
+            return list(source[page - 1]) if page <= len(source) else []
+        raise AssertionError(
+            f"unexpected endpoint {path!r} — this path reads the timeline and "
+            "POSTs the request, nothing else. Widen this double if a later "
+            "change legitimately adds a call; if the endpoint is `pulls/<n>`, "
+            "the requested_reviewers read-back is what came back."
+        )
+
+    return fake_gh
+
+
+def test_reviewer_request_confirms_on_the_timeline_and_prints_the_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The Copilot branch: POST to requested_reviewers, then prove the ask took
+    # by finding a *new* `review_requested` event on the issue timeline. The
+    # double refuses the `pulls/<n>` endpoint outright, because consulting it
+    # is the defect — that payload answered `requested_reviewers: []` on four
+    # consecutive *accepted* requests (PRs #81, #82, #83, #85).
+    import bot_review
+
+    posts: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        bot_review,
+        "gh",
+        _timeline_gh([[_request_event(29195776393, "Copilot")]], posts=posts),
+    )
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    out = capsys.readouterr().out
+    assert "timeline review_requested event 29195776393 names Copilot" in out
+    assert "since: " in out
+    assert "--bot copilot --pr 54" in out
+    # Order, not just presence: the floor now prints from the caller's
+    # `finally`, and "confirmation first, floor last" is the property that
+    # refactor's docstring claims. Membership assertions cannot see it.
+    assert out.index("timeline review_requested event") < out.index("since: ")
+    # The ask itself, not just that some call reached the endpoint: `Copilot`
+    # is the login GitHub *displays*, and POSTing it returns HTTP 200 while
+    # adding no one. Only the bot login is accepted, and nothing else in this
+    # file has ever checked which one was sent.
+    # The whole call, not just the login in it. This was narrowed to a
+    # membership test on the grounds that a full tuple breaks on any unrelated
+    # flag added later, and narrowing turned out to be the worse trade: with
+    # `-f` dropped from the call the login became a bare positional argument,
+    # `gh api` stopped treating it as a field, and the membership test still
+    # passed. `gh()` forwards `*args` straight to the CLI and the suite never
+    # reaches a real one, so this assertion is the only thing in it that can
+    # see a malformed request for this endpoint.
+    assert posts == [
+        (
+            "repos/o/r/pulls/54/requested_reviewers",
+            "-f",
+            "reviewers[]=copilot-pull-request-reviewer[bot]",
+        )
+    ]
+
+
+def test_an_unconfirmed_ask_prints_the_floor_before_refusing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # GitHub answers HTTP 200 to a login it does not recognize and silently
+    # adds no one, so the confirmation still has to exist. What changed is what
+    # a failure means and what it leaves behind: `/copilot-review` tells the
+    # operator to pass the floor this command prints and forbids minting one,
+    # so a refusal that printed none left them holding an instruction they
+    # could not follow — at the one moment they needed it.
+    import bot_review
+
+    monkeypatch.setattr(bot_review, "gh", _timeline_gh([[]]))
+    monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
+    with pytest.raises(BotReviewError, match="unconfirmed") as caught:
+        bot_review.cmd_request("o/r", 54, COPILOT)
+    out = capsys.readouterr().out
+    assert "since: " in out
+    assert "--bot copilot --pr 54" in out
+    # The old message ended "Do not wait." — advice that was wrong on all four
+    # observed refusals, every one of which had a real review already on its
+    # way. An operator who obeyed it reported the bot unavailable while it was
+    # writing the review.
+    assert "Do not wait" not in str(caught.value)
+
+
+def test_a_poll_failure_after_the_ask_still_leaves_a_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The POST has returned — the ask took and a review is genuinely coming —
+    # and then a confirmation read raises: a transient `gh` failure, an
+    # unexpected payload shape, the id-shape refusal. That exception must not
+    # carry the floor away with it. This is the one exit that reaches no code
+    # of its own, so it printed nothing at all — strictly worse than the
+    # refusal this branch was written to fix, which at least prints a floor.
+    import bot_review
+
+    reads = [0]
+
+    def fake_gh(path: str, *args: str) -> Any:
         if path.endswith("/requested_reviewers"):
             return None
-        return {"requested_reviewers": [{"login": "Copilot"}]}
+        if "/timeline" in path:
+            reads[0] += 1
+            if reads[0] > 1:  # the pre-ask snapshot succeeds; the poll does not
+                raise BotReviewError("gh api ... failed: HTTP 502")
+            return []
+        raise AssertionError(f"unexpected endpoint {path!r}")
 
     monkeypatch.setattr(bot_review, "gh", fake_gh)
-    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
-    assert calls == ["repos/o/r/pulls/54/requested_reviewers", "repos/o/r/pulls/54"]
+    with pytest.raises(BotReviewError, match="502"):
+        bot_review.cmd_request("o/r", 54, COPILOT)
     out = capsys.readouterr().out
-    assert "requested copilot; requested_reviewers now: Copilot" in out
     assert "since: " in out
     assert "--bot copilot --pr 54" in out
 
 
-def test_a_request_accepted_and_dropped_fails_loudly_rather_than_waiting(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_trigger_post_failure_leaves_a_floor_but_a_mangled_one_does_not(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # GitHub answers HTTP 200 to a login it does not recognize and silently
-    # adds no one; only the read-back exposes it. Waiting after that buys the
-    # full poll timeout for a review nobody managed to request.
+    # The third ask channel, and the pair is the point: one rule decides both.
+    # A failure *posting* the comment cannot show whether it was created, and a
+    # created comment summons the bot whatever this process does next — floor.
+    # A post that succeeded and read back mangled proves the trigger never
+    # reached the bot — no floor, because there is no review for one to name.
+    import bot_review
+
+    def failing_post(path: str, *args: str) -> Any:
+        raise BotReviewError("gh api ... failed: HTTP 502")
+
+    monkeypatch.setattr(bot_review, "gh", failing_post)
+    with pytest.raises(BotReviewError, match="502"):
+        bot_review.cmd_request("o/r", 54, CODERABBIT)
+    assert "since: " in capsys.readouterr().out
+
+    # The body the `@`-prefix hazard this guard exists for actually produces:
+    # `gh api` reading the value as a filename substitutes unrelated content,
+    # it does not truncate. A one-character-short body exercises the same flat
+    # inequality and reads as a boundary case the code does not have.
+    def mangling_post(path: str, *args: str) -> Any:
+        return {"id": 1, "body": "review"}
+
+    monkeypatch.setattr(bot_review, "gh", mangling_post)
+    with pytest.raises(BotReviewError, match="did not reach the bot as written"):
+        bot_review.cmd_request("o/r", 54, CODERABBIT)
+    assert "since: " not in capsys.readouterr().out
+
+
+def test_an_empty_trigger_response_is_unknown_rather_than_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `gh()` answers None when the call *succeeded* and printed nothing. That
+    # reads back no comment at all, so it cannot show the ask failed — the
+    # comment may exist and may have summoned the bot. Folded into the mangled
+    # refusal it printed no floor and reported the body as `''`, asserting a
+    # read-back that never happened.
+    import bot_review
+
+    def empty_response(path: str, *args: str) -> Any:
+        return None
+
+    monkeypatch.setattr(bot_review, "gh", empty_response)
+    with pytest.raises(BotReviewError, match="response body was empty"):
+        bot_review.cmd_request("o/r", 54, CODERABBIT)
+    out = capsys.readouterr().out
+    assert "since: " in out
+    assert "--bot coderabbit --pr 54" in out
+
+
+def test_a_raw_os_error_from_the_ask_also_leaves_a_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `run_cmd` converts a non-zero exit and a timeout into BotReviewError, but
+    # an OSError raised by `subprocess.run` itself — `gh` gone from PATH, a
+    # fork failure — propagates raw. Catching only the converted kind made the
+    # floor depend on *how* the call broke, and left these channels narrower
+    # than `cmd_request`'s `finally`, which never made that distinction.
+    import bot_review
+
+    def vanished_gh(path: str, *args: str) -> Any:
+        raise OSError(2, "No such file or directory: 'gh'")
+
+    monkeypatch.setattr(bot_review, "gh", vanished_gh)
+    with pytest.raises(OSError, match="No such file or directory"):
+        bot_review.cmd_request("o/r", 54, CODERABBIT)
+    out = capsys.readouterr().out
+    assert "since: " in out
+    assert "--bot coderabbit --pr 54" in out
+
+
+def test_a_dispatch_post_failure_leaves_a_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The ask itself, on the channel whose *poll* was guarded a round earlier
+    # and whose POST was not. A dispatch that errors leaves it unknown whether
+    # a run was created, and a created run reviews the PR regardless.
     import bot_review
 
     def fake_gh(path: str, *args: str) -> Any:
-        return (
-            None
-            if path.endswith("/requested_reviewers")
-            else {"requested_reviewers": []}
-        )
+        if path == "repos/o/r":
+            return {"default_branch": "main"}
+        if path.endswith("/dispatches"):
+            raise BotReviewError("gh api ... failed: HTTP 502")
+        raise AssertionError(f"unexpected endpoint {path!r}")
 
     monkeypatch.setattr(bot_review, "gh", fake_gh)
-    with pytest.raises(BotReviewError, match="Do not wait"):
+
+    def no_runs(repo: str, workflow: str) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(bot_review, "workflow_runs", no_runs)
+    with pytest.raises(BotReviewError, match="502"):
+        bot_review.cmd_request("o/r", 56, GEMINI)
+    out = capsys.readouterr().out
+    assert "since: " in out
+    assert "--bot gemini --pr 56" in out
+
+
+def test_a_rejected_ask_still_leaves_a_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The POST itself fails — the plan does not carry Copilot, the token lacks
+    # permission, the login is refused. `/copilot-review` says to stop on this,
+    # and it is still the wrong moment to withhold a floor: a non-zero `gh`
+    # exit is the likeliest of the failures here to mean nothing happened, and
+    # is still not proof of it. Two ignorable lines against the failure this
+    # branch exists to remove.
+    import bot_review
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path.endswith("/requested_reviewers"):
+            raise BotReviewError("gh api ... failed: HTTP 403 Forbidden")
+        if "/timeline" in path:
+            return []
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    with pytest.raises(BotReviewError, match="403"):
         bot_review.cmd_request("o/r", 54, COPILOT)
+    assert "since: " in capsys.readouterr().out
+
+
+def test_a_dispatch_read_failure_after_the_ask_still_leaves_a_floor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The same defect in the sibling ask channel, and it survived the first fix
+    # because that one was written to the finding rather than to the shape. The
+    # dispatch was accepted and a run may be executing; only our ability to
+    # read the runs list failed. Distinct from that path's *refusal*, which
+    # deliberately prints no floor — there the read succeeded and found no run.
+    import bot_review
+
+    reads = [0]
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path == "repos/o/r":
+            return {"default_branch": "main"}
+        if path.endswith("/dispatches"):
+            return None
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    def failing_runs(repo: str, workflow: str) -> list[dict[str, Any]]:
+        reads[0] += 1
+        if reads[0] > 1:  # the pre-dispatch newest-id read succeeds
+            raise BotReviewError("gh api ... failed: HTTP 502")
+        return []
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review, "workflow_runs", failing_runs)
+    with pytest.raises(BotReviewError, match="502"):
+        bot_review.cmd_request("o/r", 56, GEMINI)
+    out = capsys.readouterr().out
+    assert "since: " in out
+    assert "--bot gemini --pr 56" in out
+    # No run id is known, so none is offered — a `--run` pointing at nothing
+    # would make `wait` fail fast on a run that was never identified.
+    assert "--run" not in out
+
+
+def test_the_floor_is_flushed_so_a_merged_capture_keeps_the_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The floor goes to stdout and the error to stderr. Under `> file 2>&1`
+    # stdout is block-buffered where stderr is not, so an unflushed floor
+    # reaches the file *after* the refusal it is documented to sit above —
+    # measured. Three sites promise that ordering (the comment in
+    # `cmd_request`, the error text, and /copilot-review step 2) and none of
+    # them held for a captured log. Asserting the flush is the last thing the
+    # floor does is what makes those three true.
+    #
+    # This is a proxy and the limit is worth stating: the recorder has no
+    # buffer, so it observes call order, not the fd interleaving that was
+    # actually measured. It catches the regression that matters (the flush
+    # removed or moved) and cannot catch a flush that is called and does not
+    # reach the OS. The instrument that would is a subprocess writing both
+    # streams to one file and asserting byte order — deliberately not written,
+    # because it would newly depend on per-platform buffering across three CI
+    # legs, one of which cannot be run locally, to catch a failure mode CPython
+    # does not exhibit.
+    import bot_review
+
+    events: list[str] = []
+
+    class Recorder:
+        def write(self, text: str) -> int:
+            events.append("write")
+            return len(text)
+
+        def flush(self) -> None:
+            events.append("flush")
+
+    monkeypatch.setattr(sys, "stdout", Recorder())
+    monkeypatch.setattr(bot_review, "gh", _timeline_gh([[]]))
+    monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
+    with pytest.raises(BotReviewError, match="unconfirmed"):
+        bot_review.cmd_request("o/r", 54, COPILOT)
+    assert "write" in events
+    assert events[-1] == "flush"
+
+
+def test_a_pre_existing_request_event_does_not_confirm_a_new_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The timeline is append-only, so "an event naming Copilot exists" is
+    # satisfied forever by the *first* run's — and re-running `/copilot-review`
+    # after a fix commit is routine. Only an id absent from the pre-ask
+    # snapshot proves this ask took.
+    import bot_review
+
+    stale = [_request_event(29195776393, "Copilot", "2026-08-10T00:05:18Z")]
+    monkeypatch.setattr(bot_review, "gh", _timeline_gh([stale], before=stale))
+    monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
+    with pytest.raises(BotReviewError, match="unconfirmed"):
+        bot_review.cmd_request("o/r", 54, COPILOT)
+
+
+def test_a_request_event_landing_late_is_still_confirmed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The event is written by the POST, so one read should find it — but that
+    # is an expectation, not a measurement, and the confirmation this replaces
+    # failed precisely by trusting an unmeasured assumption about what GitHub
+    # populates when. The poll costs nothing on the path that works.
+    import bot_review
+
+    empty: list[dict[str, Any]] = []
+    # Read 1 is the pre-ask snapshot, read 2 the first confirmation attempt —
+    # both empty, so the event lands only on the attempt *after* a sleep.
+    reads = iter([empty, empty, [_request_event(29195776393, "Copilot")]])
+    slept: list[float] = []
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path.endswith("/requested_reviewers"):
+            return None
+        if "/timeline" in path:
+            return next(reads, empty)
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review.time, "sleep", slept.append)
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    # Exactly one wait, at the configured interval: a confirmation that read
+    # once would have refused here, and one that slept without re-reading
+    # would spend the whole window to reach the same refusal.
+    assert slept == [bot_review.REQUEST_POLL_SECONDS]
+    assert "event 29195776393" in capsys.readouterr().out
+
+
+def test_the_poll_keeps_trying_across_the_whole_window(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The test above proves one sleep is followed by one fresh read, and that
+    # is all it proves: a hardcoded "read, sleep, read" satisfies it while
+    # honouring neither constant. Landing the event on the fifth attempt is
+    # reachable only by a loop bounded by REQUEST_CONFIRM_TIMEOUT.
+    import bot_review
+
+    clock = [0.0]
+    empty: list[dict[str, Any]] = []
+    # One pre-ask snapshot read, four empty attempts, then the event.
+    reads = iter([empty] * 5 + [[_request_event(29195776393, "Copilot")]])
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path.endswith("/requested_reviewers"):
+            return None
+        if "/timeline" in path:
+            return next(reads, empty)
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(bot_review.time, "sleep", advance)
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    assert "event 29195776393" in capsys.readouterr().out
+    assert clock[0] == 4 * bot_review.REQUEST_POLL_SECONDS
+
+
+def test_the_poll_gives_up_at_the_bound_rather_than_never(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The other side of the same bound. Counting attempts is what distinguishes
+    # a deadline from an unbounded retry — the refusal alone cannot, since a
+    # loop with no deadline check never reaches one to be observed.
+    import bot_review
+
+    clock = [0.0]
+    attempts = [0]
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path.endswith("/requested_reviewers"):
+            return None
+        if "/timeline" in path:
+            attempts[0] += 1
+            return []
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(bot_review.time, "sleep", advance)
+    with pytest.raises(BotReviewError, match="unconfirmed"):
+        bot_review.cmd_request("o/r", 54, COPILOT)
+    # A lower bound, not an exact count. Moving the deadline check from after
+    # the read to the loop guard is the same behaviour and changes the count by
+    # one, so an exact assertion fails a refactor that broke nothing — while
+    # still catching what matters here, since a fixed one- or two-attempt retry
+    # falls an order of magnitude short of this.
+    intervals = bot_review.REQUEST_CONFIRM_TIMEOUT // bot_review.REQUEST_POLL_SECONDS
+    assert attempts[0] >= intervals
+    assert clock[0] == bot_review.REQUEST_CONFIRM_TIMEOUT
+
+
+def test_the_confirmation_always_reads_at_least_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The loop checks the deadline *after* a read rather than as its guard, so
+    # an already-elapsed window still buys one look. Guard-first, an ask made
+    # as the window closes is refused having never queried the timeline — a
+    # refusal about the clock rather than about the ask, and indistinguishable
+    # in its output from one that looked. Pinned explicitly because it was
+    # otherwise only a side effect of another test's zeroed timeout.
+    #
+    # The count is exact rather than a floor, unlike the bound assertion in
+    # `test_the_poll_gives_up_at_the_bound_rather_than_never`. The difference is
+    # what the number means: that one encoded an arithmetic relationship two
+    # correct implementations can disagree on, while two here is one snapshot
+    # read plus the one confirmation read that succeeds and returns. Nothing
+    # correct reads a third time, so the exact count also catches a redundant
+    # call that no looser assertion would.
+    import bot_review
+
+    attempts = [0]
+
+    def fake_gh(path: str, *args: str) -> Any:
+        if path.endswith("/requested_reviewers"):
+            return None
+        if "/timeline" in path:
+            attempts[0] += 1
+            return [_request_event(29195776393, "Copilot")] if attempts[0] > 1 else []
+        raise AssertionError(f"unexpected endpoint {path!r}")
+
+    monkeypatch.setattr(bot_review, "gh", fake_gh)
+    monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    assert attempts[0] == 2  # the pre-ask snapshot, then one confirmation read
+
+
+def test_either_of_the_bots_request_logins_confirms_the_ask() -> None:
+    # The identity split that bit the guard itself: the ask POSTs
+    # `copilot-pull-request-reviewer[bot]` and the timeline records `Copilot`.
+    # Both name one account, so either confirms — pinning it to whichever one
+    # GitHub records today is what made the old guard wrong, and re-arming that
+    # is the one failure mode this whole change exists to remove.
+    assert request_event_ids([_request_event(1, "Copilot")], COPILOT) == {1}
+    posted = [_request_event(2, "copilot-pull-request-reviewer[bot]")]
+    assert request_event_ids(posted, COPILOT) == {2}
+    # Laxity would be a lookalike passing, and it does not: `same_login` is
+    # whole-string, so nothing but those two accounts can confirm a Copilot ask.
+    assert request_event_ids([_request_event(3, "copilot-fan")], COPILOT) == set()
+
+
+def test_only_review_requested_events_naming_a_reviewer_are_counted() -> None:
+    # A PR timeline carries every kind of entry. Two shapes are worth pinning:
+    # another event type that happens to name a reviewer, and a *team* request,
+    # which carries `requested_team` and no `requested_reviewer` at all.
+    removed = _request_event(4, "Copilot") | {"event": "review_request_removed"}
+    team = {
+        "id": 5,
+        "event": "review_requested",
+        "created_at": "2026-08-10T00:05:18Z",
+        "actor": {"login": "NeuroticGamer99"},
+        "requested_team": {"name": "reviewers"},
+    }
+    assert request_event_ids([removed, team], COPILOT) == set()
+
+
+def test_a_request_event_with_no_usable_id_is_refused_rather_than_skipped() -> None:
+    # Every `review_requested` entry carries an integer id (only `committed`
+    # entries do not — measured on PR #85), so a missing one is an unexpected
+    # shape. Skipping it would quietly weaken the confirmation into "some event
+    # exists", which is the vacuous form the pre-ask snapshot exists to prevent.
+    idless = {
+        "event": "review_requested",
+        "created_at": "2026-08-10T00:05:18Z",
+        "requested_reviewer": {"login": "Copilot"},
+    }
+    with pytest.raises(BotReviewError, match="no integer id"):
+        request_event_ids([idless], COPILOT)
+
+
+def test_the_id_refusal_is_scoped_to_events_that_would_otherwise_count() -> None:
+    # The refusal above rests on the id check sitting *after* the event-type
+    # and login filters. Hoisted ahead of them it would fire on every real PR,
+    # because `committed` entries carry no id and every timeline has them —
+    # turning a guard against an unexpected shape into a guard against normal
+    # ones. Nothing else in the suite distinguishes the two orderings.
+    committed = {"event": "committed", "message": "[b] a checkpoint"}
+    other_bot = {
+        "event": "review_requested",
+        "created_at": "2026-08-10T00:05:18Z",
+        "requested_reviewer": {"login": "some-other-reviewer"},
+    }
+    assert request_event_ids([committed, other_bot], COPILOT) == set()
+
+
+def test_the_timeline_is_read_to_its_last_page(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The timeline is *ascending*, so the event a request has just created is
+    # the last entry on the last page. Reading one page deep would confirm the
+    # ask on a quiet PR and stop confirming it as the PR filled up — a guard
+    # that decays with the length of the review it is guarding.
+    import bot_review
+
+    filler = [
+        {"id": n, "event": "commented", "created_at": "2026-08-09T00:00:00Z"}
+        for n in range(bot_review.PAGE_SIZE)
+    ]
+    monkeypatch.setattr(
+        bot_review,
+        "gh",
+        _timeline_gh([filler, [_request_event(29195776393, "Copilot")]]),
+    )
+    # One confirmation attempt, so the event has to be found by *paging* within
+    # it. Without this the poll supplies a second attempt, and a single-page
+    # read reaches page 2 the slow way — passing the test it was meant to fail.
+    monkeypatch.setattr(bot_review, "REQUEST_CONFIRM_TIMEOUT", 0)
+    assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
+    assert "event 29195776393" in capsys.readouterr().out
 
 
 def test_a_spec_with_both_ask_channels_cannot_be_built() -> None:
@@ -900,7 +1455,7 @@ def test_the_first_ever_dispatch_of_a_workflow_is_confirmed_too(
 
 
 def test_a_dispatch_that_spawns_no_run_fails_loudly_rather_than_waiting(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # 204 with no run ever appearing (disabled workflow, or the workflow file
     # not on the default branch yet — a dispatch workflow cannot review the PR
@@ -938,6 +1493,13 @@ def test_a_dispatch_that_spawns_no_run_fails_loudly_rather_than_waiting(
     monkeypatch.setattr(bot_review, "DISPATCH_CONFIRM_TIMEOUT", 0)
     with pytest.raises(BotReviewError, match="Do not wait"):
         bot_review.cmd_request("o/r", 56, GEMINI)
+    # And no floor, deliberately — unlike a *read failure* on this same path,
+    # which prints one. Here the runs list was read and held no new run, so
+    # nothing is executing that a floor could be pointed at; the run is the
+    # reviewer. Pinned because the guard that keeps them apart is an `except`
+    # where the sibling channel uses a `finally`, and collapsing the two looks
+    # like tidying rather than the reversal of a decision that it is.
+    assert "since: " not in capsys.readouterr().out
 
 
 def test_a_runs_payload_without_the_envelope_fails_loudly(

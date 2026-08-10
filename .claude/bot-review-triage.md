@@ -12,9 +12,12 @@ one somebody decided to go looking for.
 
 **But silence does not run the other way.** A bot that posted nothing is *consistent with* an
 unspent chain and is never proof of one: a spent chain leaves no artifact too. Gemini usually fails
-without producing a report on the free tier (`/ship` says so outright), Copilot's request guard has
-false-negatived on three consecutive PRs while the review was already being written, and a Greptile
-review has landed on a PR while the tooling reported no summary at all. Track what you triggered
+without producing a report on the free tier (`/ship` says so outright), Copilot's request
+confirmation false-negatived on **four** consecutive PRs while the review was already being written
+— since repaired, by confirming on the issue timeline rather than reading `requested_reviewers`
+back, so treat that count as what the failure class cost rather than as a live defect — and a
+Greptile review has landed on a PR while the tooling reported no summary at all. Track what you
+triggered
 and read its `wait` result; never infer the spend from the silence. `/squash-merge`'s "every review
 that was triggered has answered" is the same rule stated where it blocks a merge.
 §2's "never leave a finding unanswered" is mechanically enforced for **every** bot — the reply *is*

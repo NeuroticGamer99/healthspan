@@ -52,7 +52,10 @@ outstanding. Its 2 covers two states it prints differently and never conflates
 — every finding answered, versus no bot having posted one at all:
 
 * ``request --bot B --pr N`` — ask the bot for a review, then verify the ask
-  took. Copilot is asked through ``requested_reviewers``; CodeRabbit — manual
+  took. Copilot is asked through ``requested_reviewers`` and confirmed on the
+  issue timeline's ``review_requested`` event — never by reading that array
+  back, since the bot clears itself from it as it picks the request up, so the
+  read-back races the bot and loses; CodeRabbit — manual
   since ``auto_review.enabled: false`` — is asked by posting its
   ``@coderabbitai review`` trigger comment; Gemini (the Antigravity SDK
   workflow, ``.github/workflows/gemini-review.yml``) is asked by dispatching
@@ -61,8 +64,26 @@ outstanding. Its 2 covers two states it prints differently and never conflates
   own ``@greptileai review`` trigger comment, for every review including the
   first (``skipReview: "AUTOMATIC"`` in ``.greptile/config.json`` turns off the
   App's review-on-creation default). All paths stamp the floor *before*
-  asking and print it on success, so the caller never mints one; a failed ask
-  prints no floor, because there is nothing to wait on.
+  asking, so the caller never mints one, and all print it on success. Beyond
+  that, one rule governs all three channels: **from the ask onward, a failure
+  that leaves the outcome unknown prints the floor; a failure that proves
+  nothing was summoned does not.** So an API call that errors always prints one
+  — it cannot show whether the server acted. **Two** mechanisms carry that, so
+  grep for both: :func:`_floor_on_error` wraps the ask on the trigger and
+  dispatch channels, while ``cmd_request``'s ``try``/``finally`` covers the
+  ``requested_reviewers`` channel, which needs a floor on its refusal too and
+  therefore cannot use the helper. A *refusal* is this
+  module concluding something from a call that succeeded, and prints one only
+  where the conclusion is still compatible with a review arriving: true of
+  exactly one, the ``requested_reviewers`` confirmation, because an unconfirmed
+  ask is not a refused one (Copilot's went unconfirmed on four consecutive runs
+  while the review was already on its way). The dispatch refusal read the runs
+  list and found no run, and the trigger refusal read the created comment back
+  and found the ask mangled; both prove nothing is coming, so both stay
+  floor-free. Failures *before* the ask — an unresolvable default branch, a
+  spec with no ask channel, the pre-ask snapshot read — sit outside the rule
+  entirely and print nothing, there being no review yet to name. A stamp taken
+  before the ask stays valid whatever the confirmation decided.
 * ``wait --bot B --pr N --since T`` — block until a findings review or a
   clean-run summary lands. For a dispatch bot, ``--run ID`` (the id request
   printed) makes a failed workflow run end the wait immediately — that run
@@ -99,6 +120,8 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NoReturn, cast
@@ -130,6 +153,15 @@ EXIT_EMPTY_RANGE = 3
 # a run that has not appeared within this window is not coming.
 DISPATCH_POLL_SECONDS = 5
 DISPATCH_CONFIRM_TIMEOUT = 120
+# Confirming a `requested_reviewers` ask. The timeline event is written by the
+# POST itself, so it should be readable at once and the happy path costs one
+# read — but "should" is not a measurement, and the whole reason this poll
+# exists is that the previous confirmation trusted an unmeasured assumption
+# about what GitHub populates when. The window is therefore generous relative
+# to a synchronous write and short relative to DISPATCH_CONFIRM_TIMEOUT, whose
+# 120s answers a genuinely asynchronous run creation. Only a failing ask waits.
+REQUEST_POLL_SECONDS = 3
+REQUEST_CONFIRM_TIMEOUT = 30
 # How long after a summary comment its counted inline comments may still be
 # in flight. Measured at ~4s (Greptile, PRs #67 and #69); two minutes is
 # generous by more than an order of magnitude. Past it, comments that have not
@@ -1264,6 +1296,72 @@ def workflow_runs(repo: str, workflow: str) -> list[Run]:
     return [cast("Run", r) for r in cast("list[Any]", runs) if isinstance(r, dict)]
 
 
+def timeline_events(repo: str, pr: int) -> list[dict[str, Any]]:
+    """Every entry of a PR's issue timeline.
+
+    Paged rather than read one page deep: the timeline is *ascending*, so a
+    request event — the newest thing on it, by construction, at the moment
+    ``request`` looks — sits on the last page. Reading page 1 would confirm an
+    ask on a quiet PR and silently stop confirming it on a busy one.
+    """
+    path = f"repos/{repo}/issues/{pr}/timeline"
+    return [e for e in gh_all(path) if isinstance(e, dict)]
+
+
+def request_event_ids(events: list[dict[str, Any]], spec: BotSpec) -> set[int]:
+    """Ids of the timeline events requesting *this bot* as a reviewer.
+
+    Matched against **both** of the bot's request-side logins. GitHub records
+    ``requested_display`` here — ``Copilot``, measured on PR #85 — while
+    ``request_login`` is what gets POSTed. Accepting either is not laxity: the
+    two strings name one account, so no other bot's request can match, and
+    pinning the match to whichever one GitHub happens to record today would
+    bet this guard on a presentation detail.
+
+    That is the *kind* of bet the confirmation this replaces lost, though not
+    this one: it compared the display login correctly and still false-negatived
+    four times running, because it read the live ``requested_reviewers`` array
+    — which the bot mutates — rather than an event recording what happened.
+    Worth knowing because this repository's notes recorded the opposite for a
+    while: the old check *did* compare the display login, and the error message
+    two lines below that comparison interpolated ``request_login`` — which is
+    the likeliest way "it asserted on the wrong login" got written down, though
+    that part is reconstruction rather than something measured. Widening here is
+    the cheap way to not make the same *kind* of bet twice, and it is the safe
+    direction for a guard whose every observed failure was a false negative.
+
+    A team request carries ``requested_team`` and no ``requested_reviewer``, so
+    it contributes nothing here rather than raising.
+    """
+    wanted = [login for login in (spec.requested_display, spec.request_login) if login]
+    if not wanted:
+        return set()
+    found: set[int] = set()
+    for event in events:
+        if str(event.get("event", "")) != "review_requested":
+            continue
+        reviewer = event.get("requested_reviewer")
+        if not isinstance(reviewer, dict):
+            continue
+        login = str(cast("dict[str, Any]", reviewer).get("login", ""))
+        if not any(same_login(login, want) for want in wanted):
+            continue
+        # Every `review_requested` entry carries one (only `committed` entries
+        # do not — measured on PR #85), so a missing id is an unexpected shape
+        # rather than an ordinary absence. Skipping it would quietly weaken the
+        # confirmation; it cannot be *counted* without an id, and inventing a
+        # sentinel would let two unidentifiable events cancel out.
+        raw = event.get("id")
+        if not isinstance(raw, int):
+            raise BotReviewError(
+                f"timeline review_requested event for {login!r} carries no "
+                f"integer id (got {raw!r}) — refusing to confirm an ask "
+                "against an event this cannot tell apart from another"
+            )
+        found.add(raw)
+    return found
+
+
 def newest_run_id(repo: str, workflow: str) -> int | None:
     runs = workflow_runs(repo, workflow)
     return run_id_of(runs[0]) if runs else None
@@ -1285,13 +1383,59 @@ def workflow_run(repo: str, run_id: int) -> Run:
 # --------------------------------------------------------------------------
 
 
+@contextmanager
+def _floor_on_error(spec: BotSpec, pr: int, floor: str) -> Generator[None]:
+    """Print the floor if the wrapped API call fails, then let it propagate.
+
+    This exists as a named thing because writing the guard by hand got it wrong
+    four times in a row, each in a site the previous fix did not reach: the
+    ``requested_reviewers`` poll, then the dispatch poll, then the trigger POST,
+    then the dispatch POST. Every one was the same rule and every one was
+    re-derived, so "which calls are guarded" was a property you could only
+    establish by reading all three functions. Now it is greppable.
+
+    Wrap the **call**, never a block containing a refusal. A refusal is this
+    module concluding something from a call that succeeded, and whether it
+    warrants a floor depends on what it concluded — ``cmd_request`` prints one
+    on its refusal deliberately, the other two deliberately do not. Sweeping a
+    refusal in here would decide that question by accident.
+
+    ``Exception``, not ``BotReviewError``, and the difference is reachable:
+    :func:`run_cmd` converts a non-zero exit and a timeout, but an ``OSError``
+    from ``subprocess.run`` itself — ``gh`` vanishing from ``PATH`` mid-run, a
+    fork failure — propagates raw. Catching only the converted kind made the
+    guarantee depend on which way the call broke, and left these two channels
+    narrower than ``cmd_request``'s ``finally``, which never cared. Anything
+    that is not an ``Exception`` (``KeyboardInterrupt``) is still no business
+    of this guard's.
+    """
+    try:
+        yield
+    except Exception:
+        _print_floor(spec, pr, floor)
+        raise
+
+
 def _print_floor(spec: BotSpec, pr: int, floor: str, run_id: int | None = None) -> None:
+    """Print the floor, and make sure it has actually landed.
+
+    The flush is the load-bearing part. This writes to stdout while an error
+    raised afterwards is printed to stderr by :func:`main`, and under a merged
+    redirect (``> file 2>&1``) stdout is block-buffered where stderr is not —
+    so an unflushed floor reaches the file *after* the refusal it is documented
+    to sit above. Measured: the error line comes out first, and the operator
+    reading the capture meets the refusal with the floor nowhere in sight, or
+    below where they stopped reading. Three places promise that ordering — the
+    comment in :func:`cmd_request`, the error text itself, and
+    ``/copilot-review`` step 2 — and none of them was true of a captured log.
+    """
     print(f"since: {floor}")
     run_arg = f" --run {run_id}" if run_id is not None else ""
     print(
         f"  pass that to: wait/fetch --bot {spec.key} --pr {pr} "
         f"--since {floor}{run_arg}"
     )
+    sys.stdout.flush()
 
 
 def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
@@ -1309,29 +1453,90 @@ def cmd_request(repo: str, pr: int, spec: BotSpec) -> int:
             f"{spec.key} has neither a request login nor a trigger comment — "
             "it cannot be asked for a review from here"
         )
-    gh(
-        f"repos/{repo}/pulls/{pr}/requested_reviewers",
-        "-f",
-        f"reviewers[]={spec.request_login}",
-    )
+    # Snapshot the bot's existing request events *before* asking, so the
+    # confirmation below can demand a genuinely new one. Ids rather than
+    # timestamps: the floor comes from this machine's clock and the event from
+    # GitHub's, so a skew of a second would reject the very event the ask
+    # created — the trap :func:`_request_by_dispatch` dodges with run ids,
+    # dodged the same way here rather than re-fought.
+    before = request_event_ids(timeline_events(repo, pr), spec)
+    # Everything from the ask onward runs under a `finally` that prints the
+    # floor, and the boundary is deliberate. The snapshot read above may escape
+    # freely: nothing has been asked yet, so there is no review to hold a floor
+    # for. Once the POST has been *attempted* there may be, and every way out
+    # of this block has to leave the operator with one: success, refusal, an
+    # exception from a transient `gh` failure mid-poll, and — the case worth
+    # naming because `/copilot-review` tells the operator to *stop* on it — a
+    # POST that GitHub itself rejects. A rejection is the likeliest of those to
+    # mean nothing happened, and still not proof of it; the floor costs two
+    # ignorable lines and the alternative is the failure this whole branch
+    # exists to remove. The exception path is why this is a `finally` rather
+    # than three more calls: it is the only exit that reaches no code of its
+    # own, and it was the one that printed nothing while the ask had taken.
+    try:
+        gh(
+            f"repos/{repo}/pulls/{pr}/requested_reviewers",
+            "-f",
+            f"reviewers[]={spec.request_login}",
+        )
+        return _confirm_reviewer_request(repo, pr, spec, before)
+    finally:
+        _print_floor(spec, pr, floor)
+
+
+def _confirm_reviewer_request(
+    repo: str, pr: int, spec: BotSpec, before: set[int]
+) -> int:
+    """Poll the timeline until this ask's own `review_requested` event lands.
+
+    Split from :func:`cmd_request` so the floor-printing `finally` there wraps
+    one statement rather than the whole poll: a `return` inside a `try` whose
+    `finally` prints is easy to read wrongly, and this keeps the ordering
+    obvious — confirmation first, floor last, on every path.
+    """
     # Never trust the 200: GitHub accepts a login it does not recognize and
     # silently adds no one, which would otherwise buy a full poll and a
     # "no review arrived" report about a review nobody ever requested.
-    pull = cast("dict[str, Any] | None", gh(f"repos/{repo}/pulls/{pr}"))
-    raw = cast("list[Any]", pull.get("requested_reviewers", []) if pull else [])
-    logins = [
-        str(cast("dict[str, Any]", r).get("login", ""))
-        for r in raw
-        if isinstance(r, dict)
-    ]
-    if not any(same_login(login, spec.requested_display) for login in logins):
-        raise BotReviewError(
-            f"requested {spec.request_login!r} but requested_reviewers is "
-            f"{logins!r} — the request was accepted and dropped. Do not wait."
-        )
-    print(f"requested {spec.key}; requested_reviewers now: {', '.join(logins)}")
-    _print_floor(spec, pr, floor)
-    return 0
+    #
+    # What proves the ask took is the timeline's `review_requested` event, and
+    # emphatically *not* `requested_reviewers` on the pulls payload. That array
+    # read `[]` on four consecutive **accepted** Copilot requests (PRs #81,
+    # #82, #83, #85), each followed by a real review two to eight minutes
+    # later: Copilot clears itself from the array as it picks the request up,
+    # so a read-back races that and loses. The timeline entry is a historical
+    # record of the ask rather than a description of the current state, so
+    # nothing the bot does afterwards can retract it.
+    # `while True` with the deadline checked *after* the read, not a
+    # `while time.monotonic() < deadline` guard: an already-elapsed window must
+    # still buy one look, or an ask made as the window closes is refused having
+    # never queried the timeline.
+    deadline = time.monotonic() + REQUEST_CONFIRM_TIMEOUT
+    while True:
+        new = request_event_ids(timeline_events(repo, pr), spec) - before
+        if new:
+            print(
+                f"requested {spec.key}; timeline review_requested event "
+                f"{max(new)} names {spec.requested_display}"
+            )
+            return 0
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(REQUEST_POLL_SECONDS)
+    # The floor reaches the operator *before* this refusal — printed by the
+    # caller's `finally`, flushed by `_print_floor` — and the order is the fix
+    # rather than a nicety: `/copilot-review` step 2 tells the operator to pass
+    # the floor this command prints and not to mint their own, so a refusal
+    # that printed none left them holding an instruction they could not follow
+    # at the one moment they needed it. The stamp is valid whatever the
+    # confirmation concluded — it was taken before the ask, so no review of
+    # this ask can predate it.
+    raise BotReviewError(
+        f"requested {spec.request_login!r} but no review_requested event "
+        f"naming {spec.requested_display!r} reached the timeline within "
+        f"{REQUEST_CONFIRM_TIMEOUT}s — the ask is unconfirmed. Check the PR "
+        "before concluding the bot is unavailable, and wait against the floor "
+        "above if a review turns up: an unconfirmed ask is not a refused one."
+    )
 
 
 def _request_by_trigger(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
@@ -1344,16 +1549,33 @@ def _request_by_trigger(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
     body against the spec catches either mangling loudly, instead of buying a
     full poll for a review nobody managed to ask for.
     """
-    created = cast(
-        "dict[str, Any] | None",
-        gh(
-            f"repos/{repo}/issues/{pr}/comments",
-            "-f",
-            f"body={spec.trigger_body}",
-        ),
-    )
-    posted = str(created.get("body", "")) if created else ""
-    if created is None or posted != spec.trigger_body:
+    with _floor_on_error(spec, pr, floor):
+        created = cast(
+            "dict[str, Any] | None",
+            gh(
+                f"repos/{repo}/issues/{pr}/comments",
+                "-f",
+                f"body={spec.trigger_body}",
+            ),
+        )
+    if created is None:
+        # An empty response body from a call that *succeeded*. Nothing was read
+        # back, so this is an unknown outcome rather than a refusal, and it gets
+        # a floor. It was folded into the mangled-body refusal below until a
+        # review pointed out that the message then reported the body as `''` —
+        # asserting a read-back that never happened, about a comment that may
+        # well exist and may well have summoned the bot.
+        _print_floor(spec, pr, floor)
+        raise BotReviewError(
+            f"posted the {spec.key} trigger and the response body was empty, "
+            "so whether the comment was created is unknown. Check the PR: if "
+            "the trigger is there, the ask took and the floor above is valid."
+        )
+    posted = str(created.get("body", ""))
+    if posted != spec.trigger_body:
+        # No floor, deliberately: the post succeeded and the read-back proves
+        # the trigger did not land as written, so nothing was summoned and a
+        # floor would name a review that cannot exist.
         raise BotReviewError(
             f"posted the {spec.key} trigger but the created comment body is "
             f"{posted!r}, expected {spec.trigger_body!r} — the ask did not "
@@ -1394,29 +1616,46 @@ def _request_by_dispatch(repo: str, pr: int, spec: BotSpec, floor: str) -> int:
     if not default_branch:
         raise BotReviewError(f"could not resolve the default branch of {repo}")
     before = newest_run_id(repo, workflow)
-    gh(
-        f"repos/{repo}/actions/workflows/{workflow}/dispatches",
-        "-f",
-        f"ref={default_branch}",
-        "-f",
-        f"inputs[pr]={pr}",
+    # The ask and the confirmation both, and the ask is the one that was missed:
+    # it went unguarded through three rounds of fixing this exact rule
+    # elsewhere. A dispatch POST that errors leaves it unknown whether a run was
+    # created, and a created run reviews the PR whatever this process does next.
+    # Below, only the *reads* are wrapped — the refusal after the loop stays
+    # outside, because there the read succeeded and found no run, which does
+    # prove nothing is coming.
+    with _floor_on_error(spec, pr, floor):
+        gh(
+            f"repos/{repo}/actions/workflows/{workflow}/dispatches",
+            "-f",
+            f"ref={default_branch}",
+            "-f",
+            f"inputs[pr]={pr}",
+        )
+        deadline = time.monotonic() + DISPATCH_CONFIRM_TIMEOUT
+        while True:
+            confirmed = select_confirmed_run(workflow_runs(repo, workflow), pr, before)
+            if confirmed is not None:
+                run_id = run_id_of(confirmed)
+                print(f"dispatched {workflow} run {run_id} for PR {pr}")
+                _print_floor(spec, pr, floor, run_id=run_id)
+                return 0
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(DISPATCH_POLL_SECONDS)
+    # This refusal prints no floor and does say "Do not wait", both deliberately
+    # unlike the requested_reviewers path above. The difference is what the two
+    # confirmations look for: a review request is picked up by a bot that may
+    # already be working, so an unconfirmed ask can still be answered —
+    # measured four times. A dispatch whose runs list was read and held no new
+    # run has nothing running to answer it, because the run *is* the reviewer.
+    # Revisit if a dispatch is ever observed reviewing after this refusal;
+    # nothing has been.
+    raise BotReviewError(
+        f"dispatched {workflow} but no new run for PR {pr} appeared "
+        f"within {DISPATCH_CONFIRM_TIMEOUT}s — the dispatch was "
+        "accepted and dropped (a workflow_dispatch workflow must "
+        f"exist on {default_branch} to be runnable). Do not wait."
     )
-    deadline = time.monotonic() + DISPATCH_CONFIRM_TIMEOUT
-    while True:
-        confirmed = select_confirmed_run(workflow_runs(repo, workflow), pr, before)
-        if confirmed is not None:
-            run_id = run_id_of(confirmed)
-            print(f"dispatched {workflow} run {run_id} for PR {pr}")
-            _print_floor(spec, pr, floor, run_id=run_id)
-            return 0
-        if time.monotonic() >= deadline:
-            raise BotReviewError(
-                f"dispatched {workflow} but no new run for PR {pr} appeared "
-                f"within {DISPATCH_CONFIRM_TIMEOUT}s — the dispatch was "
-                "accepted and dropped (a workflow_dispatch workflow must "
-                f"exist on {default_branch} to be runnable). Do not wait."
-            )
-        time.sleep(DISPATCH_POLL_SECONDS)
 
 
 def _clean_verdict(spec: BotSpec, comment: Comment) -> str:
