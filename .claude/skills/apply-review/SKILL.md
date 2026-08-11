@@ -26,13 +26,17 @@ arises rather than here.
 
 ## 1. Load the report
 
-- If a path was passed, Read it — the normal case, since `review-handoff` prints the report's
-  absolute path for exactly this hand-off. If no path was passed, do **not** glob only your own
+- If a path was passed, Read it — the normal case, since `/review-handoff` hands the report's
+  absolute path back as a copyable block for exactly this hand-off (`.claude/operator-handoff.md`).
+  If no path was passed, do **not** glob only your own
   session's scratchpad: the report was written by a *different* session and the scratchpad path is
   session-specific (a per-session UUID), so yours will not contain it. Instead search across the
   sibling session scratchpads — go up from your session's scratchpad to the per-project directory
-  and match `*/scratchpad/code-review-*.md` — take the newest, name the file and which session it
-  came from, and confirm with the user before using it, since it may be an unrelated review.
+  and match `*/scratchpad/code-review-*.md` — take the newest, name the file **under that same
+  contract** and say which session it came from, and confirm with the user before using it, since
+  it may be an unrelated review. The contract is not decoration on this path: you are asking the
+  user to judge a candidate they did not choose, and a path abbreviated in prose is one they
+  cannot open to check.
 - Read the report's **Branch / HEAD** and **Diff scope** lines, then run `git rev-parse HEAD`
   and `git rev-parse --abbrev-ref HEAD`. Compare on the **full** SHA (the `Branch / HEAD` line
   records it); if a report carries only a short SHA, match it against the prefix rather than
@@ -109,10 +113,21 @@ For each finding, in order:
    verdict is the reviewer's confidence, not a licence to skip this step.
    - If the finding is already resolved (code changed, or it never applied), mark it
      `already-resolved` with the one-line reason. This is a normal outcome, not a failure.
-2. **Decide the fix on the merits.** Implement the smallest correct change, which may differ
+2. **Enumerate the peer sites before editing, and show the search.** A finding naming one site is
+   a work item for the rule, not for the site. **Read `.claude/bot-review-triage.md` §1
+   (*Under-reporting*) now, before your first fix** — it states the requirement and governs, and
+   the pointer alone is not enough here: the rule is a *procedure to run*, not an adjective to
+   apply, so a session that never opens the file cannot know what to search for, that the command
+   and its hits must be reported, or that the search re-runs after the edit. Its title says
+   "Bot-review triage" and this is not a bot round, which is exactly why the instruction to open
+   it has to be explicit. It binds report findings and local-reviewer findings identically. Having
+   read it, run it; do not restate it here.
+3. **Decide the fix on the merits.** Implement the smallest correct change, which may differ
    from the report's "Suggested fix" — that sketch was explicitly unreviewed. Match surrounding
-   code style, comment density, and idiom.
-3. **Not every finding is a code edit.** Reports also raise git-workflow actions (e.g. "commit
+   code style, comment density, and idiom. **"Smallest" constrains the remedy, not its scope**:
+   the smallest correct change to a rule broken at four sites still touches four sites, and
+   reading this line as licence to fix only the cited one is the failure item 2 exists to stop.
+4. **Not every finding is a code edit.** Reports also raise git-workflow actions (e.g. "commit
    these renames separately to preserve history"), new-infrastructure proposals (e.g. "add a CI
    link-check gate"), and process gaps. Do the ones that are safe, mechanical, and clearly in
    scope. **Stop and surface** — do not silently perform — anything destructive, anything that
@@ -237,7 +252,7 @@ trade off.
   fixes, so both return **pass** on code that no longer exists: the stale-not-clean failure
   `.claude/reviewer-isolation.md` invariant 1 names, reached with no bot involved. New round
   = teardown, setup, relaunch.
-- **"Any kind" is not a list of file categories.** Step 3's third item authorizes git-workflow
+- **"Any kind" is not a list of file categories.** Step 3's fourth item authorizes git-workflow
   actions, new-infrastructure proposals and process-gap fixes, so a round can legitimately edit
   CI workflows, tooling, or process docs while touching no code, test, spec or ADR at all. Any
   enumeration drifts out of sync with what that item allows, and a round falling through the list
@@ -315,7 +330,16 @@ Do **not** make the landing commit — that is `/land` + `/ship`'s job unless th
 scaffolding `/ship` collapses, not a landing. End with:
 
 1. A per-finding table: `fixed` / `already-resolved` / `skipped (reason)` / `needs-user-decision`,
-   one row each, so nothing in the report is silently dropped.
+   one row each, so nothing in the report is silently dropped. Every finding of the form "X is
+   wrong here" also carries step 3 item 2's peer search — the condition is
+   `.claude/bot-review-triage.md` §1's, not a narrower one of this skill's, since a session
+   deciding a finding did not "name a specific site" could otherwise skip the column and still be
+   compliant. The row records **both** counts §1 requires: the command with the hits it returned
+   before the edit, and the re-run afterwards, which is the half that shows the work finished —
+   a pre-edit count of four behind a `fixed` verdict is equally consistent with three peers
+   repaired and one left. Where the count exceeded one, say which peers were fixed and which were
+   judged legitimately different. A row asserting `fixed` with no search behind it is the shape
+   of a rule patched at one site.
 2. What you changed, by file, and the result of the gates you ran.
 3. The smoke passes from step 5 — how many ran, **which mode each ran in** (isolated, or the
    sequential live-tree fallback), **each round's anchor** — the `git rev-parse HEAD` and

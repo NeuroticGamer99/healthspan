@@ -125,3 +125,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0070](0070-personal-data-containment-gate.md) | Mechanize the Enumeration Half of the Personal-Data Containment Rule | Proposed |
 | [ADR-0071](0071-commit-shared-claude-settings.md) | Commit the Shared Claude Code Settings File | Proposed |
 | [ADR-0072](0072-review-pipeline-and-ledgers.md) | The Review Pipeline — brief → prep → handoff → apply — and Its Ledger | Proposed |
+| [ADR-0073](0073-operator-handoff-presentation.md) | Operator-Handoff Presentation, and the Peer-Site Search as a Required Output | Proposed |

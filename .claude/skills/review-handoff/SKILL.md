@@ -10,7 +10,7 @@ The closing half of the review-handoff flow. `/review-prep` pins the scope and y
 so the human runs the real review. This skill transcribes what that review just produced,
 in this conversation, into a standalone markdown file under the session scratchpad directory —
 written for a reader with none of this conversation's context, typically another agent session.
-It ends by printing the absolute path.
+It ends by handing that path back per `.claude/operator-handoff.md`.
 
 Because it reads the review out of conversation context, **it must run in the same session
 where you ran `/code-review`.** There is no on-disk artifact to recover the findings from
@@ -137,28 +137,27 @@ what the next agent needs in order to not redo the work.
 is designed to travel between sessions.
 
 The timestamped scratchpad file is the single canonical report — do not copy it anywhere else. Its
-path is long (project slug + session GUID), but that is fine: the hand-off command below goes out in a
-fenced code block whose *copy* button transfers it in one click, so it never has to be typed by hand.
+path is long (project slug + session GUID), and that is fine rather than a reason to abbreviate:
+`.claude/operator-handoff.md` states why length costs the reader nothing, and governs how step 3
+below emits it.
 
 ## 3. Hand off
 
 Final message to the user:
 
-1. The canonical timestamped scratchpad report path — resolved and absolute, with no
-   `<scratchpad>` / `<branch>` / `<timestamp>` placeholders left in it.
+1. The canonical timestamped scratchpad report path, presented per `.claude/operator-handoff.md`.
 2. A 2–3 sentence digest: finding count, severity spread, and — if the review ran a verify pass —
    the CONFIRMED vs PLAUSIBLE split.
-3. The hand-off command, emitted **inside a fenced `text` code block** — the VS Code chat webview
-   renders assistant prose as unselectable text, but a code fence gets a hover *copy* button. The
-   block must contain exactly `/apply-review` followed by the **resolved absolute** path to the
-   canonical report (item 1 above), in **double quotes** so a path containing spaces reaches
-   `/apply-review` as a single argument — nothing else. Resolve every part of the path first: the
-   fenced block is the user's copy target, so it must be a runnable command, never a template — if
-   any `<scratchpad>`, `<branch>`, or `<timestamp>` placeholder survives into it, the receiving
-   session gets an unreadable path. In the receiving session, running that command reads the report
-   back (or the user pastes the path and tells the agent to read the file before touching the diff).
+3. The hand-off command, under the same contract. What that contract
+   does not decide is this command's *content*: the block must contain exactly `/apply-review`
+   followed by the path from item 1, in **double quotes** so a path containing spaces reaches
+   `/apply-review` as a single argument — nothing else beside it. In the receiving session, running
+   that command reads the report back (or the user pastes the path and tells the agent to read the
+   file before touching the diff).
 
-Item 1 and item 3 carry the same path on purpose: item 1 states it as the human-readable reference,
-and item 3 is the copyable command that embeds it — the fenced block is the only copy affordance, so
-a user who just wants to open the file copies the command and strips the `/apply-review "…"` wrapper.
-Keep both; the repetition is deliberate, not redundancy to collapse.
+Item 1 and item 3 carry the same path on purpose, and both are copyable blocks: item 1 is what a
+user who just wants to *open* the report copies, and item 3 is what a user handing it to a fresh
+session copies. Keep both. Before the presentation contract existed only item 3 was fenced, so
+item 1 was decorative and opening the report meant copying the command and stripping the
+`/apply-review "…"` wrapper — that stripping step is what the two blocks now remove, which is the
+reason the repetition is deliberate rather than redundancy to collapse.

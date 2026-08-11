@@ -107,17 +107,21 @@ long as *you* do not commit before running `/review-handoff`.
 
 Final message:
 
-1. The confirmed scope: the exact diff command and file count, and the path of the carrier file
-   from step 2.
-2. The command to run next, verbatim and copy-pasteable — `/code-review <effort>` (the effort from
-   the argument, default `high`). Run it **bare**: do not add flags that make it act on findings
-   (e.g. `--comment`, `--fix`) — the review must stay read-only; acting on findings is the receiving
-   agent's job.
-3. **If the pinned scope is non-default** (a custom base, or branch-diff-plus-working-tree), say so
+1. The confirmed scope: the exact diff command and the file count.
+2. The step-2 carrier file, presented per `.claude/operator-handoff.md`. It is the only thing
+   carrying the pinned SHAs forward if this session compacts, which is why it is handed over
+   rather than merely written.
+3. The command to run next, under the same contract — `/code-review <effort>`, with **the effort
+   resolved to a literal** (from the argument, default `high`): `<effort>` is a placeholder, and
+   a block reading `/code-review <effort>` is an unrunnable template however well it satisfies
+   everything else. Run it **bare**: do not
+   add flags that make it act on findings (e.g. `--comment`, `--fix`) — the review must stay
+   read-only; acting on findings is the receiving agent's job.
+4. **If the pinned scope is non-default** (a custom base, or branch-diff-plus-working-tree), say so
    and tell the user to state that intended scope to `/code-review` — a bare command reviews its own
    default range, which would then differ from the pin. If the pin is just the default branch diff,
    the bare command already matches it and no extra instruction is needed.
-4. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
+5. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
    capture its findings. The carrier file preserves the scope and SHAs across compaction, but the
    *findings themselves* live only in conversation context until the report is written — so a new
    session would still lose them.
