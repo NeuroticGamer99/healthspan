@@ -1017,13 +1017,23 @@ def test_the_success_line_reports_the_login_the_event_recorded(
     # one line whose job is to be evidence.
     #
     # The fixture records a *case variant*, and that is what makes the test
-    # discriminating rather than lucky. `same_login` folds case (GitHub logins
-    # are case-preserving but unique case-folded), so `COPILOT` matches — while
-    # being a distinct string from **both** spec constants. An earlier version
-    # used the bot login, which is exactly `request_login`: substituting that
-    # constant then passed this test, and the property survived only because a
-    # sibling test's fixture happened to spell the other one. Pinned by
+    # discriminating rather than lucky: `same_login` folds case, so `COPILOT`
+    # matches while being a distinct string from **both** spec constants, and
+    # substituting either one turns this test red on its own. An earlier
+    # version used the bot login — which *is* `request_login` — so that
+    # substitution passed, and the property survived only because a sibling
+    # test's fixture happened to spell the other constant. Pinned by
     # coincidence is not pinned.
+    #
+    # `COPILOT` is a **synthetic discriminator, not a predicted payload**, and
+    # the distinction is worth stating because the surrounding code is full of
+    # measured values. GitHub enforces case-fold uniqueness on logins and
+    # serializes `requested_reviewer` from the account, so it would render one
+    # canonical spelling every time; this value is chosen because it is the
+    # only *kind* of string that both matches and differs from the constants,
+    # which is what the assertion needs. It pins the code property — read the
+    # event, do not restate a constant — and asserts nothing about what GitHub
+    # emits.
     import bot_review
 
     recorded = [_request_event(29195776393, "COPILOT")]
