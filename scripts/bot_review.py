@@ -229,7 +229,7 @@ class BotSpec:
     comment_login: str | None = None
     # Whether this bot reviews every PR whether or not it was asked. It makes
     # silence *anomalous* rather than merely uninformative: for an asked bot, no
-    # artifact means the chain was not spent, which is a legitimate state.
+    # artifact means the chain never ran, which is a legitimate state.
     #
     # **No bot sets this today.** Greptile did — its GitHub App triggers on PR
     # creation — until `skipReview: "AUTOMATIC"` turned that default off and put
@@ -565,8 +565,8 @@ BOTS: dict[str, BotSpec] = {
             r"Last reviewed commit:[^\n]*?/commit/([0-9a-f]{7,40})"
         ),
         # `always_reviews` is deliberately left at its default: Greptile set it
-        # while its App reviewed on creation, and an unspent chain is now as
-        # legitimate for it as for every other bot here.
+        # while its App reviewed on creation, and a chain that never ran is now
+        # as legitimate for it as for every other bot here.
     ),
 }
 

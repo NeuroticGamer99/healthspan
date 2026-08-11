@@ -70,3 +70,4 @@ Any non-bot login can post an acknowledgement, sight unseen by the gate. This is
 ## Links
 - Related: [ADR-0064](0064-reviewer-workflow-trust-boundary.md) — the only prior ADR touching `bot_review.py` (Gemini run attribution); this ADR records the gate contract that had no owner
 - Related: [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) — the workflow-enforcement posture the merge gate extends
+- Extended by: [ADR-0074](0074-bot-review-invocation-policy.md) — which invalidates this ADR's "re-triggering is metered and requires explicit authorization" Decision Driver while leaving the decision standing; the re-trigger horn of the dilemma above is no longer the expensive one

@@ -8,11 +8,11 @@ description: Trigger a Greptile review on the current PR, wait for it to complet
 Greptile no longer reviews on PR creation — `skipReview: "AUTOMATIC"` in `.greptile/config.json`
 made it opt-in, and `triggerOnUpdates: false` keeps a push from re-triggering it, so **every
 Greptile review on this repository is one somebody asked for**. This skill is how that choice is
-spent. `/ship greptile` runs this chain automatically after shipping; invoke it directly on any PR
+made. `/ship greptile` runs this chain automatically after shipping; invoke it directly on any PR
 that is already open.
 
 `.greptile/README.md` explains why the trigger is manual — including the PR whose automatic review
-was spent on a commit that stopped existing within the hour — and why the config values are what
+ran against a commit that stopped existing within the hour — and why the config values are what
 they are.
 
 ## 1. Find the PR
@@ -157,7 +157,8 @@ because there is something to read. Step 4's `fetch` is where it becomes an exit
 Then follow **`.claude/bot-review-triage.md`** through its closing section: verify each finding
 against the real code, reply per finding, report the verdict table, **stop for the user's go before
 changing any code**, and close out per its §4 — a re-review of the fixed commit is a fresh
-`/greptile-review` run, spent deliberately.
+`/greptile-review` run — a deliberate choice, and one that needs no permission prompt first
+(ADR-0074).
 
 Two Greptile-specific notes for triage:
 

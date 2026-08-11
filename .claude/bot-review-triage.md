@@ -16,14 +16,14 @@ new PR by default — until `skipReview: "AUTOMATIC"` in `.greptile/config.json`
 manual trigger as the rest (`.greptile/README.md` has the reasoning). So every finding on a PR is
 one somebody decided to go looking for.
 
-**But silence does not run the other way.** A bot that posted nothing is *consistent with* an
-unspent chain and is never proof of one: a spent chain leaves no artifact too. Gemini usually fails
+**But silence does not run the other way.** A bot that posted nothing is *consistent with* a
+chain that never ran and is never proof of one: a chain that ran clean leaves no artifact too. Gemini usually fails
 without producing a report on the free tier (`/ship` says so outright), Copilot's request
 confirmation false-negatived on **four** consecutive PRs while the review was already being
 written, and a Greptile review has landed on a PR while the tooling reported no summary at all.
 That Copilot count is repaired — the confirmation now reads the issue timeline instead of reading
 `requested_reviewers` back — so read the four as what the failure class cost, not as a live defect.
-Track what you triggered and read its `wait` result; never infer the spend from the silence. `/squash-merge`'s "every review
+Track what you triggered and read its `wait` result; never infer from the silence whether a review ran. `/squash-merge`'s "every review
 that was triggered has answered" is the same rule stated where it blocks a merge.
 §2's "never leave a finding unanswered" is mechanically enforced for **every** bot — the reply *is*
 the record, so an unanswered finding reads to the tooling exactly like one nobody ever collected —
@@ -213,17 +213,22 @@ each one's mode, each one's verdict — rather than trying to fit a round into a
 
 Read `/apply-review`'s bare step numbers as **its** steps, never as the sections of this file:
 "re-runs step 4's gates" there means the ruff/pyright/pytest gate run, not §4 below — which is
-the metered bot re-review this project requires prompting for and cannot un-spend.
+the bot re-review chain, whose invocation policy is [ADR-0074](../specs/adr/0074-bot-review-invocation-policy.md).
 
 ## 4. After the fixes land
 
 Nothing re-reviews a push on its own — Greptile included, whose `triggerOnUpdates` is deliberately
 `false`. Re-reviewing the new commit is a fresh run of the bot's own skill (`/coderabbit-review`,
-`/greptile-review`, `/gemini-review`, or `/copilot-review`), spent deliberately. **A review that
+`/greptile-review`, or `/copilot-review`). **Run one when the work calls for it
+and say so; do not ask permission first** — [ADR-0074](../specs/adr/0074-bot-review-invocation-policy.md)
+bounds these by repetition rather than authorization, so what is forbidden is a re-trigger inside a
+loop, or a third run on one PR without a stated reason, not the invocation itself. **`/gemini-review`
+is the exception and is named separately for that reason**: it stays user-named, on the exhaustible
+free-tier quota grounds ADR-0074 carves out, which were never about cost. **A review that
 ran before the fixes is stale, not clean** — it reports on code that no longer exists. Greptile
 names the commit it reviewed and `bot_review.py` checks it against the PR head, so a stale one is
 reported as such rather than read as this commit's verdict; for the others, staleness is yours to
-track. When every spent review is clean or triaged and the user asks for the merge, finish the
+track. When every review that ran is clean or triaged and the user asks for the merge, finish the
 chain with **`/squash-merge`** — it composes a clean squash message and verifies the result on
 `origin/main`.
 
