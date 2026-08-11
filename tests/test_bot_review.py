@@ -1014,34 +1014,25 @@ def test_the_success_line_reports_the_login_the_event_recorded(
     # The match accepts either of Copilot's two request-side logins, so naming
     # `requested_display` on the confirmation line was a constant standing in
     # for an observation — true today, and a guess dressed as evidence on the
-    # one line whose job is to be evidence. An event recorded under the *bot*
-    # login must print that, not "Copilot".
+    # one line whose job is to be evidence.
+    #
+    # The fixture records a *case variant*, and that is what makes the test
+    # discriminating rather than lucky. `same_login` folds case (GitHub logins
+    # are case-preserving but unique case-folded), so `COPILOT` matches — while
+    # being a distinct string from **both** spec constants. An earlier version
+    # used the bot login, which is exactly `request_login`: substituting that
+    # constant then passed this test, and the property survived only because a
+    # sibling test's fixture happened to spell the other one. Pinned by
+    # coincidence is not pinned.
     import bot_review
 
-    posted = [_request_event(29195776393, "copilot-pull-request-reviewer[bot]")]
-    monkeypatch.setattr(bot_review, "gh", _timeline_gh([posted]))
+    recorded = [_request_event(29195776393, "COPILOT")]
+    monkeypatch.setattr(bot_review, "gh", _timeline_gh([recorded]))
     assert bot_review.cmd_request("o/r", 54, COPILOT) == 0
     out = capsys.readouterr().out
-    assert "names copilot-pull-request-reviewer[bot]" in out
-    assert "names Copilot" not in out
-
-
-def test_the_refusal_names_both_logins_it_looked_for() -> None:
-    # Same overclaim at the other message: the refusal said no event naming
-    # `requested_display` arrived, having searched for either.
-    import bot_review
-
-    assert bot_review.request_event_ids([], COPILOT) == set()
-    # The refusal's own wording is pinned in
-    # `test_an_unconfirmed_ask_prints_the_floor_before_refusing`; this pins the
-    # pair the matcher actually accepts, which that wording must agree with.
-    both = {"Copilot", "copilot-pull-request-reviewer[bot]"}
-    seen = {
-        login
-        for login in both
-        if bot_review.request_events([_request_event(1, login)], COPILOT)
-    }
-    assert seen == both
+    assert "names COPILOT" in out
+    assert "names Copilot" not in out  # requested_display
+    assert "names copilot-pull-request-reviewer[bot]" not in out  # request_login
 
 
 def test_only_review_requested_events_naming_a_reviewer_are_counted() -> None:
