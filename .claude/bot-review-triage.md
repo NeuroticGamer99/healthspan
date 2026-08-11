@@ -56,7 +56,7 @@ Checks a bot routinely misses — run them yourself:
   one instance of a pattern that occurs several times. (#26: Copilot found one out-of-order
   category pair; there were two.) So a finding of the form "X is wrong *here*" is not a work item
   for one site; it is a work item for the rule. Before editing, search the repository for the claim
-  or pattern with **`git grep -nF -- '<the exact claim>'`** — and **report the command and
+  or pattern with **`git grep -nF --untracked -- '<the exact claim>'`** — and **report the command and
   its hits alongside the finding** — the *whole* hit list, not a truncated view of it: a `head` on
   the verification command is how a fourteen-site rule gets written down as three, which happened
   here, in the evidence for this very bullet. Include peers the reviewer did not name. Every part
@@ -110,19 +110,22 @@ peer search §1 prescribes, because "your own tooling" is not only the code that
   claimed 2 while posting 1, having counted before deduplicating. The check's job is to make you
   look, not to name the culprit.
 - **A search recipe is tooling too, and it lies the same way.** §1's peer search is spelled
-  `git grep -nF -- '<claim>'`; each part was paid for here. **`git grep`** because `grep -rn` does
+  `git grep -nF --untracked -- '<claim>'`; each part was paid for here. **`git grep`** because `grep -rn` does
   not exist in this environment's primary shell, descends `.venv/` from the repo root, and needs an
   `--include` list that goes stale — a `*.md`/`*.py` pair silently drops `ci.yml` and
-  `pyproject.toml`, so a rule living in CI config reads as "no peers"; tracked files are also the
-  truth source `scripts/check_spec_links.py` already uses. **`-F`** because a claim is text, not a
-  pattern: `git grep -n "check() == []"` exits fatal on `Unmatched [ or [^` where the `-F` form
+  `pyproject.toml`, so a rule living in CI config reads as "no peers". **`--untracked`** because
+  plain `git grep` searches the *index*, so a brand-new unstaged file holding a peer is invisible —
+  measured, 0 hits against 1 for the same probe. With it the domain is tracked plus
+  untracked-but-not-ignored, which is exactly the set `scripts/check_spec_links.py` calls git-truth
+  and gates on for the same reason; `.gitignore` still applies, so `.venv/` stays out (15 files
+  either way, none of them vendored). **`-F`** because a claim is text, not a pattern: `git grep -n "check() == []"` exits fatal on `Unmatched [ or [^` where the `-F` form
   searches it literally. **`--`** because a claim may begin with `-`. **Single quotes** because a
   claim's backticks otherwise reach the shell — measured, bash tried to execute a markdown file's
   contents as commands and returned five unrelated matches **at exit 0**, this section's silent
   failure wearing a green record. Neither obvious escape is one: the harness Grep tool keeps the
   shell out and is still a regex engine with **no literal mode**, rejecting that same claim. For an
   apostrophe-bearing claim, heredoc it into a variable and keep the command whole —
-  `git grep -nF -- "$claim"`; dropping the `-F --` on the way reinstates both failures.
+  `git grep -nF --untracked -- "$claim"`; dropping the `-F --` on the way reinstates both failures.
 
 Silence is the failure mode to distrust most: a wrong answer argues with you, a silent one doesn't.
 
