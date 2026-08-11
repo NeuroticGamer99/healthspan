@@ -117,8 +117,10 @@ peer search §1 prescribes, because "your own tooling" is not only the code that
   plain `git grep` searches the *index*, so a brand-new unstaged file holding a peer is invisible —
   measured, 0 hits against 1 for the same probe. With it the domain is tracked plus
   untracked-but-not-ignored, which is exactly the set `scripts/check_spec_links.py` calls git-truth
-  and gates on for the same reason; `.gitignore` still applies, so `.venv/` stays out (15 files
-  either way, none of them vendored). **`-F`** because a claim is text, not a pattern: `git grep -n "check() == []"` exits fatal on `Unmatched [ or [^` where the `-F` form
+  and gates on for the same reason; `.gitignore` still applies, so `.venv/` stays out. Its one cost
+  is the flip side of that domain — an untracked scratch file that happens not to be ignored can
+  surface as a "peer", and deciding it differs is the judgement the paragraph below already asks
+  for. **`-F`** because a claim is text, not a pattern: `git grep -n "check() == []"` exits fatal on `Unmatched [ or [^` where the `-F` form
   searches it literally. **`--`** because a claim may begin with `-`. **Single quotes** because a
   claim's backticks otherwise reach the shell — measured, bash tried to execute a markdown file's
   contents as commands and returned five unrelated matches **at exit 0**, this section's silent
