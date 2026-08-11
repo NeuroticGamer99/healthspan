@@ -57,28 +57,10 @@ Checks a bot routinely misses — run them yourself:
   category pair; there were two.) So a finding of the form "X is wrong *here*" is not a work item
   for one site; it is a work item for the rule. Before editing, search the repository for the claim
   or pattern with **`git grep -nF -- '<the exact claim>'`** — and **report the command and
-  its hits alongside the finding**, including peers the reviewer did not name.
-
-  Every part of that spelling is load-bearing and each was measured. **`git grep`** rather than
-  `grep -rn … --include=…`: `git` resolves in **PowerShell**, this environment's primary shell,
-  where `grep` does not exist at all, so the older recipe could not be run as written where the
-  rule is read; `git grep` enumerates **tracked files**, the same git-truth file set
-  `scripts/check_spec_links.py` uses, where a filesystem walk from the repo root descends `.venv/`
-  (82 hits against 15 for one probe, 33 of them vendored); and it carries **no file-type list to
-  go stale** — an `--include` pair of `*.md` and `*.py` silently excludes `ci.yml` and
-  `pyproject.toml`, so a rule carried in CI configuration returns zero hits and reads as "no
-  peers". **`-F`** because a claim is text, not a pattern: `git grep -n "check() == []"` exits
-  fatal on `Unmatched [ or [^`, while the same claim under `-F` finds its three real sites.
-  **Single quotes** because a claim here is full of backticks, and double-quoted the shell runs
-  command substitution on them — measured, a claim naming a file made bash attempt to execute that
-  file's contents as commands and then returned five unrelated matches **at exit 0**. **`--`** so a
-  claim beginning with `-` is not read as a flag.
-
-  A claim containing an apostrophe defeats single-quoting: read it into a variable from a quoted
-  heredoc and search `"$claim"`, or use the harness Grep tool, where the pattern is a parameter and
-  no shell parses it at all. A search that cannot run, or that answers "one site" because it never
-  looked, is worse than none: it puts a green record behind the gap — and the exit-0 case above is
-  the dangerous one precisely because nothing about it looks like a failure. Then decide each
+  its hits alongside the finding**, including peers the reviewer did not name. Every part of that
+  spelling defends against a way the search *lies* rather than fails, and §1a records what each one
+  costs when it is missing. A search that cannot run, or that answers "one site" because it never
+  looked, is worse than none: it puts a green record behind the gap. Then decide each
   peer deliberately: sameness of *shape* is not sameness of *meaning*, and a peer that legitimately
   differs is recorded as differing, not swept in. Past two sites, prefer one named mechanism over
   N hand-written copies, and put the reason it exists where the next author will read it. Run the
@@ -124,6 +106,18 @@ What generalizes beyond that script:
 - **When a cross-check trips, investigate — do not assume whose fault it is.** CodeRabbit has
   claimed 2 while posting 1, having counted before deduplicating. The check's job is to make you
   look, not to name the culprit.
+- **A search recipe is tooling too, and it lies the same way.** §1's peer search is spelled
+  `git grep -nF -- '<claim>'` and every part was paid for here. Without `-F` a claim is read as a
+  *pattern*: `git grep -n "check() == []"` exits fatal on `Unmatched [ or [^`, where `-F` finds its
+  three real sites. Double-quoted, a claim's backticks reach the shell — measured, bash attempted
+  to execute a markdown file's contents as commands and then returned **five unrelated matches at
+  exit 0**, this section's silent failure wearing a green record. A claim beginning with `-` needs
+  the `--` or git reads it as a flag. And neither obvious escape hatch is one: `grep -rn` does not
+  exist in this environment's primary shell and walks `.venv/` besides, while the harness Grep tool
+  does keep the shell out and is still a **regex engine with no literal mode**, rejecting that same
+  claim outright. For an apostrophe-bearing claim, where single-quoting cannot work, read it into a
+  variable from a quoted heredoc and keep the command whole — `git grep -nF -- "$claim"`. Dropping
+  the `-F --` on the way reinstates both failures.
 
 Silence is the failure mode to distrust most: a wrong answer argues with you, a silent one doesn't.
 
