@@ -56,18 +56,29 @@ Checks a bot routinely misses — run them yourself:
   one instance of a pattern that occurs several times. (#26: Copilot found one out-of-order
   category pair; there were two.) So a finding of the form "X is wrong *here*" is not a work item
   for one site; it is a work item for the rule. Before editing, search the repository for the claim
-  or pattern with **`git grep -n "<the exact claim>"`** — and **report the command and
-  its hits alongside the finding**, including peers the reviewer did not name. Three properties of
-  that spelling are load-bearing, each measured against the `grep -rn … --include=…` recipe it
-  replaces: `git` resolves in **PowerShell**, this environment's primary shell, where `grep` does
-  not exist at all, so the recipe could not be run as written where the rule is read; `git grep`
-  enumerates **tracked files**, the same git-truth file set `scripts/check_spec_links.py` uses,
-  where a filesystem walk from the repo root descends `.venv/` (82 hits against 15 for one probe,
-  33 of them vendored); and it carries **no file-type list to go stale** — an `--include` pair of
-  `*.md` and `*.py` silently excludes `ci.yml` and `pyproject.toml`, so a rule carried in CI
-  configuration returns zero hits and reads as "no peers". A search that cannot run, or that
-  answers "one site" because it never looked, is worse than none: it puts a green record behind
-  the gap. Then decide each
+  or pattern with **`git grep -nF -- '<the exact claim>'`** — and **report the command and
+  its hits alongside the finding**, including peers the reviewer did not name.
+
+  Every part of that spelling is load-bearing and each was measured. **`git grep`** rather than
+  `grep -rn … --include=…`: `git` resolves in **PowerShell**, this environment's primary shell,
+  where `grep` does not exist at all, so the older recipe could not be run as written where the
+  rule is read; `git grep` enumerates **tracked files**, the same git-truth file set
+  `scripts/check_spec_links.py` uses, where a filesystem walk from the repo root descends `.venv/`
+  (82 hits against 15 for one probe, 33 of them vendored); and it carries **no file-type list to
+  go stale** — an `--include` pair of `*.md` and `*.py` silently excludes `ci.yml` and
+  `pyproject.toml`, so a rule carried in CI configuration returns zero hits and reads as "no
+  peers". **`-F`** because a claim is text, not a pattern: `git grep -n "check() == []"` exits
+  fatal on `Unmatched [ or [^`, while the same claim under `-F` finds its three real sites.
+  **Single quotes** because a claim here is full of backticks, and double-quoted the shell runs
+  command substitution on them — measured, a claim naming a file made bash attempt to execute that
+  file's contents as commands and then returned five unrelated matches **at exit 0**. **`--`** so a
+  claim beginning with `-` is not read as a flag.
+
+  A claim containing an apostrophe defeats single-quoting: read it into a variable from a quoted
+  heredoc and search `"$claim"`, or use the harness Grep tool, where the pattern is a parameter and
+  no shell parses it at all. A search that cannot run, or that answers "one site" because it never
+  looked, is worse than none: it puts a green record behind the gap — and the exit-0 case above is
+  the dangerous one precisely because nothing about it looks like a failure. Then decide each
   peer deliberately: sameness of *shape* is not sameness of *meaning*, and a peer that legitimately
   differs is recorded as differing, not swept in. Past two sites, prefer one named mechanism over
   N hand-written copies, and put the reason it exists where the next author will read it. Run the
