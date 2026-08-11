@@ -181,8 +181,10 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
     Invoking `/ship` is an approval (this skill's opening line), and on this path the freshly
     composed message is verified by step 1 and then goes nowhere — the merge body still comes
     from the first ship's. Silence here reads as "landed", and the divergence surfaces at merge
-    time or never. Name the file, say it is unconsumed, and tell the user that if *this* text is
-    what they want on the merge, `/squash-merge` is where it goes.
+    time or never. Hand the file back per `.claude/operator-handoff.md`,
+    say it is unconsumed, and tell the user that if *this* text is
+    what they want on the merge, `/squash-merge` is where it goes. The path is the actionable part
+    of that message: without it the user is told a message exists and cannot open it.
   - **Tree clean, nothing ahead of the remote** — nothing to commit and nothing to push; say so
     and go to step 3, where an existing PR is reused.
 

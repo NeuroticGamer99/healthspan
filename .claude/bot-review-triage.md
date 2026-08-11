@@ -5,6 +5,12 @@ The shared procedure for handling an automated PR review. Used by `/coderabbit-r
 `/ship greptile`), `/gemini-review` (the Antigravity SDK Gemini workflow — directly or via
 `/ship gemini`), and `/copilot-review` (GitHub Copilot). The bots are useful; none is trusted.
 
+**One section reaches past the bots.** §1's *Under-reporting* rule is an owning statement for
+`/apply-review` step 3 as well — registered in `scripts/check_doc_citations.py` and cited there
+rather than restated — because a finding that names one site is a work item for the rule whoever
+raised it. Restructuring or renumbering §1 during a bot-skill change breaks that caller, and the
+citation gate checks the pointer, not the section number.
+
 **None of them reviews unasked.** Greptile was the last that did — its GitHub App reviews every
 new PR by default — until `skipReview: "AUTOMATIC"` in `.greptile/config.json` put it on the same
 manual trigger as the rest (`.greptile/README.md` has the reasoning). So every finding on a PR is
@@ -46,8 +52,34 @@ code, and never accept a finding because it is confidently worded. Classify each
 
 Checks a bot routinely misses — run them yourself:
 
-- **Under-reporting.** The bot may flag one instance of a pattern that occurs several times. (#26:
-  Copilot found one out-of-order category pair; there were two.)
+- **Under-reporting — enumerate the peers before you fix, and show the search.** A reviewer flags
+  one instance of a pattern that occurs several times. (#26: Copilot found one out-of-order
+  category pair; there were two.) So a finding of the form "X is wrong *here*" is not a work item
+  for one site; it is a work item for the rule. Before editing, search the repository for the claim
+  or pattern with **`git grep -n "<the exact claim>"`** — and **report the command and
+  its hits alongside the finding**, including peers the reviewer did not name. Three properties of
+  that spelling are load-bearing, each measured against the `grep -rn … --include=…` recipe it
+  replaces: `git` resolves in **PowerShell**, this environment's primary shell, where `grep` does
+  not exist at all, so the recipe could not be run as written where the rule is read; `git grep`
+  enumerates **tracked files**, the same git-truth file set `scripts/check_spec_links.py` uses,
+  where a filesystem walk from the repo root descends `.venv/` (82 hits against 15 for one probe,
+  33 of them vendored); and it carries **no file-type list to go stale** — an `--include` pair of
+  `*.md` and `*.py` silently excludes `ci.yml` and `pyproject.toml`, so a rule carried in CI
+  configuration returns zero hits and reads as "no peers". A search that cannot run, or that
+  answers "one site" because it never looked, is worse than none: it puts a green record behind
+  the gap. Then decide each
+  peer deliberately: sameness of *shape* is not sameness of *meaning*, and a peer that legitimately
+  differs is recorded as differing, not swept in. Past two sites, prefer one named mechanism over
+  N hand-written copies, and put the reason it exists where the next author will read it. Run the
+  search again after the edit; you are done when the only hits are the intended ones. **A fix that
+  addresses only the site the reviewer named is not finished**, and the search is what makes that
+  checkable — "remember to look for peers" is not. This check is **not bot-specific**: it binds
+  findings from `/code-review` reports and from the local `spec-reviewer`/`test-reviewer` rounds
+  identically, and `/apply-review` step 3 cites it rather than restating it. Both known
+  recurrences were expensive — one rule went unimplemented at a fresh site in four consecutive
+  rounds of `scripts/bot_review.py`'s error floor before it became a shared helper, whose
+  `_floor_on_error` docstring names all four sites, and a corrected claim in this repository's own
+  prose survived in a nearby paragraph of the very file the finding named.
 - **Inverted diagnosis.** Establish whether the *code* or the *comment/spec* is the thing that is
   wrong. (#26: the category seed order was correct — it mirrored ADR-0055 §6 — and the comment
   claiming "alphabetical" was the error, so the bot's suggested reorder would have been the wrong
@@ -130,6 +162,14 @@ prose is a new decision, so the gate re-blocks until the new summary is answered
 Report a verdict table to the user — finding, severity, verdict, action — with the reasoning for
 anything declined, and flag where the bot was wrong in an interesting way (it calibrates how much
 to trust the next one).
+
+**§1's peer search needs a home here too, for the same reason the reviewer rounds do below.** The
+table is one row per finding and the search is per finding, but it is two values rather than one —
+the command with its hit count *before* the edit, and the re-run count *after* — so record it as
+its own line under the table: for each finding that named a site, the search that was run, how many
+sites it returned, and which of them were fixed versus judged legitimately different. Without it a
+round that fixed one of four peers reports exactly like a round that fixed the only one, which is
+the state §1 was rewritten to make visible.
 
 **Do not change code without the user's explicit go.** Verification and replies are automatic;
 fixes are not. When the go comes, the sequence is **fix → gates → reviewer rounds until they

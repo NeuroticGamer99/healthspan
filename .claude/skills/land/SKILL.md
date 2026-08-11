@@ -110,7 +110,11 @@ Compose the commit message:
 - The co-author trailer naming the model running *this* session (read it from the system prompt; never carry one forward).
 
 **Write the composed message to `<scratchpad>/commit-msg/<branch>.txt`, then the exact branch name
-to `<scratchpad>/commit-msg/<branch>.branch`, and print both paths.** That order is load-bearing,
+to `<scratchpad>/commit-msg/<branch>.branch`, then hand the message path back per
+`.claude/operator-handoff.md`**, which owns the presentation form for every caller rather than
+this one. **Name the sidecar in prose, not in a block of its own**: `/ship` reads it as a check
+and the user never opens or copies it, so it is not a handoff target — and a second copy block
+beside the one that *is* teaches the eye to skip both. That write order is load-bearing,
 not stylistic — see below. The branch name goes into the path unsanitized, which removes the
 collision the review-report filename convention carries:
 flattening `/` to `-` puts `feat/x` and `feat-x` on one filename, and either one's stale file then
