@@ -488,7 +488,10 @@ def test_a_tool_pinned_gate_renders_its_required_version(
     # operator this is a requirement rather than the version in the command, so
     # it is part of what the column has to say.
     assert rendered == f"needs {ctx.pins[gate.tool_pin or '']}", (
-        f"{gate.name} rendered {rendered!r}"
+        f"{gate.name} rendered {rendered!r}. The whole column is pinned, not "
+        "just the value: the prefix is what tells an operator this is a "
+        "requirement rather than the version in the command. Rewording it is a "
+        "deliberate change to that contract — update this expectation with it."
     )
 
 
