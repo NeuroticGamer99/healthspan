@@ -8,12 +8,12 @@ description: Commit the change /land proposed, push, and open or update the PR. 
 Runs after `/land` has surveyed the change, run the gates, and proposed a commit message.
 **Invoking `/ship` is the user's approval of that message** — do not re-litigate or rewrite it.
 
-Takes an optional reviewer argument choosing which bot chain to spend on this PR — reviews are
+Takes an optional reviewer argument choosing which bot chain to run on this PR — reviews are
 opt-in per PR, one deliberately chosen lens instead of every bot dogpiling every PR:
 
 - **`/ship`** — ship only. **Nothing reviews unasked** — Greptile was the last exception to that,
   until `skipReview: "AUTOMATIC"` put it on the same manual trigger as the rest. After reporting
-  the PR URL, remind the user of the chains they can spend: the two reliable lenses
+  the PR URL, remind the user of the chains available: the two reliable lenses
   `/coderabbit-review` and `/copilot-review`, `/greptile-review`, a local `/code-review`, and —
   only if explicitly asked — the best-effort `/gemini-review` (see below). Do not wait for
   anything here; nothing is coming.

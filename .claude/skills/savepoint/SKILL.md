@@ -141,10 +141,10 @@ build from the fourth correction of one finding:
 ```
 
 **`review` and `smoke` are separate words here, deliberately.** A **review** is a round of the
-purchased external loop (`/review-brief` → `/review-prep` → `/code-review` → `/review-handoff` →
-`/apply-review`) — metered, and the only kind counted in a convergence ledger. A **smoke** is a
-local `spec-reviewer`/`test-reviewer` pass: free, run as often as it takes, and never assurance
-evidence to report alongside a review. Both were called "review" until the two counters in one tag
+external loop (`/review-brief` → `/review-prep` → `/code-review` → `/review-handoff` →
+`/apply-review`) — the only kind counted in a convergence ledger. A **smoke** is a
+local `spec-reviewer`/`test-reviewer` pass: run as often as it takes, counted in no ledger, and
+never assurance evidence to report alongside a review. Both were called "review" until the two counters in one tag
 made the sentence ambiguous every time it was spoken. The external side keeps the word because its
 loop is anchored on `/code-review`, a built-in command that cannot be renamed. The *agents* keep
 their names — the ambiguity was in the round noun, not in who ran it.

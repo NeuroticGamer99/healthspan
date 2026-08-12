@@ -29,12 +29,12 @@ the free review lands on.
 raised two legitimate P1s. The branch then moved fifteen commits, including a
 redesign that replaced the mechanism both findings were about. Because
 `triggerOnUpdates` is `false` — correctly, see below — nothing re-reviewed it,
-so the automatic run had been spent on a head that stopped existing within the
+so the automatic run had gone against a head that stopped existing within the
 hour and the review that mattered had to be asked for anyway. A creation trigger
 fires at the one moment in a PR's life when its diff is least likely to be the
 diff that merges.
 
-So the spend is now made where the other three are made: deliberately, on a
+So the choice is now made where the other three are made: deliberately, on a
 commit someone chose. `/greptile-review` triggers, waits and triages as one
 chain, and `/ship greptile` runs that chain after the push. This also ends a
 carve-out nothing else in the repository had — `/ship`, `/squash-merge` and
@@ -54,7 +54,8 @@ One piece of that gate did change with the trigger. `scripts/bot_review.py`
 carried a `silent_always_reviewers` detector whose only subject was Greptile: a
 bot that reviews unasked has no legitimate silence, so silence had to block the
 merge. Under a manual trigger Greptile's silence means what CodeRabbit's means —
-the chain was not spent — so its `always_reviews` flag is now `False`. The flag
+it is consistent with a chain that never ran, and never proves one (ADR-0074 §2)
+— so its `always_reviews` flag is now `False`. The flag
 and the detector stay: they are what a future unasked reviewer would set and
 need, ADR-0067 §2 records the detector as part of the gate's contract, and its
 tests now drive it through a synthetic always-reviewing spec so it stays proven
@@ -81,7 +82,7 @@ PR thread, because the question will be asked again.
 
 - **`triggerOnUpdates: false`** — set explicitly although it is also the
   default, because it is a *choice*, not a limitation someone should later
-  "fix". Every review is a deliberate spend (`.claude/bot-review-triage.md` §4),
+  "fix". Every review is a deliberate act (`.claude/bot-review-triage.md` §4),
   asked for with an `@greptileai review` comment; a push is not a decision to
   review, and with `skipReview` set neither is opening the PR.
 - **`statusCheck: false`** — because Greptile's docs describe this as creating a

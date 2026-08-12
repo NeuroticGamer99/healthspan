@@ -7,7 +7,7 @@ description: Trigger a CodeRabbit review on the current PR, wait for it to compl
 
 CodeRabbit no longer reviews on push — `auto_review.enabled: false` in `.coderabbit.yaml` made it
 opt-in, one deliberately chosen reviewer chain per PR instead of every bot dogpiling every PR. This
-skill is how that choice is spent on CodeRabbit. `/ship coderabbit` runs this chain automatically
+skill is how that choice is made on CodeRabbit. `/ship coderabbit` runs this chain automatically
 after shipping; invoke it directly on any PR that is already open.
 
 ## 1. Find the PR
@@ -73,4 +73,5 @@ Then follow **`.claude/bot-review-triage.md`** through its closing section: veri
 against the real code (its §1a explains why the fetch trusts only `scripts/bot_review.py`), reply
 per finding, report the verdict table, **stop for the user's go before changing any code**, and
 close out per its §4 — a push no longer re-triggers CodeRabbit, so a re-review of the fixed
-commit is a fresh `/coderabbit-review` run, spent deliberately.
+commit is a fresh `/coderabbit-review` run — a deliberate choice, and one that needs no permission
+prompt first (ADR-0074).

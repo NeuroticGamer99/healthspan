@@ -100,4 +100,5 @@ Then follow **`.claude/bot-review-triage.md`** through its closing section: veri
 against the real code, reply per finding (body-only findings get one summary reply on the review
 thread), report the verdict table, **stop for the user's go before changing any code**, and close
 out per its §4 — a push never re-triggers this workflow, so a re-review of the fixed commit is a
-fresh `/gemini-review` run, spent deliberately.
+fresh `/gemini-review` run — and this is the one chain the user still names explicitly, on quota
+grounds rather than cost (ADR-0074).

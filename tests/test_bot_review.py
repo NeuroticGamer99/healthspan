@@ -2956,7 +2956,7 @@ def test_outstanding_says_no_findings_rather_than_nothing_outstanding(
 ) -> None:
     # An unreviewed PR and a cleanly-reviewed one are indistinguishable from
     # posted comments alone. Both exit 2 — a PR whose chains were deliberately
-    # not spent must not be blocked — but the wording must not let silence read
+    # never run must not be blocked — but the wording must not let silence read
     # as a verdict, which is the distinction _fetch_summary_bot already makes.
     assert _outstanding(monkeypatch, []) == EXIT_CLEAN
     out = capsys.readouterr().out
@@ -3192,9 +3192,10 @@ def test_a_bot_that_reviews_unasked_and_left_nothing_cannot_clear_the_gate(
 def test_no_live_bot_reviews_unasked_so_silence_alone_blocks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The converse, and the live posture: every chain here is spent
-    # deliberately, so no artifact means the chain was not spent — a legitimate
-    # state. Pinned across ALL specs rather than the three that were never
+    # The converse, and the live posture: every chain here is run
+    # deliberately, so no artifact is consistent with a chain that never ran — a
+    # legitimate state — but never proves it did not run (ADR-0074 §2).
+    # Pinned across ALL specs rather than the three that were never
     # automatic, because the day one is set back to True this sweep starts
     # blocking merges and that must be a decision, not a surprise.
     for spec in BOTS.values():
@@ -3802,7 +3803,7 @@ def test_an_acknowledged_summary_clears_the_gate_a_reply_never_could(
     # PRs #72 and #73 blocked here permanently: findings living only in the
     # summary prose have no comment object, so the threaded reply the gate
     # counts is physically impossible and the only exits were an unrecorded
-    # override or a metered re-trigger. The mixed shape is the realistic one —
+    # override or a re-trigger. The mixed shape is the realistic one —
     # one finding threaded and answered, two existing only as prose — and the
     # ack carries the exact reference the alarm prints, on its own line under
     # the prose that actually answers them.

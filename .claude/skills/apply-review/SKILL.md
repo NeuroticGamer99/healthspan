@@ -309,7 +309,7 @@ trade off.
   already on the branch. If the query disagrees with what you believe ran, ask rather than pick;
   a wrong `M` is the same defect as a wrong `N`, and `/savepoint` step 3 says why. These local passes are **smokes**, not reviews: that
   skill's step 3 owns the vocabulary and the reason, and the short version is that "review"
-  belongs to the purchased external loop and a smoke never counts as one. The tag is what makes
+  belongs to the external loop and a smoke never counts as one. The tag is what makes
   the loop legible afterwards: a branch showing `[x2s1]`…`[x2s4]` says one review's findings took
   four passes to settle, which is the signal that a fix shape is wrong rather than merely
   incomplete. The next setup then pins a clean tree through the

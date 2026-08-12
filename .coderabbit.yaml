@@ -24,7 +24,7 @@ reviews:
   collapse_walkthrough: false
   changed_files_summary: true
 
-  # Manual/opt-in: each PR spends one deliberately chosen reviewer chain
+  # Manual/opt-in: each PR runs one deliberately chosen reviewer chain
   # (/coderabbit-review, /copilot-review, or a local /code-review) instead of
   # every bot reviewing every PR. Trigger with an `@coderabbitai review`
   # comment — mechanized as `scripts/bot_review.py request --bot coderabbit`.

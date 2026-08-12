@@ -126,3 +126,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0071](0071-commit-shared-claude-settings.md) | Commit the Shared Claude Code Settings File | Proposed |
 | [ADR-0072](0072-review-pipeline-and-ledgers.md) | The Review Pipeline — brief → prep → handoff → apply — and Its Ledger | Proposed |
 | [ADR-0073](0073-operator-handoff-presentation.md) | Operator-Handoff Presentation, and the Peer-Site Search as a Required Output | Proposed |
+| [ADR-0074](0074-bot-review-invocation-policy.md) | Bot Reviews Are Bounded by Repetition, Not by Authorization | Proposed |

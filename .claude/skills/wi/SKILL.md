@@ -93,7 +93,7 @@ Then stop and wait for the go.
 ## 6. How the work item ends
 
 `/land` (gates + propose the commit) → `/ship` (commit + PR; `/ship coderabbit` or `/ship gemini`
-also spends that chain) → further review chains as chosen (`/coderabbit-review`, `/gemini-review`,
+also runs that chain) → further review chains as chosen (`/coderabbit-review`, `/gemini-review`,
 `/copilot-review`).
 Update the phase memory with the outcome — what landed, the non-obvious decisions, and what the
 next WI inherits.
