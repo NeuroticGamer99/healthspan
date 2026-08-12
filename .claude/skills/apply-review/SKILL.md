@@ -141,13 +141,15 @@ finding's fix would cross one of these lines, treat it as a scope decision and s
 
 ## 4. Verify what you changed
 
-Don't declare a finding fixed on faith. For code changes, run the same gates CI runs — read the
-pinned versions from the `env:` block of `.github/workflows/ci.yml` and run ruff / pyright /
-pytest over the affected area; for behavior with a runtime surface, drive it (the `verify`
-skill). For ADR or index edits, run `python scripts/check_adr_index.py`; always run
-`python scripts/check_spec_links.py` (it validates link targets anywhere in the repo, so a
-change *outside* `specs/` can break a spec link). Report a gate that comes back red — never paper
-over it.
+Don't declare a finding fixed on faith. For code changes run `python scripts/run_gates.py ruff
+pyright` per finding — it is the fast pair, and `scripts/run_gates.py` derives both commands and
+their pinned versions from `.github/workflows/ci.yml`, so nothing here needs to name a version or
+an invocation. For behavior with a runtime surface, drive it (the `verify` skill). Report a gate
+that comes back red — never paper over it.
+
+At each savepoint boundary run the full `python scripts/run_gates.py` instead: a per-finding pair
+is a deliberately partial run, and the batch is where that stops being good enough. `--list` shows
+what else exists.
 
 **Then checkpoint the batch: run `/savepoint`** (ADR-0069) — containment scan, the explicit
 path list of what this batch changed, commit. This is the highest-leverage savepoint site: it

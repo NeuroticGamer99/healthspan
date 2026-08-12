@@ -39,13 +39,25 @@ A branch built with `/savepoint` carries most of the work item in local checkpoi
 
 ## 2. Run the gates that exist locally
 
-Run whatever the repository currently has; skip what doesn't exist yet and say so:
+```bash
+python scripts/run_gates.py
+```
 
-- `python scripts/check_adr_index.py` — ADR index consistency (always, if `specs/adr/` or its README changed).
-- `python scripts/check_spec_links.py` — spec cross-link integrity (**always** — it validates link targets anywhere in the repo, so a rename or deletion *outside* `specs/` can break a spec link; CI runs it unconditionally in the docs-consistency job, ADR-0061).
-- Once the code phases land (see `specs/development-plan.md` Phase 0): `ruff check`, `ruff format --check`, `pyright`, `pytest -n auto` — run each if configured in the repo. The `-n auto` (pytest-xdist) is the intended local invocation — the suite is isolated for worker parallelism (see the dev-dependency comment in `pyproject.toml`); only CI runs serial, for its ordered `tee-sys` log capture. Don't add `-n` to `addopts` in `pyproject.toml` — that would leak into CI's invocation.
+That is the whole step. `scripts/run_gates.py` owns which gates exist, the exact
+command each one runs, and the pinned tool version each one uses — all derived
+from `.github/workflows/ci.yml`, so it cannot drift from CI and this file cannot
+drift from it. `--list` shows every gate and its command; a single gate or group
+runs by name (`python scripts/run_gates.py ruff`).
 
-A failing gate stops the landing; fix or escalate before proceeding.
+**Do not reconstruct the commands here.** The list this step used to carry named
+three of CI's gates and got the tool invocations wrong: `ruff`, `pyright` and
+`pymarkdown` are not installed in this project, so the bare forms named here
+could never run, and `/ship` carried a differently-wrong copy of the same list.
+Re-adding any command to this file recreates both faults.
+
+A failing gate stops the landing; fix or escalate before proceeding. The runner
+stops at the first failure and echoes the command that failed, and its summary
+names any gate it could not run locally — a clean local run is not full CI green.
 
 ## 3. Personal-data containment check
 
