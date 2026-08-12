@@ -44,9 +44,14 @@ Deliberate divergences from CI, each with a reason:
   so a single tee'd stream feeds the log-canary scan; its windows-latest leg
   runs parallel (ADR-0063). Locally the parallel leg is the one worth
   reproducing -- it is 112s against >600s -- and this script reproduces it
-  *including* the canary scan, by setting ``CANARY_CAPTURE_DIR`` exactly as CI
-  does. A local run that skipped the canary scan would be one of the partial
-  greens described above.
+  *including* the canary scan, through the same ``CANARY_CAPTURE_DIR`` variable
+  CI uses -- but not the same value: CI sets the bare ``canary-logs``, safe
+  because it writes into a workspace it discards, while this sets a
+  scratch-rooted directory of that name so a local run does not drop
+  ``canary-logs/`` into the repository. The *name* is still read from ci.yml
+  rather than restated, which is what keeps the sink and the scan agreeing.
+  A local run that skipped the canary scan would be one of the partial greens
+  described above.
 * **containment runs ``--scope branch``**, where CI runs ``--scope history``.
   The local question is "is what I am about to commit clean"; the history walk
   is CI's backstop and needs the full-depth checkout CI gives it. The two are

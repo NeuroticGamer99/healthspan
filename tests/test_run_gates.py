@@ -1080,7 +1080,7 @@ def test_the_markdown_gate_does_nothing_when_no_files_match(
     assert built == []
 
 
-def test_the_markdown_gate_reads_the_repositorys_own_files() -> None:
+def test_the_markdown_gate_reads_the_live_repository_files() -> None:
     """The git query works here, and this repo has markdown for it to find."""
     files = run_gates._tracked_markdown()  # pyright: ignore[reportPrivateUsage]
     assert "CLAUDE.md" in files
