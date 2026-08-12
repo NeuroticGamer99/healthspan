@@ -49,6 +49,22 @@ PINNED_GATES = [gate for gate in run_gates.GATES if gate.version_pin]
 GATES_IN_ORDER = [gate.name for gate in run_gates.GATES if gate.local]
 
 
+_CANARY_DIR_RE = re.compile(r"^\s*CANARY_CAPTURE_DIR:\s*(\S+)", re.MULTILINE)
+
+
+def _ci_canary_dir_name() -> str:
+    """The worker-sink directory name CI sets, read from ci.yml.
+
+    Ground truth for the runner's own value. Restating "canary-logs" here would
+    be the second copy this whole module exists to delete, and it would also go
+    stale silently — the failure it is being used to catch.
+    """
+    match = _CANARY_DIR_RE.search(CI_TEXT)
+    if match is None:
+        raise AssertionError("ci.yml no longer sets CANARY_CAPTURE_DIR")
+    return match.group(1)
+
+
 def gate_named(name: str) -> run_gates.Gate:
     """Look a gate up by name rather than by position.
 
@@ -556,11 +572,21 @@ def test_the_real_canary_step_defers_its_argv_until_the_worker_logs_exist(
     # Nothing had been written when the step was built...
     assert not any("canary-gw" in arg for arg in canary.argv)
 
-    # ...so the deferred rebuild is what picks the worker logs up. Both paths
-    # are taken from the *test* step rather than recomputed here: the two steps
-    # are independent call sites, and nothing else checks they were built from
-    # the same scratch paths. Decoupling them leaves each step individually
-    # valid while the scan reads a directory nothing writes to.
+    # Two anchors, and both are needed.
+    #
+    # Ground truth first: the sink directory's name comes from ci.yml, so a
+    # mutation renaming the runner's own `canary_dir` is caught. Taking the
+    # paths *only* from the test step (as an earlier version of this test did)
+    # compares the two steps to each other and to nothing else — and because
+    # both Step calls close over one `canary_dir` local, renaming it moves them
+    # in lockstep and the comparison goes blind. Derived from ci.yml rather than
+    # restated here, for the reason the whole module exists.
+    assert Path(test_step.env["CANARY_CAPTURE_DIR"]).name == _ci_canary_dir_name()
+
+    # Then agreement: the two steps are independent call sites, and nothing else
+    # checks they were built from the same scratch paths. Decoupling them leaves
+    # each step individually valid while the scan reads a directory nothing
+    # writes to.
     assert test_step.capture_to is not None
     worker = Path(test_step.env["CANARY_CAPTURE_DIR"]) / "canary-gw0.log"
     worker.parent.mkdir(parents=True, exist_ok=True)
