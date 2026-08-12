@@ -46,6 +46,11 @@ CI_TEXT = run_gates.CI_WORKFLOW.read_text(encoding="utf-8")
 LOCAL_GATES = [gate for gate in run_gates.GATES if gate.local]
 CI_ONLY_GATES = [gate for gate in run_gates.GATES if not gate.local]
 PINNED_GATES = [gate for gate in run_gates.GATES if gate.version_pin]
+# Gates whose pin governs a tool they need but do not name. Kept as its own
+# roster because `version_pin`'s parametrizations assert the version appears in
+# the rendered command, which is by definition false for this class — and a gate
+# carrying only a tool_pin would otherwise be covered by neither.
+TOOL_PINNED_GATES = [gate for gate in run_gates.GATES if gate.tool_pin]
 GATES_IN_ORDER = [gate.name for gate in run_gates.GATES if gate.local]
 
 
@@ -445,6 +450,94 @@ def test_a_gate_that_examined_nothing_is_not_a_zero_exit(
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
     assert run_gates.main(["markdown-lint"]) == 1
+
+
+@pytest.mark.parametrize("gate", TOOL_PINNED_GATES, ids=lambda g: g.name)
+def test_a_tool_pin_names_a_pin_the_workflow_actually_sets(
+    gate: run_gates.Gate,
+) -> None:
+    """`tool_pin` is derived like every other pin, not a decorative string.
+
+    Unlike `version_pin`, nothing enforces it at build time — it only feeds the
+    `--list` column — so a renamed or invented pin name would render `needs —`
+    and pass everything. Measured: renaming it to a name absent from ci.yml left
+    105/105 green before this test existed.
+    """
+    pins = run_gates.read_pins(CI_TEXT)
+    assert gate.tool_pin in pins, (
+        f"{gate.name}'s tool_pin {gate.tool_pin!r} is not set in ci.yml"
+    )
+
+
+@pytest.mark.parametrize("gate", TOOL_PINNED_GATES, ids=lambda g: g.name)
+def test_a_tool_pinned_gate_renders_its_required_version(
+    gate: run_gates.Gate, tmp_path: Path
+) -> None:
+    """The rendered column carries the derived value, not a constant.
+
+    `--list` is where a lockfile failure that is really a toolchain problem gets
+    diagnosed, so the number beside it has to be the real pin.
+    """
+    ctx = _context(tmp_path)
+    rendered = run_gates.version_of(gate, ctx)
+    assert ctx.pins[gate.tool_pin or ""] in rendered, (
+        f"{gate.name} rendered {rendered!r}, which does not carry the pin"
+    )
+
+
+def test_run_gate_hands_the_workflow_env_to_every_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The wiring, not just the behaviour it enables.
+
+    Every other env test calls `run_step` directly with an explicit argument,
+    and the tests that go through `run_gate` fake `run_step` with a signature
+    that discards it — so dropping `ctx.workflow_env` at the single production
+    call site left 105/105 green. This captures what `run_gate` actually passes.
+    """
+    seen: list[dict[str, str] | None] = []
+
+    def fake_run_step(_step: run_gates.Step, env: dict[str, str] | None = None) -> int:
+        seen.append(env)
+        return 0
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    ctx = _context(tmp_path)
+    assert (
+        run_gates.run_gate(gate_named("adr-index"), ctx) is run_gates.GateResult.PASSED
+    )
+    assert seen == [ctx.workflow_env], (
+        "run_gate did not forward the derived workflow env to its steps"
+    )
+
+
+def test_the_canary_glob_is_unchanged_by_a_directory_that_never_existed(
+    tmp_path: Path,
+) -> None:
+    """Removing the eager mkdir rests on missing ≡ empty; assert it.
+
+    `_pytest` no longer creates the canary directory — conftest's sink does, on
+    first write. The claim that a never-created directory and an empty one
+    produce the same arguments was true by inspection and by nothing else; the
+    other canary tests all mkdir first.
+    """
+    never_created = tmp_path / "canary-logs"
+    assert not never_created.exists()
+    missing = run_gates._canary_argv(tmp_path / "out.log", never_created)  # pyright: ignore[reportPrivateUsage]
+
+    never_created.mkdir()
+    empty = run_gates._canary_argv(tmp_path / "out.log", never_created)  # pyright: ignore[reportPrivateUsage]
+
+    assert missing == empty
+    assert missing[-1].endswith("*.log")
+
+
+def test_conflicting_workflow_env_values_are_refused() -> None:
+    """The same refusal read_pins makes — first-match-wins is a silent guess."""
+    text = 'env:\n  PYTHONUTF8: "1"\nother:\n  PYTHONUTF8: "0"\n'
+    with pytest.raises(run_gates.GateError) as excinfo:
+        run_gates.read_workflow_env(text, "PYTHONUTF8")
+    assert "PYTHONUTF8" in str(excinfo.value)
 
 
 def test_run_step_sets_nothing_the_workflow_no_longer_sets(

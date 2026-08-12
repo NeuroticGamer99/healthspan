@@ -163,8 +163,19 @@ def read_workflow_env(text: str, name: str) -> str | None:
     at which point PYTHONUTF8 goes away there and must go away here too.
     """
     pattern = re.compile(rf'^\s*{re.escape(name)}:\s*"?([^"\s#]+)"?', re.MULTILINE)
-    match = pattern.search(text)
-    return match.group(1) if match else None
+    values = pattern.findall(text)
+    if not values:
+        return None
+    # The same refusal `read_pins` makes, and for the same reason: taking the
+    # first of two disagreeing answers is the silent-wrong-value failure this
+    # module exists to prevent. One parser raising while its sibling guessed was
+    # an asymmetry with no argument behind it.
+    if len(set(values)) > 1:
+        raise GateError(
+            f"{name} is set more than once in {CI_WORKFLOW.name} with different "
+            f"values ({sorted(set(values))!r}); no way to tell which CI uses"
+        )
+    return values[0]
 
 
 def require(pins: dict[str, str], name: str) -> str:
