@@ -535,6 +535,37 @@ def test_the_pytest_gate_marks_its_canary_step_always_run(tmp_path: Path) -> Non
     assert [step.always_run for step in steps] == [False, True]
 
 
+def test_the_real_canary_step_defers_its_argv_until_the_worker_logs_exist(
+    tmp_path: Path,
+) -> None:
+    """The *live* pytest gate must carry `rebuild`, not merely be able to.
+
+    At gate-build time the canary directory is empty, so the argument list
+    freezes at the literal glob — which `scan_log_canary.py` treats as
+    unreadable and fails closed on. Dropping `rebuild` from `_pytest` therefore
+    breaks every parallel run, and the suite could not see it: the mechanism
+    test above uses a synthetic gate, so it stays green while the real registry
+    regresses. This asserts against the registry itself.
+    """
+    canary = gate_named("pytest").steps(_context(tmp_path))[-1]
+    assert canary.rebuild is not None, (
+        "the pytest gate's canary step would freeze its argv at build time, "
+        "before any worker log exists"
+    )
+
+    # Nothing had been written when the step was built...
+    assert not any("canary-gw" in arg for arg in canary.argv)
+
+    # ...so the deferred rebuild is what picks the worker logs up.
+    worker = tmp_path / "canary-logs" / "canary-gw0.log"
+    worker.parent.mkdir(parents=True, exist_ok=True)
+    worker.write_text("", encoding="utf-8")
+
+    rebuilt = list(canary.rebuild())
+    assert str(worker) in rebuilt
+    assert not any("*" in arg for arg in rebuilt)
+
+
 def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -542,10 +573,14 @@ def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
 
     Driven through `run_gate` rather than by calling `replace()` here: an
     earlier version of this test performed the production line itself, so
-    disabling the rebuild branch in `run_gate` left the whole suite green. The
-    mechanism `rebuild` replaced built a fresh Step from argv and display alone,
-    silently dropping `env` and `capture_to` — for the canary step that is
-    CANARY_CAPTURE_DIR and the tee.
+    disabling the rebuild branch in `run_gate` left the whole suite green.
+
+    Scope, stated so it is not over-read: this is a property of the *mechanism*,
+    proved on a synthetic gate that combines `rebuild` with `env` and
+    `capture_to`. No step in the live registry combines all three today, so this
+    guards the mechanism against a future step that does — it says nothing about
+    whether the pytest gate uses `rebuild` at all. That is a separate claim and
+    has its own test below.
     """
     seen: list[run_gates.Step] = []
 
@@ -623,7 +658,10 @@ def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
 
     out = capsys.readouterr().out
     assert f"All {len(docs) - 1} selected gate(s) passed" in out
-    assert "nothing to run" in out
+    # The distinctive half of the empty-gate summary. Matching "nothing to run"
+    # would also match the unrelated all-gates-skipped message on stderr, so it
+    # could pass without this branch ever running.
+    assert "they prove nothing" in out
     assert empty_gate in out
 
 
@@ -670,6 +708,15 @@ def test_the_captured_branch_forces_utf8_in_a_real_child(
 
     A real child rather than a fake, so the assertion is about what the process
     actually saw rather than about a dict the test helped build.
+
+    Two limits, both deliberate. `run_step` merges the env once for both
+    branches, so a fault in *that* line reddens this and its sibling together;
+    what each covers alone is its own branch's use of the merged value, which is
+    the branch-specific regression (`env=os.environ` on one call site only).
+    And the discriminating power is platform-dependent: on Windows the
+    un-forced default is measured cp1252, so this separates fixed from reverted;
+    on a POSIX leg whose locale is already UTF-8 it may pass either way. It is
+    the sibling's faked-env assertion that holds everywhere.
     """
     log = tmp_path / "captured.log"
     monkeypatch.setenv("PYTHONUTF8", "0")
