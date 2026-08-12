@@ -57,7 +57,10 @@ table in `specs/adr/README.md`.
 Decisions get written into it **as they are made**, not reconstructed at the end — that
 reconstruction is where decision records go wrong.
 
-Confirm the docs gates still pass: `uv run python scripts/check_adr_index.py` and `uv run python scripts/check_spec_links.py`.
+Confirm the docs gates still pass: `python scripts/run_gates.py docs`. That group is the whole
+docs-consistency job as `.github/workflows/ci.yml` defines it, rather than the two commands this
+line used to name — and because the group is derived from that job, it stays correct when CI gains
+a gate. Naming the count here would be the drift this selector exists to remove.
 
 ## 4. Ask the clarifying questions
 

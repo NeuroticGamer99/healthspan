@@ -39,23 +39,47 @@ A branch built with `/savepoint` carries most of the work item in local checkpoi
 
 ## 2. Run the gates that exist locally
 
-Run whatever the repository currently has; skip what doesn't exist yet and say so:
+```bash
+python scripts/run_gates.py
+```
 
-- `python scripts/check_adr_index.py` — ADR index consistency (always, if `specs/adr/` or its README changed).
-- `python scripts/check_spec_links.py` — spec cross-link integrity (**always** — it validates link targets anywhere in the repo, so a rename or deletion *outside* `specs/` can break a spec link; CI runs it unconditionally in the docs-consistency job, ADR-0061).
-- Once the code phases land (see `specs/development-plan.md` Phase 0): `ruff check`, `ruff format --check`, `pyright`, `pytest -n auto` — run each if configured in the repo. The `-n auto` (pytest-xdist) is the intended local invocation — the suite is isolated for worker parallelism (see the dev-dependency comment in `pyproject.toml`); only CI runs serial, for its ordered `tee-sys` log capture. Don't add `-n` to `addopts` in `pyproject.toml` — that would leak into CI's invocation.
+That is the whole step. `scripts/run_gates.py` owns which gates exist, the exact
+command each one runs, and the pinned tool version each one uses — all derived
+from `.github/workflows/ci.yml`, so it cannot drift from CI and this file cannot
+drift from it. `--list` shows every gate and its command; a single gate or group
+runs by name (`python scripts/run_gates.py ruff`).
 
-A failing gate stops the landing; fix or escalate before proceeding.
+**Do not reconstruct the commands here.** The list this step used to carry named
+six gates — fewer than CI runs — and named three invocations that could never
+run, from two tools: `ruff check`, `ruff format --check` and `pyright`, neither
+tool being installed in this project. `/ship` carried its own copy of the same
+list that disagreed with this one. Re-adding any command here recreates both
+faults.
+
+A failing gate stops the landing; fix or escalate before proceeding. The runner
+stops at the first failure and echoes the command that failed, and its summary
+names any gate it could not run locally — a clean local run is not full CI green.
 
 ## 3. Personal-data containment check
 
 The rule has an **enumeration** half — which paths does this change touch — and a **content** half — does this file hold health values, provenance, or identifying information. The enumeration half is mechanized (ADR-0070); the content half is judgement and is yours.
 
-### 3a. Enumeration — run the gate
+### 3a. Enumeration — read the gate's evidence
+
+**Step 2 usually already ran this gate**, and streamed its output — `containment` is part of the
+default set. Scroll back to the block whose header begins `=== containment —`; everything below is
+how to read what it printed. Prefer that to re-running: a second branch-history walk buys nothing.
+
+**But do not assume it ran.** `containment` is one gate among several and the runner stops at the
+first failure, so any earlier gate failing means it never executed — and step 2 explicitly supports
+subset runs like `python scripts/run_gates.py ruff`, which never select it at all. If there is no
+`=== containment —` block to scroll back to, run the gate by name:
 
 ```bash
-python scripts/check_personal_containment.py --scope branch
+python scripts/run_gates.py containment
 ```
+
+That is a selector, not a restated command — the runner still owns which script and which flags.
 
 Exit 0 is the only pass. It scans the working tree, every path any commit in `<merge-base>..HEAD` touched, and every tracked path under the containment directory, matching case-insensitively and covering the bare path `specs/personal` as well as the `specs/personal/` prefix.
 
@@ -77,7 +101,7 @@ If the gate cannot run it says so and exits 1 — "could not run" is a different
 
 For every added or modified file outside `specs/personal/`, confirm it contains no personal health values, lab results, diagnoses, medications, or owner-identifying information. Test fixtures must be synthetic. Each savepoint ran this over its own chunk at commit time; this pass is the whole-branch backstop, not a formality to skip on that account.
 
-**Read the branch's history, not only the files as they stand now.** A value committed by one savepoint and sanitized by a later one is invisible in every *current* file, while the dirty blob remains reachable in the branch's history and rides the push with it. A path list would name the file, but a reader then inspecting the clean current version finds nothing. The instrument is the patch stream, and step 3a prints the exact command with the resolved merge base already substituted:
+**Read the branch's history, not only the files as they stand now.** A value committed by one savepoint and sanitized by a later one is invisible in every *current* file, while the dirty blob remains reachable in the branch's history and rides the push with it. A path list would name the file, but a reader then inspecting the clean current version finds nothing. The instrument is the patch stream. Step 3a points you at the gate's output, and that output prints the exact command with the resolved merge base already substituted:
 
 ```text
 git log --diff-merges=first-parent -p <merge-base>..HEAD

@@ -68,25 +68,20 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   session's model, and nothing else will ever notice — on mismatch, stop and re-run `/land`;
   never edit the trailer here. If no matching file and no `/land` run exists, run `/land`
   first and stop — never invent a commit message here.
-- Re-run the gates if anything changed since `/land`, or if you are unsure. Read the pinned
-  versions out of the `env:` block of `.github/workflows/ci.yml` (`RUFF_VERSION`,
-  `PYRIGHT_VERSION`, `PYTEST_VERSION`) — match CI, don't guess:
+- Re-run the gates if anything changed since `/land`, or if you are unsure:
 
   ```bash
-  uvx "ruff@$RUFF_VERSION" check .
-  uvx "ruff@$RUFF_VERSION" format --check .
-  uv run --with "pyright==$PYRIGHT_VERSION" --with "pytest==$PYTEST_VERSION" pyright
-  uv run --with "pytest==$PYTEST_VERSION" pytest -q -n auto
-  uv run python scripts/check_adr_index.py   # when specs/adr/ is touched
-  uv run python scripts/check_spec_links.py  # always — validates targets anywhere in the repo
+  python scripts/run_gates.py
   ```
 
-  The `--with "pytest==…"` on the **pyright** line is not redundant: it is how CI resolves the test
-  files' imports, so dropping it can typecheck differently than CI does. The `-n auto` on pytest is
-  a deliberate divergence — CI runs the suite serially so the log-canary gate sees one stream
-  (testing-strategy.md) — but the version pin still matches.
+  `scripts/run_gates.py` derives every command and every pinned version from
+  `.github/workflows/ci.yml`, so there is nothing to read out of the `env:` block by hand and
+  nothing here to keep in sync. It also carries the reasoning this block used to state — why
+  `--with "pytest==…"` on the **pyright** line is not redundant, and why `-n auto` is a deliberate
+  divergence from CI's serial legs — in its module docstring, which is now the one copy.
 
-  A gate that has gone red since `/land` stops the ship.
+  A gate that has gone red since `/land` stops the ship. So does a summary reporting gates it
+  could not run locally, if you were treating the run as full CI green.
 - Confirm the branch is not `main`. If it is, stop — branch first.
 
 ## 2. Collapse savepoints, commit, and push

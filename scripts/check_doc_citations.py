@@ -86,6 +86,21 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     ".claude/bot-review-triage.md": {
         ".claude/skills/apply-review/SKILL.md": ("Under-reporting",),
     },
+    # The local gate runner. Each caller used to restate CI's gate commands and
+    # pinned versions; measured, two of those copies had already drifted apart,
+    # and `/land`'s named tool invocations that do not exist in this project.
+    # The runner derives all of it from ci.yml, so the callers cite it instead.
+    #
+    # No needles: the script is new, so in every caller the path appears only as
+    # this citation. What a caller may *not* do is re-add a command list beside
+    # the pointer — that is judgement, and stays ungated for the reasons
+    # ADR-0073 §3 gives.
+    "scripts/run_gates.py": {
+        ".claude/skills/land/SKILL.md": (),
+        ".claude/skills/ship/SKILL.md": (),
+        ".claude/skills/apply-review/SKILL.md": (),
+        ".claude/skills/wi/SKILL.md": (),
+    },
 }
 
 
