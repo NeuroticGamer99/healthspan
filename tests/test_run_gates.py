@@ -547,7 +547,7 @@ def test_the_real_canary_step_defers_its_argv_until_the_worker_logs_exist(
     test above uses a synthetic gate, so it stays green while the real registry
     regresses. This asserts against the registry itself.
     """
-    canary = gate_named("pytest").steps(_context(tmp_path))[-1]
+    test_step, canary = gate_named("pytest").steps(_context(tmp_path))
     assert canary.rebuild is not None, (
         "the pytest gate's canary step would freeze its argv at build time, "
         "before any worker log exists"
@@ -556,13 +556,23 @@ def test_the_real_canary_step_defers_its_argv_until_the_worker_logs_exist(
     # Nothing had been written when the step was built...
     assert not any("canary-gw" in arg for arg in canary.argv)
 
-    # ...so the deferred rebuild is what picks the worker logs up.
-    worker = tmp_path / "canary-logs" / "canary-gw0.log"
+    # ...so the deferred rebuild is what picks the worker logs up. Both paths
+    # are taken from the *test* step rather than recomputed here: the two steps
+    # are independent call sites, and nothing else checks they were built from
+    # the same scratch paths. Decoupling them leaves each step individually
+    # valid while the scan reads a directory nothing writes to.
+    assert test_step.capture_to is not None
+    worker = Path(test_step.env["CANARY_CAPTURE_DIR"]) / "canary-gw0.log"
     worker.parent.mkdir(parents=True, exist_ok=True)
     worker.write_text("", encoding="utf-8")
 
     rebuilt = list(canary.rebuild())
-    assert str(worker) in rebuilt
+    assert str(test_step.capture_to) in rebuilt, (
+        "the canary scans a different log than the test step writes"
+    )
+    assert str(worker) in rebuilt, (
+        "the canary globs a different directory than the worker sink writes to"
+    )
     assert not any("*" in arg for arg in rebuilt)
 
 
