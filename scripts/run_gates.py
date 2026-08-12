@@ -52,6 +52,16 @@ Deliberate divergences from CI, each with a reason:
   is CI's backstop and needs the full-depth checkout CI gives it. The two are
   the same gate, which is why the registry maps this entry onto CI's step and
   the drift test compares gate *identity* rather than argv.
+* **the lockfile gate runs ``uv lock --check``**, where CI's step runs
+  ``uv sync --locked``. Both fail on a lockfile that disagrees with
+  ``pyproject.toml`` — the property the gate is for — but CI is installing into
+  a runner it then discards, while locally the ``sync`` form would mutate the
+  developer's environment as a side effect of asking a question.
+
+The first two of those were decided before this script existed and are only
+*applied* here: ``-n auto`` locally is the pre-existing norm ADR-0063 records,
+and ``--scope branch`` is the scope ADR-0070 §2 assigns to ``/land`` by name.
+The third is this script's own, which is why it is stated here.
 
 Known caveat: this parses ``ci.yml``. Bumping a pin is free -- the new value is
 picked up -- but changing the *spelling* of a pin (``RUFF_VERSION: "1.2.3"`` to

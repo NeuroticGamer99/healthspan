@@ -90,7 +90,7 @@ If the gate cannot run it says so and exits 1 — "could not run" is a different
 
 For every added or modified file outside `specs/personal/`, confirm it contains no personal health values, lab results, diagnoses, medications, or owner-identifying information. Test fixtures must be synthetic. Each savepoint ran this over its own chunk at commit time; this pass is the whole-branch backstop, not a formality to skip on that account.
 
-**Read the branch's history, not only the files as they stand now.** A value committed by one savepoint and sanitized by a later one is invisible in every *current* file, while the dirty blob remains reachable in the branch's history and rides the push with it. A path list would name the file, but a reader then inspecting the clean current version finds nothing. The instrument is the patch stream, and the gate output step 3a points you at prints the exact command with the resolved merge base already substituted:
+**Read the branch's history, not only the files as they stand now.** A value committed by one savepoint and sanitized by a later one is invisible in every *current* file, while the dirty blob remains reachable in the branch's history and rides the push with it. A path list would name the file, but a reader then inspecting the clean current version finds nothing. The instrument is the patch stream. Step 3a points you at the gate's output, and that output prints the exact command with the resolved merge base already substituted:
 
 ```text
 git log --diff-merges=first-parent -p <merge-base>..HEAD

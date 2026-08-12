@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -297,6 +297,24 @@ def test_a_ci_only_gate_refuses_to_build_steps(
 # --------------------------------------------------------------------------
 
 
+def test_the_lockfile_gate_checks_rather_than_syncs(tmp_path: Path) -> None:
+    """It must not mutate the developer's environment to answer a question.
+
+    CI's step is `uv sync --locked`, which installs into a runner it discards.
+    Both forms fail on a stale lockfile, so a regression to the CI spelling
+    keeps the gate working and quietly acquires a side effect — invisible to
+    every generic assertion about this gate.
+    """
+    argv = [
+        arg
+        for step in gate_named("lockfile").steps(_context(tmp_path))
+        for arg in step.argv
+    ]
+    assert "lock" in argv
+    assert "--check" in argv
+    assert "sync" not in argv, "the lockfile gate would now mutate the environment"
+
+
 def test_a_group_expands_to_its_gates() -> None:
     """`ruff` is the alias the runner was asked for by name — "just ruff"."""
     assert [g.name for g in run_gates.resolve(["ruff"])] == [
@@ -478,7 +496,15 @@ def test_the_canary_expands_worker_logs_when_the_sink_produced_them(
     argv = run_gates._canary_argv(log, canary_dir)  # pyright: ignore[reportPrivateUsage]
 
     assert not any("*" in arg for arg in argv)
-    assert sum(arg.endswith(".log") for arg in argv) == 3  # the tee'd log + two workers
+    # Identity, not a count: asserting "three .log arguments" passes just as
+    # readily when one worker's path is duplicated and the other dropped, which
+    # is a realistic "a worker log never gets scanned" regression. The scanner
+    # treats argv positions alike, so a set is the right shape.
+    assert set(argv) >= {
+        str(canary_dir / "canary-gw0.log"),
+        str(canary_dir / "canary-gw1.log"),
+    }
+    assert str(log) in argv
 
 
 def test_an_always_run_step_runs_after_an_earlier_step_failed(
@@ -509,13 +535,25 @@ def test_the_pytest_gate_marks_its_canary_step_always_run(tmp_path: Path) -> Non
     assert [step.always_run for step in steps] == [False, True]
 
 
-def test_a_rebuilt_step_keeps_its_env_and_capture(tmp_path: Path) -> None:
-    """`rebuild` replaces argv only.
+def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`run_gate` calls `rebuild` and replaces argv *only*.
 
-    The mechanism it replaced constructed a whole new Step from argv and
-    display, silently dropping `env` and `capture_to` — which for the canary
-    step would have meant losing CANARY_CAPTURE_DIR and the tee.
+    Driven through `run_gate` rather than by calling `replace()` here: an
+    earlier version of this test performed the production line itself, so
+    disabling the rebuild branch in `run_gate` left the whole suite green. The
+    mechanism `rebuild` replaced built a fresh Step from argv and display alone,
+    silently dropping `env` and `capture_to` — for the canary step that is
+    CANARY_CAPTURE_DIR and the tee.
     """
+    seen: list[run_gates.Step] = []
+
+    def fake_run_step(step: run_gates.Step) -> int:
+        seen.append(step)
+        return 0
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
     step = run_gates.Step(
         ["original"],
         "display",
@@ -523,10 +561,70 @@ def test_a_rebuilt_step_keeps_its_env_and_capture(tmp_path: Path) -> None:
         capture_to=tmp_path / "log",
         rebuild=lambda: ["rebuilt"],
     )
-    rebuilt = replace(step, argv=step.rebuild() if step.rebuild else step.argv)
-    assert list(rebuilt.argv) == ["rebuilt"]
-    assert rebuilt.env == {"KEEP": "1"}
-    assert rebuilt.capture_to == tmp_path / "log"
+    gate = run_gates.Gate(
+        name="synthetic",
+        job="test",
+        summary="a gate that exists only for this test",
+        ci_steps=(),
+        build=lambda _: [step],
+    )
+
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.PASSED
+    assert list(seen[0].argv) == ["rebuilt"], "run_gate did not call rebuild()"
+    assert seen[0].env == {"KEEP": "1"}, "rebuild dropped the step's env"
+    assert seen[0].capture_to == tmp_path / "log", "rebuild dropped the tee"
+
+
+def test_main_removes_the_scratch_directory_after_a_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cleanup is wired into `main`, not merely available on Context.
+
+    `Context.cleanup` having its own unit test proves the method works; it does
+    not prove anything calls it. Removing `main`'s `finally` left the suite
+    green, which for a leak the module docstring calls a containment surface is
+    the wrong thing to be silent about.
+    """
+    created: list[Path] = []
+
+    def fake_run_gate(
+        _gate: run_gates.Gate, ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        created.append(ctx.scratch_dir())
+        return run_gates.GateResult.PASSED
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+    assert run_gates.main(["adr-index"]) == 0
+    assert created, "the fake gate never asked for a scratch directory"
+    assert not created[0].exists(), "main left the scratch directory behind"
+
+
+def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The EMPTY outcome has to survive aggregation, not just exist.
+
+    `run_gate` returning EMPTY is tested separately; this is `main`'s half.
+    Counting EMPTY as passed left the suite green, which would put a gate that
+    scanned nothing inside "All N selected gate(s) passed".
+    """
+    empty_gate = "markdown-lint"
+
+    def fake_run_gate(
+        gate: run_gates.Gate, _ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        if gate.name == empty_gate:
+            return run_gates.GateResult.EMPTY
+        return run_gates.GateResult.PASSED
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+    docs = run_gates.groups()["docs"]
+    assert run_gates.main(["docs"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"All {len(docs) - 1} selected gate(s) passed" in out
+    assert "nothing to run" in out
+    assert empty_gate in out
 
 
 def test_run_step_forces_utf8_in_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -557,6 +655,38 @@ def test_run_step_forces_utf8_in_the_child(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
     run_gates.run_step(run_gates.Step(["x"]))
     assert seen["PYTHONUTF8"] == "1"
+
+
+def test_the_captured_branch_forces_utf8_in_a_real_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The tee'd branch is the one the property is actually *for*.
+
+    `capture_to` is what the pytest gate uses, and it is the path where a
+    mismatch matters: the parent decodes the pipe as UTF-8 with
+    errors="replace", so a child encoding cp1252 lands in the canary-scanned log
+    as U+FFFD. The sibling test above covers only the uncaptured branch, and
+    bypassing the merged env on *this* one left the suite green.
+
+    A real child rather than a fake, so the assertion is about what the process
+    actually saw rather than about a dict the test helped build.
+    """
+    log = tmp_path / "captured.log"
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    step = run_gates.Step(
+        [
+            sys.executable,
+            "-c",
+            "import os, sys; print(os.environ.get('PYTHONUTF8')); "
+            "print(sys.stdout.encoding.lower())",
+        ],
+        capture_to=log,
+    )
+
+    assert run_gates.run_step(step) == 0
+    lines = log.read_text(encoding="utf-8").split()
+    assert lines[0] == "1", "the ambient PYTHONUTF8=0 reached the child"
+    assert lines[1] == "utf-8", "the child encoded its pipe as something else"
 
 
 # --------------------------------------------------------------------------
