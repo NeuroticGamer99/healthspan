@@ -480,8 +480,13 @@ def test_a_tool_pinned_gate_renders_its_required_version(
     """
     ctx = _context(tmp_path)
     rendered = run_gates.version_of(gate, ctx)
-    assert ctx.pins[gate.tool_pin or ""] in rendered, (
-        f"{gate.name} rendered {rendered!r}, which does not carry the pin"
+    # Whole-token, not substring: a version is a substring of itself with any
+    # digit prepended, so `pin in rendered` passes on a render corrupted from
+    # "0.11.28" to "10.11.28" — measured. Splitting keeps the assertion
+    # independent of the surrounding wording while still requiring the exact
+    # value, which is what an operator reads off this column.
+    assert ctx.pins[gate.tool_pin or ""] in rendered.split(), (
+        f"{gate.name} rendered {rendered!r}, which does not carry the pin exactly"
     )
 
 
