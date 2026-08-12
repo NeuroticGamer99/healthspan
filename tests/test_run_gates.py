@@ -96,6 +96,7 @@ def _context(tmp_path: Path | None = None) -> run_gates.Context:
         gitleaks_version=run_gates.read_gitleaks_version(CI_TEXT),
         scratch=tmp_path,
         workflow_env=env,
+        canary_dir_name=run_gates.read_workflow_env(CI_TEXT, "CANARY_CAPTURE_DIR"),
     )
 
 
@@ -113,6 +114,7 @@ env:
   PYTEST_XDIST_VERSION: "99.98.94"
   PIP_AUDIT_VERSION: "99.98.93"
   PYMARKDOWN_VERSION: "99.98.92"
+  CANARY_CAPTURE_DIR: synthetic-logs
 """
 
 
@@ -125,7 +127,14 @@ def test_a_bumped_pin_is_picked_up(gate: run_gates.Gate, tmp_path: Path) -> None
     emitted both, or if it fell back to a constant on a parse miss.
     """
     synthetic = run_gates.read_pins(SYNTHETIC)
-    ctx = run_gates.Context(pins=synthetic, gitleaks_version=None, scratch=tmp_path)
+    ctx = run_gates.Context(
+        pins=synthetic,
+        gitleaks_version=None,
+        scratch=tmp_path,
+        # From the synthetic workflow too, not the real one — the premise here
+        # is a workflow whose every value differs from the repository's.
+        canary_dir_name=run_gates.read_workflow_env(SYNTHETIC, "CANARY_CAPTURE_DIR"),
+    )
     real = run_gates.read_pins(CI_TEXT)[gate.version_pin or ""]
 
     rendered = " ".join(step.shown() for step in gate.steps(ctx))
@@ -189,7 +198,15 @@ def test_the_gitleaks_version_is_read_from_its_install_step() -> None:
 # --------------------------------------------------------------------------
 
 _STEP_START = re.compile(r"^      - ")
-_STEP_NAME = re.compile(r"^      - name: (.+?)\s*$")
+# `name:` may sit on the `- ` line or on any later line of the same block — YAML
+# does not order a step's keys. Anchoring on the first line silently dropped a
+# step written `- run:` first, and a dropped step never reaches the claim check,
+# so the runner could fall behind CI for that gate with the suite green.
+_STEP_NAME = re.compile(r"^      (?:- |  )name: (.+?)\s*$")
+# `run:` needs the identical treatment, and for the identical reason — it is the
+# *other* key whose position was assumed. A step written `- run:` first put the
+# run on the `- ` line, where a check anchored at body indent could not see it.
+_STEP_RUN = re.compile(r"^      (?:- |  )run:")
 
 
 def _named_run_steps(text: str) -> list[str]:
@@ -207,9 +224,10 @@ def _named_run_steps(text: str) -> list[str]:
     def flush() -> None:
         if not current:
             return
-        match = _STEP_NAME.match(current[0])
-        if match and any(line.startswith("        run:") for line in current):
-            names.append(match.group(1))
+        # Scan the whole block, not just its first line.
+        matches = [m for m in (_STEP_NAME.match(line) for line in current) if m]
+        if matches and any(_STEP_RUN.match(line) for line in current):
+            names.append(matches[0].group(1))
 
     for line in text.splitlines():
         if _STEP_START.match(line):
@@ -239,6 +257,24 @@ def test_the_step_parser_finds_the_workflows_steps() -> None:
     steps = _named_run_steps(CI_TEXT)
     assert len(steps) > 10
     assert "ruff format --check" in steps
+
+
+def test_the_step_parser_finds_a_name_that_is_not_the_first_key() -> None:
+    """YAML does not order a step's keys, and a dropped step is a silent hole.
+
+    A step written `- run:` first still carries both keys, but an anchor on the
+    block's first line returns no name for it — so it never reaches the claim
+    check below and the runner can fall behind CI for that gate with the suite
+    green. `test_the_step_parser_finds_the_workflows_steps` cannot see this:
+    `len(steps) > 10` and one known name both still hold when one step is lost.
+    """
+    yaml = (
+        "      - run: ruff check\n"
+        "        name: name written second\n"
+        "      - name: name written first\n"
+        "        run: echo hi\n"
+    )
+    assert _named_run_steps(yaml) == ["name written second", "name written first"]
 
 
 @pytest.mark.parametrize("step", sorted(_named_run_steps(CI_TEXT)))
@@ -910,7 +946,10 @@ def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
     assert run_gates.main(["docs"]) == 1
 
     out = capsys.readouterr().out
-    assert f"All {len(docs) - 1} selected gate(s) passed" in out
+    # No "All": the word would contradict the empty-gate report on the next
+    # line, which is what a reader sees before they reach the exit code.
+    assert f"\n{len(docs) - 1} selected gate(s) passed" in out
+    assert "All " not in out
     # The distinctive half of the empty-gate summary. Matching "nothing to run"
     # would also match the unrelated all-gates-skipped message on stderr, so it
     # could pass without this branch ever running.

@@ -48,8 +48,9 @@ Deliberate divergences from CI, each with a reason:
   CI uses -- but not the same value: CI sets the bare ``canary-logs``, safe
   because it writes into a workspace it discards, while this sets a
   scratch-rooted directory of that name so a local run does not drop
-  ``canary-logs/`` into the repository. The *name* is still read from ci.yml
-  rather than restated, which is what keeps the sink and the scan agreeing.
+  ``canary-logs/`` into the repository. The *name* is read from ci.yml's own
+  ``CANARY_CAPTURE_DIR`` rather than restated here, so the sink and the scan
+  cannot disagree about it and a rename in ci.yml carries across.
   A local run that skipped the canary scan would be one of the partial greens
   described above.
 * **containment runs ``--scope branch``**, where CI runs ``--scope history``.
@@ -232,6 +233,11 @@ Builder = Callable[["Context"], list[Step]]
 class Context:
     pins: dict[str, str]
     gitleaks_version: str | None
+    # The worker-sink directory name, read from ci.yml's own CANARY_CAPTURE_DIR.
+    # Held here rather than exported through `workflow_env`: CI's value is the
+    # bare `canary-logs`, correct in a workspace it discards and wrong locally,
+    # so the runner takes the *name* and roots it in its own scratch directory.
+    canary_dir_name: str | None = None
     # Workflow-level env CI exports to every step, derived rather than restated.
     # `None` when ci.yml no longer sets it, which is how the runner stops
     # forcing what CI stopped forcing instead of silently diverging.
@@ -252,7 +258,8 @@ class Context:
             # `display` string, and none of those contains a scratch path. It
             # exists only so a builder joining onto it gets a *legal* path:
             # angle brackets in an earlier version raised WinError 123 on
-            # Windows when `_pytest` joined "canary-logs" onto it. Nothing is
+            # Windows when `_pytest` joined the canary directory name onto it.
+            # Nothing is
             # opened here, so this never touches the shared temp directory.
             return Path(tempfile.gettempdir()) / "run_gates-scratch"
         if self.scratch is None:
@@ -424,7 +431,13 @@ def _pytest(ctx: Context) -> list[Step]:
     xdist = require(ctx.pins, "PYTEST_XDIST_VERSION")
     scratch = ctx.scratch_dir()
     log = scratch / "pytest-output.log"
-    canary_dir = scratch / "canary-logs"
+    if ctx.canary_dir_name is None:
+        raise GateError(
+            "ci.yml no longer sets CANARY_CAPTURE_DIR, so the worker-sink "
+            "directory name cannot be derived. Restating it here would be the "
+            "second copy this module exists to delete"
+        )
+    canary_dir = scratch / ctx.canary_dir_name
     # CI sweeps a stale canary dir before the run; a fresh scratch directory per
     # invocation makes that impossible here, so there is nothing to sweep.
     # No mkdir here. conftest.py's capture sink does
@@ -797,16 +810,23 @@ def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
     env = {**os.environ, **(workflow_env or {}), **step.env}
     print(f"$ {step.shown()}", flush=True)
     if step.capture_to is None:
-        completed = subprocess.run(  # noqa: S603 - fixed executable, no shell
-            step.argv, cwd=REPO_ROOT, env=env, check=False
-        )
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed executable, no shell
+                step.argv, cwd=REPO_ROOT, env=env, check=False
+            )
+        except OSError as exc:
+            # The `or` fallback on _GIT/_UV/_UVX promises a missing tool fails
+            # "as a gate that could not start, naming the command". Unwrapped,
+            # it surfaced as a bare FileNotFoundError traceback — main() catches
+            # only GateError — so the promise was prose the code did not keep.
+            raise GateError(f"could not start `{step.shown()}`: {exc}") from exc
         return completed.returncode
 
     # Reproduce CI's `| tee`: stream to the console and to a file at once, so a
     # failing test's traceback is visible *and* scannable by the canary gate.
     step.capture_to.parent.mkdir(parents=True, exist_ok=True)
-    with (
-        subprocess.Popen(  # noqa: S603 - fixed executable, no shell
+    try:
+        started = subprocess.Popen(  # noqa: S603 - fixed executable, no shell
             step.argv,
             cwd=REPO_ROOT,
             env=env,
@@ -816,7 +836,13 @@ def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
-        ) as process,
+        )
+    except OSError as exc:
+        # Same conversion as the uncaptured branch above, so both paths report a
+        # missing tool identically rather than one naming it and one crashing.
+        raise GateError(f"could not start `{step.shown()}`: {exc}") from exc
+    with (
+        started as process,
         step.capture_to.open("w", encoding="utf-8") as sink,
     ):
         # `stdout=PIPE` above guarantees a pipe; the guard is here rather than an
@@ -903,6 +929,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         ctx.pins = read_pins(text)
         ctx.gitleaks_version = read_gitleaks_version(text)
+        ctx.canary_dir_name = read_workflow_env(text, "CANARY_CAPTURE_DIR")
         # Only the names the runner actually needs, not every workflow key: an
         # unfiltered sweep would export CI's own bookkeeping into local children.
         for name in WORKFLOW_ENV_NAMES:
@@ -971,7 +998,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     passed = [name for name, r in results.items() if r is GateResult.PASSED]
     empty = [name for name, r in results.items() if r is GateResult.EMPTY]
-    print(f"\nAll {len(passed)} selected gate(s) passed.")
+    # "All" only when it is true of the whole selection. Printing it above the
+    # empty-gate report made the summary contradict itself: "All 12 selected
+    # gate(s) passed." immediately followed by one that examined nothing.
+    if empty:
+        print(f"\n{len(passed)} selected gate(s) passed.")
+    else:
+        print(f"\nAll {len(passed)} selected gate(s) passed.")
     if empty:
         # Named *and* non-zero. Naming it while still exiting 0 was the false
         # green in a quieter register: `/land` reads the exit code and its rule
