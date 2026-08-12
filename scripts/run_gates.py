@@ -75,7 +75,8 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -107,6 +108,15 @@ _UVX = shutil.which("uvx") or "uvx"
 
 class GateError(RuntimeError):
     """A gate could not be built or run — distinct from a gate that failed."""
+
+
+class GateResult(Enum):
+    """Three outcomes, because "ran and passed" and "had nothing to run" are
+    different claims and only one of them is evidence."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    EMPTY = "empty"
 
 
 def read_pins(text: str) -> dict[str, str]:
@@ -155,6 +165,17 @@ class Step:
     # When set, the step's combined output is streamed to the console *and*
     # written here, reproducing CI's `| tee`. The canary scan reads it back.
     capture_to: Path | None = None
+    # Recomputes argv immediately before the step runs, for a command whose
+    # arguments depend on files an earlier step created. Carried on the step
+    # rather than keyed on a gate name and position in `run_gate`: that coupling
+    # silently rewrote the wrong step — dropping its env and capture_to — the
+    # moment anything was inserted into or reordered within a gate.
+    rebuild: Callable[[], Sequence[str]] | None = None
+    # Runs even when an earlier step in the same gate has failed, reproducing
+    # CI's `if: ${{ !cancelled() && ... }}` on the canary steps. ci.yml states
+    # the reason where it sets it: "Must run on test FAILURE too — a failing
+    # test's traceback is the likeliest place for a leaked value."
+    always_run: bool = False
 
     def shown(self) -> str:
         return self.display or " ".join(self.argv)
@@ -162,7 +183,7 @@ class Step:
 
 # A gate's steps are built lazily: the markdown gate asks git for its file list
 # and the test gate needs a scratch directory, neither of which should happen at
-# import time or when only --list was asked for.
+# import time.
 Builder = Callable[["Context"], list[Step]]
 
 
@@ -170,13 +191,38 @@ Builder = Callable[["Context"], list[Step]]
 class Context:
     pins: dict[str, str]
     gitleaks_version: str | None
-    # Created on first use; None while only listing/printing.
+    # Where a gate may write working files. Created on first use and removed by
+    # `cleanup`. `--list` and `--print` build every gate's steps in order to show
+    # them, so they reach `scratch_dir` too; they pass `dry=True`, which hands
+    # back a path that is never created. An earlier version documented those two
+    # as not reaching here at all, which was measured false — one `--list` left a
+    # `mkdtemp` directory behind, and nothing ever removed any of them.
     scratch: Path | None = None
+    dry: bool = False
 
     def scratch_dir(self) -> Path:
+        if self.dry:
+            # A stable placeholder: displayed, never written to. Steps built in
+            # this mode are for reading, and creating a directory to print its
+            # name is the side effect being removed. It has to be a *legal* path
+            # even though nothing opens it — a builder may still join onto it,
+            # and angle brackets made that raise WinError 123 on Windows.
+            return Path(tempfile.gettempdir()) / "run_gates-scratch"
         if self.scratch is None:
             self.scratch = Path(tempfile.mkdtemp(prefix="run_gates-"))
         return self.scratch
+
+    def cleanup(self) -> None:
+        """Remove the scratch directory, if one was created.
+
+        It holds captured test output — exactly the material the canary gate
+        exists to police — outside the repository, where the containment gate
+        does not look. Leaving it is both an unbounded leak and a containment
+        surface, so removal is unconditional rather than best-effort on success.
+        """
+        if self.scratch is not None:
+            shutil.rmtree(self.scratch, ignore_errors=True)
+            self.scratch = None
 
 
 @dataclass(frozen=True)
@@ -328,7 +374,8 @@ def _pytest(ctx: Context) -> list[Step]:
     canary_dir = scratch / "canary-logs"
     # CI sweeps a stale canary dir before the run; a fresh scratch directory per
     # invocation makes that impossible here, so there is nothing to sweep.
-    canary_dir.mkdir(parents=True, exist_ok=True)
+    if not ctx.dry:
+        canary_dir.mkdir(parents=True, exist_ok=True)
     return [
         Step(
             [
@@ -352,18 +399,41 @@ def _pytest(ctx: Context) -> list[Step]:
         Step(
             _canary_argv(log, canary_dir),
             _python_display("scan_log_canary.py", "<pytest log>", "<worker logs>"),
+            # The worker sink creates its files lazily, so the argument list is
+            # only knowable after the test step has run.
+            rebuild=lambda: _canary_argv(log, canary_dir),
+            # CI runs this on test failure too, and says why: a failing test's
+            # traceback is the likeliest place for a leaked value.
+            always_run=True,
         ),
     ]
 
 
 def _canary_argv(log: Path, canary_dir: Path) -> list[str]:
-    # The worker sink creates files lazily, so the glob is expanded after the
-    # test step has run — see run_gate, which rebuilds this step's argv.
+    """Build the canary scan's arguments the way a shell would expand CI's glob.
+
+    CI passes the literal ``canary-logs/*.log``. With matches, the shell expands
+    it to real paths; with none it passes the pattern through unexpanded, and
+    ``scan_log_canary.py`` turns that unreadable path into exit 2. That is the
+    dead-sink case, and the scanner's own comment calls the behaviour
+    load-bearing for the parallel leg's fail-closed property (ADR-0063).
+
+    Expanding to an empty list instead would hand the scanner only the
+    controller stream, which it would scan happily and exit 0 on — turning a
+    broken capture into a green gate, the exact softening that comment forbids.
+    """
+    matches = sorted(str(path) for path in canary_dir.glob("*.log"))
     return _python(
-        "scan_log_canary.py",
-        str(log),
-        *sorted(str(p) for p in canary_dir.glob("*.log")),
+        "scan_log_canary.py", str(log), *(matches or [str(canary_dir / "*.log")])
     )
+
+
+def _lockfile(_: Context) -> list[Step]:
+    # `--check` rather than CI's bare `uv sync --locked`: both fail on a lockfile
+    # that disagrees with pyproject.toml, but CI's form is installing a project
+    # into a runner it then throws away, while locally it would mutate the
+    # developer's environment as a side effect of asking a question.
+    return [Step([_UV, "lock", "--check"], "uv lock --check")]
 
 
 def _pip_audit(ctx: Context) -> list[Step]:
@@ -383,7 +453,13 @@ def _pip_audit(ctx: Context) -> list[Step]:
                 "requirements-txt",
                 "-o",
                 export,
-            ]
+            ],
+            # Without this the resolved absolute path of `uv` is what gets
+            # shown, which on this platform embeds the operator's username —
+            # a paste-unfriendly command and an identifying string in output
+            # that gets copied into PRs and handoffs.
+            "uv export --locked --no-emit-project --format requirements-txt "
+            f"-o {export}",
         ),
         Step(
             [_UVX, f"pip-audit@{version}", "-r", export],
@@ -445,6 +521,13 @@ GATES: tuple[Gate, ...] = (
         summary="no personal-data path escapes specs/personal/ (branch scope)",
         ci_steps=("Scan full git history for personal-data paths",),
         build=_docs_gate("check_personal_containment.py", "--scope", "branch"),
+    ),
+    Gate(
+        name="lockfile",
+        job="typecheck",
+        summary="uv.lock agrees with pyproject.toml",
+        ci_steps=("Install project (locked)",),
+        build=_lockfile,
     ),
     Gate(
         name="ruff-check",
@@ -531,10 +614,13 @@ GATES: tuple[Gate, ...] = (
 # or by this set, so a new CI gate cannot land unnoticed.
 NON_GATE_STEPS: frozenset[str] = frozenset(
     {
-        "Install project (locked)",  # appears in two jobs
         "All gates passed",  # the ci-ok aggregate
     }
 )
+
+# Gates --fast drops. Named here rather than inline so the message that reports
+# them and the filter that removes them cannot disagree.
+SLOW_GATES: frozenset[str] = frozenset({"pytest", "pip-audit"})
 
 # Matched by prefix because the version is part of the step name; a gitleaks
 # bump should not fail the drift test.
@@ -586,10 +672,11 @@ def version_of(gate: Gate, ctx: Context) -> str:
     return "—"
 
 
-def render_list(ctx: Context) -> str:
+def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
+    gates = list(gates) if gates is not None else list(GATES)
     lines = ["Gates derived from .github/workflows/ci.yml", ""]
-    width = max(len(gate.name) for gate in GATES)
-    for gate in GATES:
+    width = max(len(gate.name) for gate in gates)
+    for gate in gates:
         where = "local" if gate.local else "CI-only"
         heading = f"{gate.name:<{width}}  {version_of(gate, ctx):<9} {where:<8}"
         lines.append(f"  {heading} [{gate.job}]")
@@ -615,7 +702,16 @@ def render_list(ctx: Context) -> str:
 
 
 def run_step(step: Step) -> int:
-    env = {**os.environ, **step.env}
+    # PYTHONUTF8 matches ci.yml's workflow-level setting, and is not cosmetic
+    # here. Measured on Windows/Python 3.14: a child on a pipe defaults to the
+    # legacy code page (cp1252), while the tee below decodes UTF-8 with
+    # errors="replace". Without this a test printing a non-ASCII character
+    # either crashes the local pytest gate — a red CI is green for — or lands in
+    # the tee'd log as U+FFFD, mangled *before* the canary gate scans it.
+    # Set *after* os.environ, not before: an ambient PYTHONUTF8=0 would
+    # otherwise win and put the mismatch straight back. A step may still
+    # override it deliberately.
+    env = {**os.environ, "PYTHONUTF8": "1", **step.env}
     print(f"$ {step.shown()}", flush=True)
     if step.capture_to is None:
         completed = subprocess.run(  # noqa: S603 - fixed executable, no shell
@@ -651,27 +747,30 @@ def run_step(step: Step) -> int:
     return process.returncode
 
 
-def run_gate(gate: Gate, ctx: Context) -> bool:
+def run_gate(gate: Gate, ctx: Context) -> GateResult:
     print(f"\n=== {gate.name} — {gate.summary} ===", flush=True)
     steps = gate.steps(ctx)
     if not steps:
-        print("  (nothing to do)")
-        return True
-    for index, step in enumerate(steps):
-        # The canary step's argv depends on files the test step creates, so it
-        # is rebuilt once its predecessor has run rather than at build time.
-        if gate.name == "pytest" and index == 1:
-            scratch = ctx.scratch_dir()
-            step = Step(
-                _canary_argv(scratch / "pytest-output.log", scratch / "canary-logs"),
-                step.display,
-            )
+        # Reported as its own outcome rather than as a pass: a gate that
+        # executed nothing has proved nothing, and folding it into the passed
+        # count is the false green `Gate.steps` refuses for CI-only gates.
+        print("  (nothing to do — no work for this gate)")
+        return GateResult.EMPTY
+
+    failed = False
+    for step in steps:
+        if failed and not step.always_run:
+            continue
+        if step.rebuild is not None:
+            step = replace(step, argv=step.rebuild())
         code = run_step(step)
         if code != 0:
             print(f"\nFAILED: {gate.name} (exit {code})", file=sys.stderr)
             print(f"  command: {step.shown()}", file=sys.stderr)
-            return False
-    return True
+            # Not an early return: a later `always_run` step still has to run,
+            # and its own failure is folded into the same verdict.
+            failed = True
+    return GateResult.FAILED if failed else GateResult.PASSED
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -711,20 +810,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"cannot read {CI_WORKFLOW}: {exc}", file=sys.stderr)
         return 1
 
+    # --list and --print read commands rather than running them, so they build
+    # every step in dry mode and touch no directory.
+    ctx = Context(
+        pins={},
+        gitleaks_version=None,
+        dry=args.list or args.print_only,
+    )
     try:
-        ctx = Context(
-            pins=read_pins(text), gitleaks_version=read_gitleaks_version(text)
-        )
+        ctx.pins = read_pins(text)
+        ctx.gitleaks_version = read_gitleaks_version(text)
+
+        # Selectors are resolved before any output branch, so an unknown name
+        # errors identically whether or not --list was passed. Handling --list
+        # first let `--list nonsense-gate` print the full list and exit 0,
+        # which is confirmation-shaped output for a name that does not exist —
+        # the opposite of the discovery path the error message is meant to be.
+        selected = resolve(args.selectors) if args.selectors else list(GATES)
 
         if args.list:
-            print(render_list(ctx))
+            print(render_list(ctx, selected))
             return 0
 
-        selected = resolve(args.selectors) if args.selectors else list(GATES)
+        dropped: list[Gate] = []
         if args.fast:
-            selected = [
-                gate for gate in selected if gate.name not in {"pytest", "pip-audit"}
-            ]
+            dropped = [gate for gate in selected if gate.name in SLOW_GATES]
+            selected = [gate for gate in selected if gate.name not in SLOW_GATES]
 
         runnable = [gate for gate in selected if gate.local]
         skipped = [gate for gate in selected if not gate.local]
@@ -739,19 +850,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if not runnable:
-            print("nothing to run: every selected gate is CI-only.", file=sys.stderr)
+            # Two different reasons, never conflated: naming a local gate that
+            # --fast then dropped used to report "every selected gate is
+            # CI-only", telling a reader the gate cannot run on this machine
+            # when it can.
+            print("nothing to run.", file=sys.stderr)
+            for gate in dropped:
+                print(f"  - {gate.name}: dropped by --fast", file=sys.stderr)
             for gate in skipped:
-                print(f"  - {gate.name}: {gate.ci_only_reason}", file=sys.stderr)
+                print(
+                    f"  - {gate.name}: CI-only — {gate.ci_only_reason}", file=sys.stderr
+                )
             return 1
 
+        # Sequential with an early exit, not a comprehension over every gate:
+        # the registry is ordered cheap-to-slow precisely so a lint failure does
+        # not cost a full test run first, and collecting all results before
+        # checking them throws that away.
+        results: dict[str, GateResult] = {}
         for gate in runnable:
-            if not run_gate(gate, ctx):
+            results[gate.name] = run_gate(gate, ctx)
+            if results[gate.name] is GateResult.FAILED:
                 return 1
     except GateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    finally:
+        ctx.cleanup()
 
-    print(f"\nAll {len(runnable)} selected gate(s) passed.")
+    passed = [name for name, r in results.items() if r is GateResult.PASSED]
+    empty = [name for name, r in results.items() if r is GateResult.EMPTY]
+    print(f"\nAll {len(passed)} selected gate(s) passed.")
+    if empty:
+        # Named rather than counted as passing: a gate that found no work
+        # examined nothing, and a markdown pathspec that silently stops matching
+        # would otherwise be indistinguishable from a clean scan.
+        print(f"{len(empty)} gate(s) had nothing to run — they prove nothing:")
+        for name in empty:
+            print(f"  - {name}")
     if skipped:
         print(f"Skipped {len(skipped)} CI-only gate(s) — this is not full CI green:")
         for gate in skipped:

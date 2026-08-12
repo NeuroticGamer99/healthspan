@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,17 @@ CI_TEXT = run_gates.CI_WORKFLOW.read_text(encoding="utf-8")
 LOCAL_GATES = [gate for gate in run_gates.GATES if gate.local]
 CI_ONLY_GATES = [gate for gate in run_gates.GATES if not gate.local]
 PINNED_GATES = [gate for gate in run_gates.GATES if gate.version_pin]
+GATES_IN_ORDER = [gate.name for gate in run_gates.GATES if gate.local]
+
+
+def gate_named(name: str) -> run_gates.Gate:
+    """Look a gate up by name rather than by position.
+
+    `LOCAL_GATES[0]` reads as "some gate" but silently means "whichever gate is
+    first", so a test needing particular *properties* — more than one step, no
+    `always_run` — gets them by accident and loses them to a reordering.
+    """
+    return run_gates.gate_by_name()[name]
 
 
 def _context(tmp_path: Path | None = None) -> run_gates.Context:
@@ -346,24 +359,69 @@ def test_the_runner_stops_at_the_first_failure(
         return 1
 
     monkeypatch.setattr(run_gates, "run_step", fake_run_step)
-    first = LOCAL_GATES[0]
-    assert run_gates.run_gate(first, _context(tmp_path)) is False
-    assert len(attempted) == 1
+    # A gate with more than one step, deliberately: against a single-step gate
+    # the count assertion below holds whether or not the loop stops early, so it
+    # could never fail. `pip-audit` has two ordinary steps and no `always_run`.
+    gate = gate_named("pip-audit")
+    assert len(gate.steps(_context(tmp_path))) > 1
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
+    assert len(attempted) == 1, "a failed step must not be followed by the next"
+
+
+def test_the_run_stops_at_the_first_failing_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cross-gate fail-fast: a lint failure must not cost a full test run first.
+
+    This is `main`'s loop rather than `run_gate`'s, and it is the half the
+    ordering argument actually rests on — deleting the early exit, or reordering
+    GATES so pytest runs first, is invisible to the within-gate test above.
+    """
+    ran: list[str] = []
+
+    def fake_run_gate(
+        gate: run_gates.Gate, _: run_gates.Context
+    ) -> run_gates.GateResult:
+        ran.append(gate.name)
+        return run_gates.GateResult.FAILED
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+    assert run_gates.main([]) == 1
+    assert ran == [GATES_IN_ORDER[0]], (
+        "every gate ran despite the first one failing — the run is not fail-fast"
+    )
 
 
 def test_fast_skips_the_slow_gates(monkeypatch: pytest.MonkeyPatch) -> None:
     """--fast is defined by which gates it drops, so name them explicitly."""
     ran: list[str] = []
 
-    def fake_run_gate(gate: run_gates.Gate, _: run_gates.Context) -> bool:
+    def fake_run_gate(
+        gate: run_gates.Gate, _: run_gates.Context
+    ) -> run_gates.GateResult:
         ran.append(gate.name)
-        return True
+        return run_gates.GateResult.PASSED
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
     assert run_gates.main(["--fast"]) == 0
     assert "pytest" not in ran
     assert "pip-audit" not in ran
     assert "ruff-check" in ran
+
+
+def test_fast_over_an_explicit_slow_gate_does_not_call_it_ci_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The empty-selection message must name the real reason.
+
+    Reporting "every selected gate is CI-only" for a local gate that `--fast`
+    dropped tells the reader the gate cannot run on this machine, when it can.
+    """
+    assert run_gates.main(["pytest", "--fast"]) == 1
+    err = capsys.readouterr().err
+    assert "pytest" in err
+    assert "--fast" in err
+    assert "CI-only" not in err
 
 
 def test_selecting_only_ci_only_gates_fails_rather_than_reporting_success() -> None:
@@ -379,6 +437,175 @@ def test_print_runs_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(run_gates, "run_step", explode)
     assert run_gates.main(["--print", "ruff"]) == 0
+
+
+# --------------------------------------------------------------------------
+# The canary step: fail-closed arguments, and running after a failure
+# --------------------------------------------------------------------------
+
+
+def test_the_canary_keeps_the_literal_glob_when_no_worker_logs_exist(
+    tmp_path: Path,
+) -> None:
+    """A dead sink must reach the scanner as an unreadable path, not as silence.
+
+    `scan_log_canary.py` turns the unmatched literal `canary-logs/*.log` into
+    exit 2, and its comment calls that load-bearing for the parallel leg's
+    fail-closed property (ADR-0063). Expanding the glob in Python to an empty
+    list instead would hand it only the controller stream, which it scans
+    happily and exits 0 on — a broken capture reported as a green gate.
+    """
+    log = tmp_path / "pytest-output.log"
+    canary_dir = tmp_path / "canary-logs"
+    canary_dir.mkdir()
+
+    argv = run_gates._canary_argv(log, canary_dir)  # pyright: ignore[reportPrivateUsage]
+
+    assert argv[-1].endswith("*.log")
+    assert not Path(argv[-1]).is_file(), "the scanner must find this path unreadable"
+
+
+def test_the_canary_expands_worker_logs_when_the_sink_produced_them(
+    tmp_path: Path,
+) -> None:
+    """With matches it behaves as a shell does — real paths, no literal left."""
+    log = tmp_path / "pytest-output.log"
+    canary_dir = tmp_path / "canary-logs"
+    canary_dir.mkdir()
+    (canary_dir / "canary-gw0.log").write_text("", encoding="utf-8")
+    (canary_dir / "canary-gw1.log").write_text("", encoding="utf-8")
+
+    argv = run_gates._canary_argv(log, canary_dir)  # pyright: ignore[reportPrivateUsage]
+
+    assert not any("*" in arg for arg in argv)
+    assert sum(arg.endswith(".log") for arg in argv) == 3  # the tee'd log + two workers
+
+
+def test_an_always_run_step_runs_after_an_earlier_step_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CI runs the canary scan on test failure; so must this.
+
+    ci.yml states the reason where it sets the condition: a failing test's
+    traceback is the likeliest place for a leaked value. Short-circuiting on the
+    pytest step drops exactly the case the scan exists for.
+    """
+    ran: list[str] = []
+
+    def fake_run_step(step: run_gates.Step) -> int:
+        ran.append(step.shown())
+        return 1
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    gate = gate_named("pytest")
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
+    assert len(ran) == 2, "the canary step did not run after pytest failed"
+    assert "scan_log_canary.py" in ran[1]
+
+
+def test_the_pytest_gate_marks_its_canary_step_always_run(tmp_path: Path) -> None:
+    """Stated on the step, not inferred from its position in the list."""
+    steps = gate_named("pytest").steps(_context(tmp_path))
+    assert [step.always_run for step in steps] == [False, True]
+
+
+def test_a_rebuilt_step_keeps_its_env_and_capture(tmp_path: Path) -> None:
+    """`rebuild` replaces argv only.
+
+    The mechanism it replaced constructed a whole new Step from argv and
+    display, silently dropping `env` and `capture_to` — which for the canary
+    step would have meant losing CANARY_CAPTURE_DIR and the tee.
+    """
+    step = run_gates.Step(
+        ["original"],
+        "display",
+        env={"KEEP": "1"},
+        capture_to=tmp_path / "log",
+        rebuild=lambda: ["rebuilt"],
+    )
+    rebuilt = replace(step, argv=step.rebuild() if step.rebuild else step.argv)
+    assert list(rebuilt.argv) == ["rebuilt"]
+    assert rebuilt.env == {"KEEP": "1"}
+    assert rebuilt.capture_to == tmp_path / "log"
+
+
+def test_run_step_forces_utf8_in_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tee decodes UTF-8, so the child has to encode it.
+
+    On Windows a piped child defaults to the legacy code page (measured cp1252
+    on this machine), which either crashes the gate on a non-ASCII character or
+    lands it in the tee'd log as U+FFFD — mangled before the canary scans it.
+    An ambient PYTHONUTF8=0 must not win, which is why this asserts the value
+    rather than merely its presence.
+    """
+    seen: dict[str, str] = {}
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        check: bool,
+    ) -> Completed:
+        seen.update(env)
+        return Completed()
+
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
+    run_gates.run_step(run_gates.Step(["x"]))
+    assert seen["PYTHONUTF8"] == "1"
+
+
+# --------------------------------------------------------------------------
+# Scratch lifecycle and the empty-gate outcome
+# --------------------------------------------------------------------------
+
+
+def test_listing_and_printing_create_no_scratch_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--list and --print read commands; creating a directory to print its name
+    is a side effect, and the ones this used to leak held captured test output.
+    """
+    made: list[str] = []
+    real_mkdtemp = run_gates.tempfile.mkdtemp
+
+    def spy(*, prefix: str) -> str:
+        made.append(prefix)
+        return real_mkdtemp(prefix=prefix)
+
+    monkeypatch.setattr(run_gates.tempfile, "mkdtemp", spy)
+    assert run_gates.main(["--list"]) == 0
+    assert run_gates.main(["--print", "pytest"]) == 0
+    assert made == []
+
+
+def test_cleanup_removes_the_scratch_directory() -> None:
+    """It holds captured test output outside the repo, where the containment
+    gate does not look — so it is removed rather than left to accumulate."""
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+    scratch = ctx.scratch_dir()
+    assert scratch.is_dir()
+    ctx.cleanup()
+    assert not scratch.exists()
+
+
+def test_a_gate_with_nothing_to_run_is_not_counted_as_passed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty step list proves nothing, so it gets its own outcome.
+
+    The markdown gate returns no steps when its pathspec matches nothing. Folded
+    into the pass count, a pathspec that silently stopped matching would be
+    indistinguishable from a clean scan of every file.
+    """
+    monkeypatch.setattr(run_gates, "_tracked_markdown", list)
+    result = run_gates.run_gate(gate_named("markdown-lint"), _context(tmp_path))
+    assert result is run_gates.GateResult.EMPTY
+    assert result is not run_gates.GateResult.PASSED
 
 
 # --------------------------------------------------------------------------

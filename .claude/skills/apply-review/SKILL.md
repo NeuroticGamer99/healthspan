@@ -141,15 +141,21 @@ finding's fix would cross one of these lines, treat it as a scope decision and s
 
 ## 4. Verify what you changed
 
-Don't declare a finding fixed on faith. For code changes run `python scripts/run_gates.py ruff
-pyright` per finding — it is the fast pair, and `scripts/run_gates.py` derives both commands and
-their pinned versions from `.github/workflows/ci.yml`, so nothing here needs to name a version or
-an invocation. For behavior with a runtime surface, drive it (the `verify` skill). Report a gate
-that comes back red — never paper over it.
+Don't declare a finding fixed on faith. Per finding, run the gates that can see what you changed:
 
-At each savepoint boundary run the full `python scripts/run_gates.py` instead: a per-finding pair
-is a deliberately partial run, and the batch is where that stops being good enough. `--list` shows
-what else exists.
+- **Code** — `python scripts/run_gates.py ruff pyright`.
+- **Markdown, ADRs, specs, skills** — `python scripts/run_gates.py docs`. Do not reach for the
+  code pair here: on a documentation fix `ruff pyright` verifies *nothing*, and this skill's
+  findings are frequently ADR/spec/skill edits. The `docs` group carries the spec-link check,
+  which has to run on any edit anywhere — it validates link targets across the whole repository,
+  so a rename *outside* `specs/` is what breaks a spec link.
+- **Behavior with a runtime surface** — drive it (the `verify` skill).
+
+`scripts/run_gates.py` derives every command and pinned version from `.github/workflows/ci.yml`,
+so nothing here needs to name one. Report a gate that comes back red — never paper over it.
+
+At each savepoint boundary run the full `python scripts/run_gates.py`: the per-finding selections
+above are deliberately partial, and the batch is where that stops being good enough.
 
 **Then checkpoint the batch: run `/savepoint`** (ADR-0069) — containment scan, the explicit
 path list of what this batch changed, commit. This is the highest-leverage savepoint site: it
@@ -320,8 +326,10 @@ trade off.
   trust. A round whose only outcome was `already-resolved`/unconfirmed has no edit to checkpoint.
 - **A round that edits re-runs step 4's gates, not just the reviewers.** This section's own thesis
   applies to a gate run: step 4 passed on the pre-round code, so a reviewer-round fix that breaks
-  ruff, pyright, pytest, `check_adr_index.py`, or `check_spec_links.py` would otherwise be reported
-  green in step 6. Re-run them once the loop has settled, and report *that* result.
+  any gate would otherwise be reported green in step 6. Re-run the full
+  `python scripts/run_gates.py` once the loop has settled, and report *that* result — the full
+  run rather than step 4's per-finding selection, and no enumeration here, because a list written
+  in this file goes stale the moment CI gains a gate.
 - If no finding produced an edit (all `already-resolved` or unconfirmed), skip this step and say
   so — there is nothing to invalidate.
 
