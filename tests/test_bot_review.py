@@ -3194,7 +3194,7 @@ def test_no_live_bot_reviews_unasked_so_silence_alone_blocks_nothing(
 ) -> None:
     # The converse, and the live posture: every chain here is run
     # deliberately, so no artifact is consistent with a chain that never ran — a
-    # legitimate state, though never proof of one (ADR-0074 §2).
+    # legitimate state — but never proves it did not run (ADR-0074 §2).
     # Pinned across ALL specs rather than the three that were never
     # automatic, because the day one is set back to True this sweep starts
     # blocking merges and that must be a decision, not a surprise.
