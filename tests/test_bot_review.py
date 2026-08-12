@@ -3193,8 +3193,9 @@ def test_no_live_bot_reviews_unasked_so_silence_alone_blocks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The converse, and the live posture: every chain here is run
-    # deliberately, so no artifact means the chain never ran — a legitimate
-    # state. Pinned across ALL specs rather than the three that were never
+    # deliberately, so no artifact is consistent with a chain that never ran — a
+    # legitimate state, though never proof of one (ADR-0074 §2).
+    # Pinned across ALL specs rather than the three that were never
     # automatic, because the day one is set back to True this sweep starts
     # blocking merges and that must be a decision, not a surprise.
     for spec in BOTS.values():

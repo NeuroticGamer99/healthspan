@@ -229,7 +229,8 @@ class BotSpec:
     comment_login: str | None = None
     # Whether this bot reviews every PR whether or not it was asked. It makes
     # silence *anomalous* rather than merely uninformative: for an asked bot, no
-    # artifact means the chain never ran, which is a legitimate state.
+    # artifact is consistent with a chain that never ran, which is a legitimate
+    # state. It never proves one — see ADR-0074 §2.
     #
     # **No bot sets this today.** Greptile did — its GitHub App triggers on PR
     # creation — until `skipReview: "AUTOMATIC"` turned that default off and put

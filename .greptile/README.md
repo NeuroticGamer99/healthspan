@@ -54,7 +54,8 @@ One piece of that gate did change with the trigger. `scripts/bot_review.py`
 carried a `silent_always_reviewers` detector whose only subject was Greptile: a
 bot that reviews unasked has no legitimate silence, so silence had to block the
 merge. Under a manual trigger Greptile's silence means what CodeRabbit's means —
-the chain never ran — so its `always_reviews` flag is now `False`. The flag
+it is consistent with a chain that never ran, and never proves one (ADR-0074 §2)
+— so its `always_reviews` flag is now `False`. The flag
 and the detector stay: they are what a future unasked reviewer would set and
 need, ADR-0067 §2 records the detector as part of the gate's contract, and its
 tests now drive it through a synthetic always-reviewing spec so it stays proven
