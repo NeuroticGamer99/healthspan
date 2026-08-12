@@ -618,6 +618,49 @@ def test_run_step_sets_nothing_the_workflow_no_longer_sets(
     )
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["C:/outside", "/outside", "../outside", "a/b", "a\\b", "..", ".", ""],
+    ids=repr,
+)
+def test_a_canary_dir_name_that_could_escape_the_scratch_is_refused(
+    value: str,
+) -> None:
+    """Deriving the name made it external input; the join assumes it is a name.
+
+    Measured: `scratch / "C:/outside"` is `C:\\outside` — an absolute right-hand
+    side replaces the base outright — and `..` walks out of it. Either puts the
+    captured worker logs where `Context.cleanup` cannot reach them, which is the
+    leak this module already closed once, re-entered through the derivation.
+
+    Separator forms do not escape (`a/b` stays inside) and are refused anyway:
+    the contract is a *name*, `scan_log_canary.py`'s glob assumes one directory
+    level, and rejecting the class is simpler to state than the subset that
+    escapes — and cannot be wrong in the unsafe direction.
+    """
+    with pytest.raises(run_gates.GateError) as excinfo:
+        run_gates.require_dir_name("CANARY_CAPTURE_DIR", value)
+    assert "CANARY_CAPTURE_DIR" in str(excinfo.value)
+
+
+def test_the_repositorys_own_canary_dir_name_is_accepted() -> None:
+    """The guard must not reject the value ci.yml actually sets."""
+    name = _ci_canary_dir_name()
+    assert run_gates.require_dir_name("CANARY_CAPTURE_DIR", name) == name
+
+
+def test_the_pytest_gate_refuses_an_escaping_canary_dir_name(tmp_path: Path) -> None:
+    """The guard is wired into the builder, not merely available.
+
+    A validator nothing calls is the shape this session has been caught by
+    repeatedly — the mechanism tested, its production use not.
+    """
+    ctx = _context(tmp_path)
+    ctx.canary_dir_name = "../outside"
+    with pytest.raises(run_gates.GateError):
+        gate_named("pytest").steps(ctx)
+
+
 def test_the_workflow_env_is_derived_from_ci_yml() -> None:
     """PYTHONUTF8 is read from ci.yml, not restated in this module.
 

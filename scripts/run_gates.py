@@ -93,7 +93,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -182,6 +182,45 @@ def read_workflow_env(text: str, name: str) -> str | None:
             f"values ({sorted(set(values))!r}); no way to tell which CI uses"
         )
     return values[0]
+
+
+def require_dir_name(key: str, value: str) -> str:
+    """Return ``value`` if it is a single relative directory name, else raise.
+
+    Deriving a value from ci.yml instead of hardcoding it is the right trade,
+    but it turns a controlled constant into external input, and the caller joins
+    it onto the scratch directory. ``Path`` makes that join unsafe two ways,
+    both measured: an absolute right-hand side *replaces* the base outright
+    (``scratch / "C:/outside"`` is ``C:\\outside``), and ``..`` walks out of it.
+    Either lands the captured worker logs where ``Context.cleanup`` cannot reach
+    them — the leak this module already closed once, re-entered through the
+    derivation.
+
+    A separator alone does not escape (``a/b`` stays inside) and is rejected
+    anyway: the contract is a *name*, and ``scan_log_canary.py``'s glob assumes
+    one directory level. Rejecting the whole class is simpler to state than the
+    subset that escapes, and cannot be wrong in the unsafe direction.
+
+    Not a security boundary — ci.yml is tracked and reviewed, and anyone able to
+    edit it can already run arbitrary commands in CI. What this catches is an
+    ordinary edit, such as a value carrying a path separator, that would move
+    the capture silently rather than loudly.
+    """
+    candidate = PurePath(value)
+    if (
+        not value
+        or candidate.is_absolute()
+        or len(candidate.parts) != 1
+        or value in {os.curdir, os.pardir}
+        or any(sep in value for sep in ("/", "\\"))
+    ):
+        raise GateError(
+            f"{key} in {CI_WORKFLOW.name} is {value!r}, which is not a single "
+            "relative directory name. The runner joins it onto its scratch "
+            "directory, so an absolute path, a `..`, or a separator would put "
+            "captured test output where cleanup cannot remove it"
+        )
+    return value
 
 
 def require(pins: dict[str, str], name: str) -> str:
@@ -437,7 +476,7 @@ def _pytest(ctx: Context) -> list[Step]:
             "directory name cannot be derived. Restating it here would be the "
             "second copy this module exists to delete"
         )
-    canary_dir = scratch / ctx.canary_dir_name
+    canary_dir = scratch / require_dir_name("CANARY_CAPTURE_DIR", ctx.canary_dir_name)
     # CI sweeps a stale canary dir before the run; a fresh scratch directory per
     # invocation makes that impossible here, so there is nothing to sweep.
     # No mkdir here. conftest.py's capture sink does
