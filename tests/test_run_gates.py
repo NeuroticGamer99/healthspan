@@ -447,6 +447,38 @@ def test_a_gate_that_examined_nothing_is_not_a_zero_exit(
     assert run_gates.main(["markdown-lint"]) == 1
 
 
+def test_run_step_sets_nothing_the_workflow_no_longer_sets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ci.yml stops setting a key, the runner stops setting it too.
+
+    This is the half a "derives the right value" test cannot see. Hardcoding
+    `PYTHONUTF8: "1"` back into `run_step` satisfies every assertion that the
+    derived value is correct, because the derived value and the literal agree
+    today — verified by mutation, which passed 104/104 before this test existed.
+    An empty workflow env is the ci.yml-dropped-it case (dated in ci.yml's own
+    comment: PEP 686, Python 3.15), and the ambient value must survive it.
+    """
+    seen: dict[str, str] = {}
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(*args: Any, **kwargs: Any) -> Completed:
+        env = kwargs.get("env")
+        if isinstance(env, dict):
+            seen.update(cast("dict[str, str]", env))
+        return Completed()
+
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
+    run_gates.run_step(run_gates.Step(["x"]), {})
+    assert seen["PYTHONUTF8"] == "0", (
+        "run_step forced a value the workflow does not set — the literal is "
+        "back, and it will outlive ci.yml's own setting"
+    )
+
+
 def test_the_workflow_env_is_derived_from_ci_yml() -> None:
     """PYTHONUTF8 is read from ci.yml, not restated in this module.
 
