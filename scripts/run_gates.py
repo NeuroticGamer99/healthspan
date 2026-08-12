@@ -152,6 +152,21 @@ def read_gitleaks_version(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def read_workflow_env(text: str, name: str) -> str | None:
+    """Read a plain workflow-level ``env:`` value, quoted or bare.
+
+    Separate from ``read_pins`` because that one is deliberately restricted to
+    ``*_VERSION`` names, and the values here are not versions. Returning None
+    when the key is absent is the point rather than a fallback: the runner then
+    stops setting what CI stopped setting, which is the whole contract. The
+    expiry is already dated — ci.yml's own comment says PEP 686 lands in 3.15,
+    at which point PYTHONUTF8 goes away there and must go away here too.
+    """
+    pattern = re.compile(rf'^\s*{re.escape(name)}:\s*"?([^"\s#]+)"?', re.MULTILINE)
+    match = pattern.search(text)
+    return match.group(1) if match else None
+
+
 def require(pins: dict[str, str], name: str) -> str:
     try:
         return pins[name]
@@ -201,6 +216,10 @@ Builder = Callable[["Context"], list[Step]]
 class Context:
     pins: dict[str, str]
     gitleaks_version: str | None
+    # Workflow-level env CI exports to every step, derived rather than restated.
+    # `None` when ci.yml no longer sets it, which is how the runner stops
+    # forcing what CI stopped forcing instead of silently diverging.
+    workflow_env: dict[str, str] = field(default_factory=dict[str, str])
     # Where a gate may write working files. Created on first use and removed by
     # `cleanup`. `--list` and `--print` build every gate's steps in order to show
     # them, so they reach `scratch_dir` too; they pass `dry=True`, which hands
@@ -212,11 +231,13 @@ class Context:
 
     def scratch_dir(self) -> Path:
         if self.dry:
-            # A stable placeholder: displayed, never written to. Steps built in
-            # this mode are for reading, and creating a directory to print its
-            # name is the side effect being removed. It has to be a *legal* path
-            # even though nothing opens it — a builder may still join onto it,
-            # and angle brackets made that raise WinError 123 on Windows.
+            # A placeholder that is never created and, as it happens, never
+            # printed either — every step under --list/--print renders its
+            # `display` string, and none of those contains a scratch path. It
+            # exists only so a builder joining onto it gets a *legal* path:
+            # angle brackets in an earlier version raised WinError 123 on
+            # Windows when `_pytest` joined "canary-logs" onto it. Nothing is
+            # opened here, so this never touches the shared temp directory.
             return Path(tempfile.gettempdir()) / "run_gates-scratch"
         if self.scratch is None:
             self.scratch = Path(tempfile.mkdtemp(prefix="run_gates-"))
@@ -245,7 +266,13 @@ class Gate:
     ci_steps: tuple[str, ...]
     build: Builder | None = None  # None => cannot run locally
     ci_only_reason: str = ""
-    version_pin: str | None = None  # which *_VERSION governs it, for --list
+    # The pin that appears *in this gate's command*, e.g. `uvx "ruff@0.15.21"`.
+    version_pin: str | None = None
+    # The pin of a tool the gate *needs* but does not name — `uv` is resolved
+    # from PATH, so nothing embeds its version. Kept separate from version_pin
+    # because the derivation test asserts a version_pin shows up in the rendered
+    # command, and this class of pin by definition does not.
+    tool_pin: str | None = None
 
     @property
     def local(self) -> bool:
@@ -384,8 +411,14 @@ def _pytest(ctx: Context) -> list[Step]:
     canary_dir = scratch / "canary-logs"
     # CI sweeps a stale canary dir before the run; a fresh scratch directory per
     # invocation makes that impossible here, so there is nothing to sweep.
-    if not ctx.dry:
-        canary_dir.mkdir(parents=True, exist_ok=True)
+    # No mkdir here. conftest.py's capture sink does
+    # `path.parent.mkdir(parents=True, exist_ok=True)` before its first write,
+    # so the directory appears exactly when something writes to it — and a
+    # missing directory and an empty one glob identically, both falling back to
+    # the literal `*.log` the scanner fails closed on. Creating it eagerly
+    # changed nothing observable and was the sole reason `dry` had to be
+    # threaded into a builder at all; `dry` is now a concern of `scratch_dir`
+    # alone.
     return [
         Step(
             [
@@ -443,6 +476,13 @@ def _lockfile(_: Context) -> list[Step]:
     # that disagrees with pyproject.toml, but CI's form is installing a project
     # into a runner it then throws away, while locally it would mutate the
     # developer's environment as a side effect of asking a question.
+    #
+    # This is the one gate whose *flag surface* depends on uv's own version, and
+    # uv is resolved from PATH rather than pinned — nothing here can pin the
+    # tool that runs the pins. An older uv answers `--check` with
+    # `unexpected argument`, which surfaces as `FAILED: lockfile`, naming the
+    # lockfile for a toolchain problem. Carrying UV_VERSION as this gate's
+    # version_pin is what puts the real dependency in `--list` beside it.
     return [Step([_UV, "lock", "--check"], "uv lock --check")]
 
 
@@ -535,9 +575,10 @@ GATES: tuple[Gate, ...] = (
     Gate(
         name="lockfile",
         job="typecheck",
-        summary="uv.lock agrees with pyproject.toml",
+        summary="uv.lock agrees with pyproject.toml (needs uv >= the pin)",
         ci_steps=("Install project (locked)",),
         build=_lockfile,
+        tool_pin="UV_VERSION",
     ),
     Gate(
         name="ruff-check",
@@ -632,6 +673,11 @@ NON_GATE_STEPS: frozenset[str] = frozenset(
 # them and the filter that removes them cannot disagree.
 SLOW_GATES: frozenset[str] = frozenset({"pytest", "pip-audit"})
 
+# Workflow-level `env:` keys CI exports to every step and the runner must too.
+# The *names* are the second copy that cannot be avoided — something has to say
+# which keys matter — but the values are derived, which is where drift lives.
+WORKFLOW_ENV_NAMES: tuple[str, ...] = ("PYTHONUTF8",)
+
 # Matched by prefix because the version is part of the step name; a gitleaks
 # bump should not fail the drift test.
 NON_GATE_STEP_PREFIXES: tuple[str, ...] = ("Install gitleaks",)
@@ -679,6 +725,11 @@ def version_of(gate: Gate, ctx: Context) -> str:
         return ctx.gitleaks_version or "—"
     if gate.version_pin:
         return ctx.pins.get(gate.version_pin, "—")
+    if gate.tool_pin:
+        # Marked so the column does not read as a version the command carries.
+        # Without it `--list` shows "—" beside the one gate whose failure is
+        # most often a toolchain problem wearing a lockfile's name.
+        return f"needs {ctx.pins.get(gate.tool_pin, '—')}"
     return "—"
 
 
@@ -711,17 +762,23 @@ def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
     return "\n".join(lines)
 
 
-def run_step(step: Step) -> int:
-    # PYTHONUTF8 matches ci.yml's workflow-level setting, and is not cosmetic
-    # here. Measured on Windows/Python 3.14: a child on a pipe defaults to the
-    # legacy code page (cp1252), while the tee below decodes UTF-8 with
-    # errors="replace". Without this a test printing a non-ASCII character
-    # either crashes the local pytest gate — a red CI is green for — or lands in
-    # the tee'd log as U+FFFD, mangled *before* the canary gate scans it.
-    # Set *after* os.environ, not before: an ambient PYTHONUTF8=0 would
+def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
+    # The workflow-level env comes from ci.yml, derived like everything else —
+    # a literal "1" here was a second copy of a ci.yml value inside the module
+    # written to delete second copies, and its expiry is already dated in
+    # ci.yml's own comment (PEP 686, Python 3.15).
+    #
+    # It is not cosmetic. Measured on Windows/Python 3.14: a child on a pipe
+    # defaults to the legacy code page (cp1252), while the tee below decodes
+    # UTF-8 with errors="replace". Without PYTHONUTF8 a test printing a
+    # non-ASCII character either crashes the local pytest gate — a red CI is
+    # green for — or lands in the tee'd log as U+FFFD, mangled *before* the
+    # canary gate scans it.
+    #
+    # Applied *after* os.environ, not before: an ambient PYTHONUTF8=0 would
     # otherwise win and put the mismatch straight back. A step may still
     # override it deliberately.
-    env = {**os.environ, "PYTHONUTF8": "1", **step.env}
+    env = {**os.environ, **(workflow_env or {}), **step.env}
     print(f"$ {step.shown()}", flush=True)
     if step.capture_to is None:
         completed = subprocess.run(  # noqa: S603 - fixed executable, no shell
@@ -773,7 +830,7 @@ def run_gate(gate: Gate, ctx: Context) -> GateResult:
             continue
         if step.rebuild is not None:
             step = replace(step, argv=step.rebuild())
-        code = run_step(step)
+        code = run_step(step, ctx.workflow_env)
         if code != 0:
             print(f"\nFAILED: {gate.name} (exit {code})", file=sys.stderr)
             print(f"  command: {step.shown()}", file=sys.stderr)
@@ -830,17 +887,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         ctx.pins = read_pins(text)
         ctx.gitleaks_version = read_gitleaks_version(text)
+        # Only the names the runner actually needs, not every workflow key: an
+        # unfiltered sweep would export CI's own bookkeeping into local children.
+        for name in WORKFLOW_ENV_NAMES:
+            value = read_workflow_env(text, name)
+            if value is not None:
+                ctx.workflow_env[name] = value
 
-        # Selectors are resolved before any output branch, so an unknown name
-        # errors identically whether or not --list was passed. Handling --list
-        # first let `--list nonsense-gate` print the full list and exit 0,
-        # which is confirmation-shaped output for a name that does not exist —
-        # the opposite of the discovery path the error message is meant to be.
+        # The selection is completed *once*, before any output branch reads it.
+        # Each branch used to finish it for itself, and they disagreed three
+        # ways: `--list nonsense-gate` printed the full list and exited 0;
+        # `--list --fast` advertised the gates --fast drops; and
+        # `--print pytest --fast` printed nothing and exited 0. Resolving,
+        # filtering and partitioning here is what makes those one bug.
         selected = resolve(args.selectors) if args.selectors else list(GATES)
-
-        if args.list:
-            print(render_list(ctx, selected))
-            return 0
 
         dropped: list[Gate] = []
         if args.fast:
@@ -850,20 +910,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         runnable = [gate for gate in selected if gate.local]
         skipped = [gate for gate in selected if not gate.local]
 
-        if args.print_only:
-            for gate in runnable:
-                print(f"# {gate.name}")
-                for step in gate.steps(ctx):
-                    print(step.shown())
-            for gate in skipped:
-                print(f"# {gate.name}: CI-only — {gate.ci_only_reason}")
-            return 0
-
         if not runnable:
-            # Two different reasons, never conflated: naming a local gate that
-            # --fast then dropped used to report "every selected gate is
-            # CI-only", telling a reader the gate cannot run on this machine
-            # when it can.
+            # Reached by every branch, including the read-only ones: a --print
+            # that emits nothing on exit 0 is the same confirmation-shaped
+            # silence, and a reader asking what a gate runs cannot tell it from
+            # an answer. Two reasons, never conflated — a local gate --fast
+            # dropped is not a gate this machine cannot run.
             print("nothing to run.", file=sys.stderr)
             for gate in dropped:
                 print(f"  - {gate.name}: dropped by --fast", file=sys.stderr)
@@ -872,6 +924,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"  - {gate.name}: CI-only — {gate.ci_only_reason}", file=sys.stderr
                 )
             return 1
+
+        if args.list:
+            print(render_list(ctx, selected))
+            return 0
+
+        if args.print_only:
+            for gate in runnable:
+                print(f"# {gate.name}")
+                for step in gate.steps(ctx):
+                    print(step.shown())
+            for gate in skipped:
+                print(f"# {gate.name}: CI-only — {gate.ci_only_reason}")
+            return 0
 
         # Sequential with an early exit, not a comprehension over every gate:
         # the registry is ordered cheap-to-slow precisely so a lint failure does
@@ -892,12 +957,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     empty = [name for name, r in results.items() if r is GateResult.EMPTY]
     print(f"\nAll {len(passed)} selected gate(s) passed.")
     if empty:
-        # Named rather than counted as passing: a gate that found no work
-        # examined nothing, and a markdown pathspec that silently stops matching
-        # would otherwise be indistinguishable from a clean scan.
+        # Named *and* non-zero. Naming it while still exiting 0 was the false
+        # green in a quieter register: `/land` reads the exit code and its rule
+        # is "a failing gate stops the landing", so a markdown pathspec that
+        # silently stopped matching would print "proves nothing" and land
+        # anyway. The only gate that can be empty here is markdown-lint, and it
+        # is empty only when `git ls-files` matches no tracked *.md — which in
+        # this repository means the query broke, not that there is no markdown.
         print(f"{len(empty)} gate(s) had nothing to run — they prove nothing:")
         for name in empty:
             print(f"  - {name}")
+        print("Exiting non-zero: a gate that examined nothing is not a pass.")
+        return 1
     if skipped:
         print(f"Skipped {len(skipped)} CI-only gate(s) — this is not full CI green:")
         for gate in skipped:

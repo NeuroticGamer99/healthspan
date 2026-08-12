@@ -144,11 +144,16 @@ finding's fix would cross one of these lines, treat it as a scope decision and s
 Don't declare a finding fixed on faith. Per finding, run the gates that can see what you changed:
 
 - **Code** — `python scripts/run_gates.py ruff pyright`.
-- **Markdown, ADRs, specs, skills** — `python scripts/run_gates.py docs`. Do not reach for the
-  code pair here: on a documentation fix `ruff pyright` verifies *nothing*, and this skill's
-  findings are frequently ADR/spec/skill edits. The `docs` group carries the spec-link check,
-  which has to run on any edit anywhere — it validates link targets across the whole repository,
-  so a rename *outside* `specs/` is what breaks a spec link.
+- **Markdown, ADRs, specs** — `python scripts/run_gates.py docs`. Do not reach for the code pair
+  here: on a documentation fix `ruff pyright` verifies *nothing*, and this skill's findings are
+  frequently ADR/spec/skill edits. The `docs` group carries the spec-link check, which has to run
+  on any edit anywhere — it validates link targets across the whole repository, so a rename
+  *outside* `specs/` is what breaks a spec link.
+- **Anything under `.claude/`** — `python scripts/run_gates.py docs pytest`. The `docs` group alone
+  is **not** sufficient for this file class and reports green without checking it: CLAUDE.md's
+  task-output citation rule for `.claude/**` is gated by a pytest test, and no gate in `docs` runs
+  it. That is the same defect as verifying a documentation fix with `ruff pyright` — a green that
+  never examined the rule in question. Note `--fast` drops `pytest`, so it is the wrong flag here.
 - **Behavior with a runtime surface** — drive it (the `verify` skill).
 
 `scripts/run_gates.py` derives every command and pinned version from `.github/workflows/ci.yml`,

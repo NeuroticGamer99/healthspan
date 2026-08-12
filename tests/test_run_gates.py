@@ -34,8 +34,8 @@ from __future__ import annotations
 import re
 import shutil
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import run_gates
@@ -81,10 +81,16 @@ def _context(tmp_path: Path | None = None) -> run_gates.Context:
     Presetting ``scratch`` keeps the test gate from calling ``mkdtemp`` and
     leaving directories behind; it is the only state a build touches.
     """
+    env = {
+        name: value
+        for name in run_gates.WORKFLOW_ENV_NAMES
+        if (value := run_gates.read_workflow_env(CI_TEXT, name)) is not None
+    }
     return run_gates.Context(
         pins=run_gates.read_pins(CI_TEXT),
         gitleaks_version=run_gates.read_gitleaks_version(CI_TEXT),
         scratch=tmp_path,
+        workflow_env=env,
     )
 
 
@@ -378,6 +384,80 @@ def test_list_names_every_gate_and_marks_the_ci_only_ones(tmp_path: Path) -> Non
         assert gate.ci_only_reason in rendered
 
 
+def test_list_rejects_an_unknown_selector_through_main() -> None:
+    """`--list` resolves selectors like every other path.
+
+    Driven through `main` deliberately: `render_list` called directly can never
+    see this, and moving `if args.list:` back above `resolve` restores the
+    exit-0-on-a-nonexistent-name behaviour silently.
+    """
+    assert run_gates.main(["--list", "nonsense-gate"]) == 1
+
+
+def test_list_shows_only_the_selected_gates(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A selector narrows `--list`, rather than being accepted and ignored."""
+    assert run_gates.main(["--list", "lockfile"]) == 0
+    out = capsys.readouterr().out
+    assert "lockfile" in out
+    assert "ruff-check" not in out
+
+
+def test_list_respects_fast(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--list --fast` must answer "what will --fast run", not over-advertise.
+
+    The filter used to sit below the `--list` return, so the two paths disagreed
+    about the selection — the same class of split the resolve-before-branch move
+    was made to close.
+    """
+    assert run_gates.main(["--list", "--fast"]) == 0
+    out = capsys.readouterr().out
+    for slow in sorted(run_gates.SLOW_GATES):
+        assert f"\n  {slow} " not in out, f"--list --fast advertised {slow}"
+
+
+def test_print_reports_an_empty_selection_rather_than_succeeding_silently(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--print` over an empty selection is silence indistinguishable from an
+    answer, so it takes the same guard the run path does."""
+    assert run_gates.main(["--print", "pytest", "--fast"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "dropped by --fast" in captured.err
+
+
+def test_a_gate_that_examined_nothing_is_not_a_zero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EMPTY has to reach the exit code, not just the summary text.
+
+    `/land` reads the exit code and its rule is "a failing gate stops the
+    landing". Printing "they prove nothing" while returning 0 let a markdown
+    pathspec that silently stopped matching land anyway.
+    """
+
+    def fake_run_gate(
+        _gate: run_gates.Gate, _ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        return run_gates.GateResult.EMPTY
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+    assert run_gates.main(["markdown-lint"]) == 1
+
+
+def test_the_workflow_env_is_derived_from_ci_yml() -> None:
+    """PYTHONUTF8 is read from ci.yml, not restated in this module.
+
+    The negative half is the point, as with the version pins: a workflow that
+    does not set it must yield nothing, because that is how the runner stops
+    forcing what CI stopped forcing instead of silently diverging.
+    """
+    assert run_gates.read_workflow_env(CI_TEXT, "PYTHONUTF8") == "1"
+    assert run_gates.read_workflow_env("env:\n  OTHER: x\n", "PYTHONUTF8") is None
+
+
 def test_the_runner_stops_at_the_first_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -388,7 +468,7 @@ def test_the_runner_stops_at_the_first_failure(
     """
     attempted: list[str] = []
 
-    def fake_run_step(step: run_gates.Step) -> int:
+    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
         attempted.append(step.shown())
         return 1
 
@@ -534,7 +614,7 @@ def test_an_always_run_step_runs_after_an_earlier_step_failed(
     """
     ran: list[str] = []
 
-    def fake_run_step(step: run_gates.Step) -> int:
+    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
         ran.append(step.shown())
         return 1
 
@@ -620,7 +700,7 @@ def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
     """
     seen: list[run_gates.Step] = []
 
-    def fake_run_step(step: run_gates.Step) -> int:
+    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
         seen.append(step)
         return 0
 
@@ -690,7 +770,9 @@ def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
     docs = run_gates.groups()["docs"]
-    assert run_gates.main(["docs"]) == 0
+    # Non-zero even though every gate that *ran* passed: the empty one examined
+    # nothing, and `/land` reads this exit code.
+    assert run_gates.main(["docs"]) == 1
 
     out = capsys.readouterr().out
     assert f"All {len(docs) - 1} selected gate(s) passed" in out
@@ -715,19 +797,18 @@ def test_run_step_forces_utf8_in_the_child(monkeypatch: pytest.MonkeyPatch) -> N
     class Completed:
         returncode = 0
 
-    def fake_run(
-        argv: Sequence[str],
-        *,
-        cwd: Path,
-        env: dict[str, str],
-        check: bool,
-    ) -> Completed:
-        seen.update(env)
+    # Same widening as the mkdtemp spy below, and for the same reason: this
+    # rebinds `subprocess.run` on the shared module, so a narrow signature turns
+    # any unrelated caller reached during the test into a TypeError.
+    def fake_run(*args: object, **kwargs: object) -> Completed:
+        env = kwargs.get("env")
+        if isinstance(env, dict):
+            seen.update(cast("dict[str, str]", env))
         return Completed()
 
     monkeypatch.setenv("PYTHONUTF8", "0")
     monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
-    run_gates.run_step(run_gates.Step(["x"]))
+    run_gates.run_step(run_gates.Step(["x"]), {"PYTHONUTF8": "1"})
     assert seen["PYTHONUTF8"] == "1"
 
 
@@ -766,7 +847,9 @@ def test_the_captured_branch_forces_utf8_in_a_real_child(
         capture_to=log,
     )
 
-    assert run_gates.run_step(step) == 0
+    # The env comes from the same derivation main() uses, not a literal — the
+    # point of this test is that the value CI sets reaches a real child.
+    assert run_gates.run_step(step, _context().workflow_env) == 0
     lines = log.read_text(encoding="utf-8").split()
     assert lines[0] == "1", "the ambient PYTHONUTF8=0 reached the child"
     assert lines[1] == "utf-8", "the child encoded its pipe as something else"
@@ -786,9 +869,14 @@ def test_listing_and_printing_create_no_scratch_directory(
     made: list[str] = []
     real_mkdtemp = run_gates.tempfile.mkdtemp
 
-    def spy(*, prefix: str) -> str:
-        made.append(prefix)
-        return real_mkdtemp(prefix=prefix)
+    # `*args, **kwargs` rather than the narrower `(*, prefix)` this once had:
+    # monkeypatch rebinds the attribute on the shared `tempfile` module, so any
+    # other code reached during main() — a plugin, a library on the subprocess
+    # path — calling `mkdtemp()` bare or positionally would raise TypeError from
+    # somewhere unrelated. Delegating costs nothing that the assertion needs.
+    def spy(*args: Any, **kwargs: Any) -> str:
+        made.append("mkdtemp")
+        return cast("str", real_mkdtemp(*args, **kwargs))
 
     monkeypatch.setattr(run_gates.tempfile, "mkdtemp", spy)
     assert run_gates.main(["--list"]) == 0

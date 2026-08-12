@@ -50,10 +50,11 @@ drift from it. `--list` shows every gate and its command; a single gate or group
 runs by name (`python scripts/run_gates.py ruff`).
 
 **Do not reconstruct the commands here.** The list this step used to carry named
-six gates — fewer than CI runs — and got two of the invocations wrong: `ruff` and
-`pyright` are not installed in this project, so the bare forms named here could
-never run, and `/ship` carried its own copy of the same list that disagreed with
-this one. Re-adding any command to this file recreates both faults.
+six gates — fewer than CI runs — and named three invocations that could never
+run, from two tools: `ruff check`, `ruff format --check` and `pyright`, neither
+tool being installed in this project. `/ship` carried its own copy of the same
+list that disagreed with this one. Re-adding any command here recreates both
+faults.
 
 A failing gate stops the landing; fix or escalate before proceeding. The runner
 stops at the first failure and echoes the command that failed, and its summary
@@ -65,10 +66,20 @@ The rule has an **enumeration** half — which paths does this change touch — 
 
 ### 3a. Enumeration — read the gate's evidence
 
-**Step 2 already ran this gate**, and streamed its output — the `containment` gate is part of the
-default set. Do not run it again: a second branch-history walk buys nothing, and a hand-written
-copy of the command is what step 2 just said re-adding recreates. Scroll back to step 2's
-`=== containment ===` block; everything below is how to read what it printed.
+**Step 2 usually already ran this gate**, and streamed its output — `containment` is part of the
+default set. Scroll back to the block whose header begins `=== containment —`; everything below is
+how to read what it printed. Prefer that to re-running: a second branch-history walk buys nothing.
+
+**But do not assume it ran.** `containment` is one gate among several and the runner stops at the
+first failure, so any earlier gate failing means it never executed — and step 2 explicitly supports
+subset runs like `python scripts/run_gates.py ruff`, which never select it at all. If there is no
+`=== containment —` block to scroll back to, run the gate by name:
+
+```bash
+python scripts/run_gates.py containment
+```
+
+That is a selector, not a restated command — the runner still owns which script and which flags.
 
 Exit 0 is the only pass. It scans the working tree, every path any commit in `<merge-base>..HEAD` touched, and every tracked path under the containment directory, matching case-insensitively and covering the bare path `specs/personal` as well as the `specs/personal/` prefix.
 
