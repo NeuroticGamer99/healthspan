@@ -54,10 +54,17 @@ Deliberate divergences from CI, each with a reason:
   A local run that skipped the canary scan would be one of the partial greens
   described above.
 * **containment runs ``--scope branch``**, where CI runs ``--scope history``.
-  The local question is "is what I am about to commit clean"; the history walk
-  is CI's backstop and needs the full-depth checkout CI gives it. The two are
-  the same gate, which is why the registry maps this entry onto CI's step and
-  the drift test compares gate *identity* rather than argv.
+  This one narrows the question rather than buying a side effect, and it is the
+  only entry here that does. The local question is "is what I am about to commit
+  clean"; the history walk is CI's backstop over every pushed branch, and
+  ``ci.yml`` says so in that step's own comment -- "the backstop, not the
+  control ... it detects rather than prevents; prevention is the same script run
+  pre-push". Do not justify it by depth: a developer's clone is full-depth
+  already and CI is the side that has to ask (``fetch-depth: 0``). ADR-0075 §1
+  admits this as a *declared* narrowing, which is why ``--list`` renders the
+  gate as "(branch scope)" rather than leaving the reduction implicit. The two
+  are the same gate, which is why the registry maps this entry onto CI's step
+  and the drift test compares gate *identity* rather than argv.
 * **the lockfile gate runs ``uv lock --check``**, where CI's step runs
   ``uv sync --locked``. Both fail on a lockfile that disagrees with
   ``pyproject.toml`` — the property the gate is for — but CI is installing into
