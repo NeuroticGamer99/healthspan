@@ -425,6 +425,26 @@ def test_list_names_every_gate_and_marks_the_ci_only_ones(tmp_path: Path) -> Non
         assert gate.ci_only_reason in rendered
 
 
+def test_the_reviewer_agents_summary_names_no_single_owning_adr() -> None:
+    """That gate answers to two ADRs, so its `--list` line may blame neither.
+
+    ADR-0076 §7 makes this a decision rather than wording: a gate that can fail
+    for a reason its own name excludes teaches the reader to misfile the
+    failure. Its sibling identity sites are already held — the failure banner by
+    `tests/test_check_reviewer_agents.py`, the CI step name by
+    `test_every_ci_run_step_is_claimed` against `ci.yml` — and review measured
+    this one as the remaining code string that any literal could replace with
+    the whole suite staying green.
+
+    The assertion is the property, not the sentence, so a rewording that keeps
+    the gate rule-neutral stays green.
+    """
+    (gate,) = [g for g in run_gates.GATES if g.name == "reviewer-agents"]
+    assert "ADR-0068" not in gate.summary, gate.summary
+    assert "isolation" not in gate.summary, gate.summary
+    assert "invariants" in gate.summary, gate.summary
+
+
 def test_list_rejects_an_unknown_selector_through_main() -> None:
     """`--list` resolves selectors like every other path.
 

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Verify the reviewer agent files still obey ADR-0068's isolation rules.
+"""Verify the reviewer agent files still hold their required invariants.
+
+**Two ADRs own what this gate checks, and it is named for neither.** ADR-0068
+supplies assertions 1 and 2; ADR-0076 supplies assertion 3. The gate was called
+"ADR-0068's isolation rules" — here, in ``run_gates.py``'s summary, in its CI
+step name, and in the failure banner below — for as long as that was the whole
+of it. All four were widened when it stopped being, because a gate that can fail
+for a reason its own name excludes teaches the reader to misfile the failure.
 
 ADR-0068 forbids one specific edit — adding ``isolation: worktree`` to
 ``.claude/agents/spec-reviewer.md`` or ``.claude/agents/test-reviewer.md`` —
@@ -17,13 +24,31 @@ that is a *guaranteed* false pass: the reviewers would find nothing because
 there is nothing there, and say so in the same words they use for real
 convergence.
 
-Two assertions, both cheap:
+Three assertions, all cheap:
 
 1. no ``isolation`` key in either agent file's YAML frontmatter;
 2. both files still point at ``.claude/reviewer-isolation.md``, which owns the
    mechanism that replaces it — a prohibition with no pointer to the
    alternative is how the next author concludes the feature was simply
-   forgotten.
+   forgotten;
+3. ``test-reviewer.md`` still names its ``Acceptance:`` report field, the line
+   requiring each finding to state the mutation the *remedy* must survive
+   (ADR-0076).
+
+Assertion 3 is a different species from the first two and is deliberately
+scoped to one file. ``spec-reviewer`` is read-only by mandate and routes
+enforcement questions to this agent, so it has no mutation to state and does
+not carry the field. What is pinned is the field's *name*, which is the
+contract a report consumer reads — the same kind of stable identifier as the
+path in assertion 2, not the prose around it, and not one markdown rendering
+of it either (see ``ACCEPTANCE_FIELD``).
+
+**What assertion 3 does not prove.** It reads the instruction in the agent
+file; it cannot observe a report. An agent that carries the instruction and
+omits the field anyway fails nothing here. It is worth having regardless,
+because the reader harmed by a silent deletion — a fixer handed a finding with
+no criterion — is exactly the reader who cannot notice a field they never knew
+to expect.
 
 Frontmatter is hand-parsed (stdlib has no YAML module) and only to the depth
 these files use: a ``---`` fenced block of top-level ``key: value`` lines. A
@@ -51,6 +76,20 @@ FORBIDDEN_KEY = "isolation"
 
 # The document that owns the replacement mechanism.
 PROCEDURE_DOC = ".claude/reviewer-isolation.md"
+
+# The report field naming the mutation a finding's remedy must survive, and the
+# one file obliged to carry it. `spec-reviewer` is read-only by mandate — it
+# runs no mutation, so it has nothing to state here.
+#
+# Deliberately unbolded. The agent file writes this name in bold, as a code
+# span, and bare inside `Acceptance: none — <why>`; the ADR adds a bold code
+# span. Every one of them is the same field, so pinning `**Acceptance:**` bound
+# the gate to one rendering of the name rather than to the name: it did not
+# match the `none` spelling at all, and a cosmetic markdown change — bold to
+# code span, the ordinary way a field name gets normalized — would have
+# reddened the gate with nothing substantive altered.
+ACCEPTANCE_FIELD = "Acceptance:"
+ACCEPTANCE_FILE = "test-reviewer.md"
 
 FENCE = "---"
 
@@ -101,19 +140,30 @@ def check() -> list[str]:
                 f"{name}: does not cite {PROCEDURE_DOC}, which owns the "
                 "isolation mechanism this agent is launched with"
             )
+        if name == ACCEPTANCE_FILE and ACCEPTANCE_FIELD not in text:
+            errors.append(
+                f"{name}: does not name its '{ACCEPTANCE_FIELD}' report field "
+                "— every finding must state the mutation its remedy has to "
+                "survive, so the fixer who did not write the finding is still "
+                "handed a pass/fail criterion for the repair"
+            )
     return errors
 
 
 def main() -> int:
     errors = check()
     if errors:
-        print(f"reviewer agent definitions violate ADR-0068 ({len(errors)}):")
+        print(
+            "reviewer agent definitions violate their required invariants "
+            f"({len(errors)}):"
+        )
         for error in errors:
             print(f"  - {error}")
         return 1
     print(
         f"reviewer agent definitions conform: no '{FORBIDDEN_KEY}' key, both "
-        f"cite {PROCEDURE_DOC}."
+        f"cite {PROCEDURE_DOC}, {ACCEPTANCE_FILE} names its "
+        f"'{ACCEPTANCE_FIELD}' field."
     )
     return 0
 
