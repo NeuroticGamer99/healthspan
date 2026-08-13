@@ -277,6 +277,9 @@ def test_main_fails_loudly_without_blaming_a_single_owning_adr(
     This fixture violates one rule only, which is the easy half — see the mixed
     fixture below for the case where an isolation violation legitimately *does*
     name ADR-0068 in the same run.
+
+    Both owners are rejected, case-insensitively: "no single owning ADR" is what
+    this test's name promises, and checking one of the two let the other pass.
     """
     agent_dir = tmp_path / "agents"
     agent_dir.mkdir()
@@ -287,7 +290,9 @@ def test_main_fails_loudly_without_blaming_a_single_owning_adr(
     assert check_reviewer_agents.main() == 1
     banner = capsys.readouterr().out
     assert "required invariants" in banner
-    assert "ADR-0068" not in banner, banner
+    neutral = banner.casefold()
+    assert "adr-0068" not in neutral, banner
+    assert "adr-0076" not in neutral, banner
 
 
 def test_main_attributes_each_violation_to_its_own_rule(

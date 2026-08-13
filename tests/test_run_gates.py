@@ -438,11 +438,18 @@ def test_the_reviewer_agents_summary_names_no_single_owning_adr() -> None:
 
     The assertion is the property, not the sentence, so a rewording that keeps
     the gate rule-neutral stays green.
+
+    Both ADRs are rejected, and case-insensitively. "Neither" is what the first
+    line claims and what this test's name promises, so checking only ADR-0068
+    let a summary naming the *other* owner pass a test forbidding it — and a
+    case-sensitive `isolation` was evaded by `Isolation`.
     """
     (gate,) = [g for g in run_gates.GATES if g.name == "reviewer-agents"]
-    assert "ADR-0068" not in gate.summary, gate.summary
-    assert "isolation" not in gate.summary, gate.summary
-    assert "invariants" in gate.summary, gate.summary
+    summary = gate.summary.casefold()
+    assert "adr-0068" not in summary, gate.summary
+    assert "adr-0076" not in summary, gate.summary
+    assert "isolation" not in summary, gate.summary
+    assert "invariants" in summary, gate.summary
 
 
 def test_list_rejects_an_unknown_selector_through_main() -> None:
