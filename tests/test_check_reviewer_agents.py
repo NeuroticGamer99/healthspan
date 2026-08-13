@@ -336,7 +336,11 @@ def test_main_attributes_each_violation_to_its_own_rule(
     assert len(isolation) == 2, lines  # one per agent file
     assert len(acceptance) == 1, lines  # test-reviewer.md alone owes the field
     assert all("ADR-0068" in ln for ln in isolation), isolation
-    assert "ADR-0068" not in acceptance[0], acceptance[0]
+    # Casefolded, like the neutrality checks: the evasion shape is the same
+    # even though no path emits any case of the string on this line today.
+    # NOT extended to ADR-0076 — that ADR *owns* the acceptance rule, so naming
+    # it here would be the right answer, and forbidding it would be wrong.
+    assert "adr-0068" not in acceptance[0].casefold(), acceptance[0]
 
 
 def test_main_exits_zero_on_the_live_agent_files(

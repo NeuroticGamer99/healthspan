@@ -445,11 +445,13 @@ def test_the_reviewer_agents_summary_names_no_single_owning_adr() -> None:
     case-sensitive `isolation` was evaded by `Isolation`.
     """
     (gate,) = [g for g in run_gates.GATES if g.name == "reviewer-agents"]
-    summary = gate.summary.casefold()
-    assert "adr-0068" not in summary, gate.summary
-    assert "adr-0076" not in summary, gate.summary
-    assert "isolation" not in summary, gate.summary
-    assert "invariants" in summary, gate.summary
+    neutral = gate.summary.casefold()
+    assert "adr-0068" not in neutral, gate.summary
+    assert "adr-0076" not in neutral, gate.summary
+    assert "isolation" not in neutral, gate.summary
+    # Deliberately NOT casefolded: only the negatives need it. Folding the
+    # positive too was measured to let a "required Invariants" typo through.
+    assert "invariants" in gate.summary, gate.summary
 
 
 def test_list_rejects_an_unknown_selector_through_main() -> None:
