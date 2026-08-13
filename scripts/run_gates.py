@@ -626,8 +626,11 @@ GATES: tuple[Gate, ...] = (
     Gate(
         name="reviewer-agents",
         job="docs",
-        summary="reviewer agent files obey ADR-0068's isolation rules",
-        ci_steps=("Check the reviewer agent files obey ADR-0068's isolation rules",),
+        summary="reviewer agent files hold their required invariants",
+        ci_steps=(
+            "Check the reviewer agent files hold their required invariants "
+            "(ADR-0068, ADR-0076)",
+        ),
         build=_docs_gate("check_reviewer_agents.py"),
     ),
     Gate(

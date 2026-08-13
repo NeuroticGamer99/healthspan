@@ -143,4 +143,5 @@ This section names private functions and internal shapes because it is a **verif
 - [open-questions.md](../open-questions.md) — the by-construction containment posture this ADR confirms for first-party reviewers
 - [ADR-0064](0064-reviewer-workflow-trust-boundary.md) — the adjacent trust-boundary decision for the CI-side reviewer; this ADR governs the local session pair
 - Extended by [ADR-0069](0069-local-checkpoint-commits.md) — local checkpoint commits: a launch-time `HEAD` record beside the setup manifest, and a firing condition for the callers' drift check
+- Extended by [ADR-0076](0076-mutation-acceptance-criterion.md) — `test-reviewer` findings state the mutation their remedy must survive; the snapshot worktree this ADR supplies is what lets such a criterion be *measured* rather than proposed, and its read-only fallback is why the two must be told apart
 - Related: [ADR-0072](0072-review-pipeline-and-ledgers.md) — the review pipeline that launches these reviewers; it consumes this machinery without changing its decision, and its ledger sizing rests on the per-reviewer, per-round materialization recorded here

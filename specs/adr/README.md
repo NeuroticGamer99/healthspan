@@ -128,3 +128,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0073](0073-operator-handoff-presentation.md) | Operator-Handoff Presentation, and the Peer-Site Search as a Required Output | Proposed |
 | [ADR-0074](0074-bot-review-invocation-policy.md) | Bot Reviews Are Bounded by Repetition, Not by Authorization | Proposed |
 | [ADR-0075](0075-local-gate-divergence-from-ci.md) | When a Local Gate May Diverge from Its CI Step (extends ADR-0045) | Proposed |
+| [ADR-0076](0076-mutation-acceptance-criterion.md) | Each test-reviewer Finding States the Mutation Its Remedy Must Survive (extends ADR-0068) | Proposed |

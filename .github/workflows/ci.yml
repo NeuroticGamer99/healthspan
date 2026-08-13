@@ -107,10 +107,12 @@ jobs:
       - name: Check the two markdown-lint configs stay in sync (ADR-0062)
         run: python3 scripts/check_markdownlint_config_sync.py
 
-      - name: Check the reviewer agent files obey ADR-0068's isolation rules
-        # The `isolation: worktree` prohibition was stated in three prose
-        # locations and enforced by nothing, while the failure it prevents is
-        # a reviewer reporting clean on a tree holding none of the work.
+      - name: Check the reviewer agent files hold their required invariants (ADR-0068, ADR-0076)
+        # Two owners. ADR-0068: the `isolation: worktree` prohibition, stated in
+        # three prose locations and enforced by nothing, whose failure is a
+        # reviewer reporting clean on a tree holding none of the work.
+        # ADR-0076: test-reviewer's `Acceptance:` report field, whose silent
+        # deletion is invisible to the reader it exists for.
         run: python3 scripts/check_reviewer_agents.py
 
       - name: Check the citing skills still point at the documents that own their rules (ADR-0073)
