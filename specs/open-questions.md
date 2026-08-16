@@ -246,7 +246,8 @@ venv, so no third-party import is reachable — which is what forces a parser to
 vendored) but a **robustness gap**: a module-level import unavailable on that interpreter exits 1
 with a traceback on every matched call, outside every guard in the script. `tomllib` was one such
 import and has been deferred; thirty-three module-level statements remain, and a bug in any of them
-still fails closed rather than open.
+still exits 1 with a traceback on every matched call, outside the script's fail-open design —
+whether the harness then blocks the call is the open question below.
 
 `uv` is already permitted by `test_the_registered_interpreter_is_a_bare_portable_name`'s allowlist,
 so this was contemplated and not taken — ADR-0077 §8's reasoning weighs `python` against `python3`

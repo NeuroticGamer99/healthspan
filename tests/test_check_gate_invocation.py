@@ -120,6 +120,10 @@ MUST_DENY = [
     "python -mpytest",
     # An interpreter option that takes a value must not stop the walk early.
     "python -X dev -m pytest",
+    # ...including the LONG spelling, whose value test sat after the branch
+    # that returns, making the only long entry in the set dead config.
+    "python --check-hash-based-pycs always -m pytest",
+    "python --check-hash-based-pycs=always -m pytest",
     "uv run python -m pytest",
     "python -m ruff check .",
     # A line continuation must not hide the tool or fake a test path. The
@@ -689,6 +693,32 @@ def test_every_short_spelling_of_a_long_flag_is_reachable() -> None:
             f"{name} holds {sorted(unreachable)}, which a single-dash token can "
             "never match — it is routed to the cluster walker, whose set does "
             "not carry those characters. Dead config that reads as cover."
+        )
+
+
+def test_every_long_value_flag_actually_consumes_its_value() -> None:
+    """The other dead-config shape, in the set that had no guard.
+
+    ``test_every_short_spelling_of_a_long_flag_is_reachable`` catches a
+    *single-dash* entry sitting in a long-flag set. This catches the mirror:
+    a **long** entry whose value is never consumed because the branch that
+    handles long options returns before the value test runs. Measured —
+    ``--check-hash-based-pycs`` was the only long member of
+    ``_PYTHON_VALUE_FLAGS`` and was unreachable, so
+    ``python --check-hash-based-pycs always -m pytest`` ran the full serial
+    suite. External review found it; the sibling guard could not see it.
+
+    Asserted behaviourally rather than structurally: the question is whether
+    the walker *consumes* the value, which only running it can answer.
+    """
+    for flag in sorted(hook._PYTHON_VALUE_FLAGS):  # pyright: ignore[reportPrivateUsage]
+        if not flag.startswith("--"):
+            continue
+        args = [flag, "some-value", "-m", "pytest"]
+        assert hook.unwrap_python_module(args) == ("pytest", ()), (
+            f"{flag!r} did not consume its value: {args} unwrapped to "
+            f"{hook.unwrap_python_module(args)!r}. Its value was read as a "
+            "script path, so the walk stopped and the module was never found."
         )
 
 

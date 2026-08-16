@@ -1345,6 +1345,16 @@ def unwrap_python_module(args: Sequence[str]) -> tuple[str, tuple[str, ...]] | N
         if not arg.startswith("-") or arg == "-":
             return None  # a script path: everything after it is the script's
         if arg.startswith("--"):
+            # The value test comes first, or the only long entry in
+            # `_PYTHON_VALUE_FLAGS` is unreachable: this branch returned to the
+            # loop before the check below, so `--check-hash-based-pycs always`
+            # read `always` as a script path and abandoned the walk — allowing
+            # `python --check-hash-based-pycs always -m pytest`, a full serial
+            # suite. Dead config in a set whose siblings are guarded.
+            name, sep, _value = arg.partition("=")
+            if not sep and name in _PYTHON_VALUE_FLAGS:
+                index += 2
+                continue
             index += 1
             continue
         if arg in _PYTHON_VALUE_FLAGS:

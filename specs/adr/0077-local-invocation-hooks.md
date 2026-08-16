@@ -387,6 +387,22 @@ is where ADR-0071 puts exactly this kind of local-only preference.
   checkout), and the same path under `CLAUDE_PROJECT_DIR`. Finding nothing is silent, so the
   failure direction stays open.
 
+  **Stated as a correctness tradeoff above, it understates the residual, and external review was
+  right to press on it.** The file is *executed* — `runpy.run_path` — not inspected. So any clone
+  containing that relative path runs its own code on every Bash and PowerShell call for as long as
+  a session's cwd sits inside it, with this session's authority and no integrity check. Cloning a
+  repository and running a shell command in it is an ordinary thing to do, which is what makes this
+  a trust boundary rather than a curiosity.
+
+  It is **accepted, not overlooked**, and the alternative is worse in a way this ADR has already
+  paid for. Restricting resolution to `CLAUDE_PROJECT_DIR` alone reinstates §5's original defect
+  exactly: that variable names the *primary* checkout, so a worktree session would be policed by
+  the wrong tree — the failure that cost a session and prompted this whole design. The bound that
+  is available is the one in place: two candidates, a `.git` boundary, and never an unbounded walk.
+  Anyone extending this mechanism should treat "the hook executes code found relative to the cwd"
+  as the property to preserve deliberately or to remove deliberately, not as an implementation
+  detail.
+
   **The first version of this bootstrap was not bounded, and the gap was found in review.** It
   walked `Path.cwd().parents` to the drive root and would have executed the first matching file
   anywhere above the session — while this ADR described the narrow behaviour. That is a wider trust
