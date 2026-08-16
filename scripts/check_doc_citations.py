@@ -4,7 +4,7 @@
 ADR-0073 replaces restatement with citation: a rule written five times in five
 vocabularies becomes one statement plus five pointers to it. That trade removes
 content drift — one copy of the rule is left — and introduces exactly one
-failure in its place. A skill gets rewritten, its prose keeps the behaviour in
+failure in its place. A caller gets rewritten, its prose keeps the behaviour in
 different words, and the pointer to the single source of truth quietly
 disappears. What remains looks correct and is governed by nothing. That failure
 is enumerable and textual, which is why this file exists; ADR-0073 §3 owns the

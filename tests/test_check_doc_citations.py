@@ -1,7 +1,7 @@
 """The ADR-0073 citation gate (scripts/check_doc_citations.py).
 
 The gate exists because ADR-0073 trades restatement for citation, and the one
-failure that trade introduces — a rewritten skill silently dropping its
+failure that trade introduces — a rewritten caller silently dropping its
 pointer — is invisible in the resulting prose. A gate that cannot fail is that
 same defect one layer out, so every assertion below breaks exactly one
 precondition and requires the gate to notice. The live-repo case alone would
