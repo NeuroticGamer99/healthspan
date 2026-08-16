@@ -636,9 +636,9 @@ GATES: tuple[Gate, ...] = (
     Gate(
         name="doc-citations",
         job="docs",
-        summary="citing skills still point at the documents owning their rules",
+        summary="citing callers still point at the documents owning their rules",
         ci_steps=(
-            "Check the citing skills still point at the documents that own "
+            "Check the citing callers still point at the documents that own "
             "their rules (ADR-0073)",
         ),
         build=_docs_gate("check_doc_citations.py"),

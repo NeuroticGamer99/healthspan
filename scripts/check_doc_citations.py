@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that every skill citing an owning harness document still cites it.
+"""Verify that every caller citing an owning harness document still cites it.
 
 ADR-0073 replaces restatement with citation: a rule written five times in five
 vocabularies becomes one statement plus five pointers to it. That trade removes
@@ -36,7 +36,7 @@ document for one reason only needs none.
 
 A caller that has gone missing fails rather than being skipped. A check that
 reads "absent" as "compliant" is the false pass this gate exists to prevent, and
-a renamed skill is exactly when a citation is most likely to have been lost. It
+a renamed caller is exactly when a citation is most likely to have been lost. It
 is reported once per caller rather than once per (document, caller) pair: one
 cause, one line.
 
@@ -86,10 +86,13 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     ".claude/bot-review-triage.md": {
         ".claude/skills/apply-review/SKILL.md": ("Under-reporting",),
     },
-    # The local gate runner. Each caller used to restate CI's gate commands and
-    # pinned versions; measured, two of those copies had already drifted apart,
-    # and `/land`'s named tool invocations that do not exist in this project.
-    # The runner derives all of it from ci.yml, so the callers cite it instead.
+    # The local gate runner. The four skill callers used to restate CI's gate
+    # commands and pinned versions; measured, two of those copies had already
+    # drifted apart, and `/land`'s named tool invocations that do not exist in
+    # this project. `CLAUDE.md` converted nothing — it is a pointer added where
+    # the runner had no discoverability of its own, so the selection rule is
+    # "cites the runner", not "used to restate it". The runner derives the
+    # pinned versions from ci.yml; the commands themselves are its own.
     #
     # No needles: the script is new, so in every caller the path appears only as
     # this citation. What a caller may *not* do is re-add a command list beside
@@ -100,6 +103,7 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
         ".claude/skills/ship/SKILL.md": (),
         ".claude/skills/apply-review/SKILL.md": (),
         ".claude/skills/wi/SKILL.md": (),
+        "CLAUDE.md": (),
     },
 }
 

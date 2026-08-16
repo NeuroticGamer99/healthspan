@@ -115,7 +115,7 @@ jobs:
         # deletion is invisible to the reader it exists for.
         run: python3 scripts/check_reviewer_agents.py
 
-      - name: Check the citing skills still point at the documents that own their rules (ADR-0073)
+      - name: Check the citing callers still point at the documents that own their rules (ADR-0073)
         # Why this is not covered by the link-check step above, and why the
         # judgement half stays ungated: scripts/check_doc_citations.py's
         # docstring and ADR-0073 §3. Not restated here — five copies of that
