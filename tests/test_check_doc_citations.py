@@ -1,14 +1,14 @@
 """The ADR-0073 citation gate (scripts/check_doc_citations.py).
 
 The gate exists because ADR-0073 trades restatement for citation, and the one
-failure that trade introduces — a rewritten skill silently dropping its
+failure that trade introduces — a rewritten caller silently dropping its
 pointer — is invisible in the resulting prose. A gate that cannot fail is that
 same defect one layer out, so every assertion below breaks exactly one
 precondition and requires the gate to notice. The live-repo case alone would
 stay green if `check()` returned `[]` unconditionally.
 
 Nothing here hardcodes a caller path. `CITATIONS` is the only source of which
-files exist in a fixture, so renaming a skill and updating the registry — the
+files exist in a fixture, so renaming a caller and updating the registry — the
 two-file edit ADR-0073 describes — moves this suite with it instead of raising
 `FileNotFoundError` from a path the fixture never wrote.
 """
@@ -193,7 +193,7 @@ def test_the_gate_fails_when_a_registered_needle_is_missing(
 def test_the_gate_fails_when_a_caller_file_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A renamed skill is when the citation is likeliest to have been lost,
+    """A renamed caller is when the citation is likeliest to have been lost,
     so an absent caller must fail rather than be skipped."""
     if not _SINGLY_REGISTERED:
         pytest.skip("no caller is registered under exactly one document")
