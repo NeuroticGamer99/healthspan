@@ -220,11 +220,18 @@ does not control, in a repository where every other tool is pinned through `uv`.
 at *module* scope runs before `main` exists and is therefore outside every guard in the file.
 Measured: an unavailable module-level import exits 1 with a traceback on **every** matched call.
 
-`tomllib` was that import — 3.11+, in a module needing only 3.7-era stdlib otherwise — and it is
-now deferred into the function that parses TOML, inside the derivation guard, so it degrades to a
-visible notice.
+`tomllib` was that import — 3.11+ — and it is now deferred into the function that parses TOML,
+inside the derivation guard, so it degrades to a visible notice.
 `test_no_module_level_import_can_fail_on_a_supported_interpreter` holds the module-level import
-list against an interpreter floor rather than against a name, so the next such import is caught too.
+list rather than a single name, so the next such import is caught too.
+
+**That lowers the floor; it does not remove it, and an earlier draft of this paragraph said
+otherwise.** The module's real floor is **3.9**, set by language features rather than by imports:
+`dict[str, str]` as a `default_factory` (PEP 585) and `str.removesuffix` both run at import. An
+import-list test cannot see either, so the mechanism covers one half of the constraint it was
+described as covering — found by external review, not by the test. Mechanising the other half
+means compiling against a target version, which is larger work and moot if the hook stops running
+under an uncontrolled interpreter at all.
 
 **What remains open is stated rather than implied.** Thirty-three module-level statements still
 execute at import — regex compiles, frozen dataclasses, the wrapper table — and a *bug* in any of

@@ -1669,11 +1669,20 @@ def test_no_module_level_import_can_fail_on_a_supported_interpreter() -> None:
     on **every** matched call, which is the failure ADR-0077 §5 says must not
     be reachable.
 
-    `tomllib` was the one such import — 3.11+, in a module that otherwise needs
-    only 3.7-era stdlib — and it is now deferred into the function that parses
-    TOML, inside the derivation guard. This test keeps it that way by asserting
-    the module-level import list against what the *interpreter floor* allows,
-    rather than by naming `tomllib`, so a future 3.12-only import is caught too.
+    `tomllib` was the one such import — 3.11+ — and it is now deferred into the
+    function that parses TOML, inside the derivation guard. This test keeps it
+    that way by asserting the module-level import list rather than by naming
+    `tomllib`, so a future 3.12-only import is caught too.
+
+    **What this test does NOT enforce, and an earlier version of this docstring
+    wrongly implied it did.** It inspects *imports*. The module's real floor is
+    set as much by language features, which an import list cannot see: `dict[str,
+    str]` as a `default_factory` (PEP 585) and `str.removesuffix` are both 3.9+
+    and both run at import. So the floor is **3.9**, this test holds only the
+    import half of it, and nothing here mechanically checks the other half.
+    Closing that needs compiling against a target version — larger work, and
+    moot if the hook stops running under an uncontrolled interpreter at all
+    (`specs/open-questions.md`).
 
     Deliberately not asserting a clean import on this host: that would test the
     runner image rather than the change, the same trap
@@ -1687,7 +1696,8 @@ def test_no_module_level_import_can_fail_on_a_supported_interpreter() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
 
-    # Everything here has been in the standard library since 3.7 or earlier.
+    # Every name here predates the module's 3.9 floor (see the docstring:
+    # the floor comes from language features, not from these imports).
     # A name arriving in this set needs checking against the oldest `python3`
     # a contributor might have on PATH, not against this machine's.
     allowed = {
@@ -1746,6 +1756,13 @@ def test_the_bootstrap_names_no_machine_specific_path() -> None:
     string into a tracked file in a public repository to do it — the thing
     ADR-0071's precondition exists to keep out, committed by the test guarding
     the precondition.
+
+    Only the full path is checked. A bare `home.name` substring test sat here
+    too and was removed: it is username-dependent flakiness rather than
+    coverage, since a home directory called `run`, `os`, `path` or `next` — or
+    any single letter — matches the bootstrap's own `runpy`, `pathlib` and
+    `os.environ`. The `str(home)` assertion above is what ADR-0071 actually
+    asks for, and it is not sensitive to what the user is called.
     """
     home = Path.home()
     for entry in _hook_entries():
@@ -1756,7 +1773,6 @@ def test_the_bootstrap_names_no_machine_specific_path() -> None:
             assert "/home/" not in command, command
             assert "/Users/" not in command, command
             assert str(home) not in command, command
-            assert home.name.lower() not in command.lower(), command
 
 
 def _real_context() -> run_gates.Context:

@@ -496,7 +496,11 @@ def dev_group_packages(text: str) -> set[str]:
     # exists, so on an interpreter older than 3.11 the hook exited 1 with a
     # traceback on *every* matched call — the launch-failure class ADR-0077
     # §5 says must not be reachable, arrived at through the interpreter
-    # rather than through the path. Deferred here it degrades to a visible
+    # rather than through the path. Note the module's floor is **3.9**, not
+    # lower: `dict[str, str]` as a `default_factory` (PEP 585) and
+    # `str.removesuffix` are both 3.9+, and both run at import. Deferring
+    # `tomllib` lowers the floor from 3.11 to 3.9; it does not remove it.
+    # Deferred here it degrades to a visible
     # fail-open notice — via `evaluate`'s broad `except Exception`, not via
     # `derive_facts`'s narrower `(OSError, ValueError)`, which a
     # `ModuleNotFoundError` does not match. Both guards are load-bearing and
@@ -1060,8 +1064,13 @@ def _close_paren(text: str, start: int) -> int | None:
 def _scan_shell(text: str, shell: str = BASH) -> tuple[str, list[str]]:
     """Strip substitutions out of ``text``, honouring quotes; also fix newlines.
 
-    Returns the outer text with each substitution replaced by a space, and the
-    substitution bodies as commands in their own right.
+    Returns the outer text with each substitution replaced by a placeholder
+    *word*, and the substitution bodies as commands in their own right.
+
+    The placeholder is load-bearing rather than cosmetic: it used to be a
+    bare space, which collapsed ``pytest $(git diff --name-only)`` to an
+    argument-less ``pytest`` that then read as an unscoped whole-suite run
+    and was **denied**. See ``_SUBSTITUTION_PLACEHOLDER``.
 
     **Single quotes are the whole point.** The previous version ran a regex over
     the raw string before lexing, so it could not tell a live ``$(…)`` from one
@@ -1212,9 +1221,10 @@ def split_commands(text: str, shell: str = BASH) -> list[list[str]]:
         seen.add(chunk)
 
         # Pull `$(...)` and backtick bodies out and queue them as commands in
-        # their own right, replacing them with a space so the outer command
-        # still parses. The scan is quote-aware: a substitution inside single
-        # quotes is text, not a command.
+        # their own right, leaving a placeholder word behind so the outer
+        # command still parses *and* still shows an argument in that slot.
+        # The scan is quote-aware: a substitution inside single quotes is
+        # text, not a command.
         chunk, inner = _scan_shell(chunk, shell)
         pending.extend(part for part in inner if part.strip())
 
