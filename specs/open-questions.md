@@ -238,6 +238,97 @@ The kernel advisory lock is the correctness guarantee; the lock sentinel records
 
 ## Development Workflow
 
+**Should the gate-invocation hook run under `uv` rather than a bare `python3`?**
+Every other tool in this repository is pinned — `ci.yml` pins each `uvx` version, `run_gates.py`
+derives them, and the hook itself exists to stop unpinned invocations. The hook is the exception:
+it runs under whatever `python3` names on `PATH`. That is not only a missing capability (no project
+venv, so no third-party import is reachable — which is what forces a parser to be hand-rolled or
+vendored) but a **robustness gap**: a module-level import unavailable on that interpreter exits 1
+with a traceback on every matched call, outside every guard in the script. `tomllib` was one such
+import and has been deferred; thirty-three module-level statements remain, and a bug in any of them
+still exits 1 with a traceback on every matched call, outside the script's fail-open design —
+whether the harness then blocks the call is the open question below.
+
+`uv` is already permitted by `test_the_registered_interpreter_is_a_bare_portable_name`'s allowlist,
+so this was contemplated and not taken — ADR-0077 §8's reasoning weighs `python` against `python3`
+spelling and never considers `uv run`. Measured cost: `uv run --frozen --no-sync python -c pass`
+against `python3 -c pass` is **~145 ms** more per call (840 ms vs 695 ms median, both inflated by
+Windows process spawn; the delta is the figure). `--frozen --no-sync` is load-bearing — a plain
+`uv run` may sync, and a hook that installs packages before every shell command is not acceptable.
+
+**Two risks to measure before deciding, not after.** Whether `uv` is reliably on `PATH` wherever the
+hook runs — if not, that is the same launch-failure class by another route. And how `uv run`
+resolves its environment from inside a **git worktree**: this project has already recorded a bare
+`uv run` in the wrong context destroying a venv, and `UV_PROJECT_ENVIRONMENT` exists precisely
+because that resolution is not obvious. **Trigger:** the follow-up work item that also weighs
+vendoring a real shell parser, since both change what the hook may import and both rewrite the
+registered command.
+
+**Does a PreToolUse hook that fails to launch block the tool call, or not?**
+**Narrowed 2026-08-15 by external review round 2: the documentation says it does *not* block, and
+the contrary observation is unreproduced.** The two sources are no longer symmetric, and the entry
+stays open only for the experiment. The session that built the
+[ADR-0077](adr/0077-local-invocation-hooks.md) hook registered it at a path that does not exist in a
+git worktree, observed `PreToolUse:Bash hook error: … can't open file`, and reported losing every
+shell call for the rest of the session — the account on which that ADR's §5 launch-failure row was
+first written. Claude Code's own hooks documentation describes the opposite: a hook that cannot
+start is a **non-blocking** error, and for `PreToolUse` the tool call proceeds through the normal
+permission flow. The same source also contradicts that session's second claim, that hook
+configuration is captured at session start and cannot be reloaded.
+
+Both readings cannot be right, and the difference is not academic — it decides whether a broken hook
+costs a session or merely prints a notice, which is the difference between "prevent at all costs"
+and "prefer to avoid". A mechanism that predicts both accounts exists and is worth testing before
+either source is trusted: a non-blocking hook error leaves the call to the ordinary permission flow,
+where a *separate* denial (a permission prompt, an auto-mode classifier) would read to the session
+as the hook having blocked it. That would make the observation real and its stated cause wrong.
+
+Not settled here because the obvious experiment — registering a deliberately unresolvable hook on a
+narrow matcher and watching what happens to that one tool — was refused twice by the permission
+classifier, through the shell and through the file-edit path both, and pressing further would have
+meant looking for a way around a denial rather than accepting it.
+
+**What round 2 added.** Quoted from the hooks documentation: a hook that cannot start exits ~127,
+which falls under *"Any other exit code doesn't block on its own for most hook events"*, and the
+exit-code table gives `PreToolUse` a blocking row under **exit 2** specifically. The
+caching claim already named above fares no better: hook edits are picked up by a file watcher, and
+the documented remedy when the watcher misses one *is* restarting the session.
+
+**An accidental event bears on the caching half, and it is weaker evidence than it first looks.**
+While applying external round 2, the hook **denied one of the applying session's own Bash calls**,
+emitting its own remedy text verbatim; a reviewer's tool call was denied the same way in a separate
+agent session. What that establishes cleanly is narrower: the harness honours a hook's
+`permissionDecision: deny` end-to-end, which nothing had verified, because every test drives the
+script directly rather than through a registered hook.
+
+The tempting further inference — *the hook was absent at that session's start, so configuration is
+not frozen at start* — is **stated here rather than in the ADR, because it does not survive
+inspection cleanly.** Three things weaken it. The applying session's start state is not visible in
+committed history: the hooks had been removed from `.claude/settings.json` as an *uncommitted*
+working-tree change, so `git show <session-start HEAD>:.claude/settings.json` still shows a hooks
+key and the timeline appears to contradict the account. Only the repository-local settings files
+were checked at that session's start; the user-global file was taken from an earlier session's
+report rather than re-read. And the original account asserts the opposite outcome — a hook that
+kept firing after removal *and* a restart — which no one has reproduced or explained.
+
+So the honest position is that the deny event is **consistent with** a file watcher and does **not,
+by itself, establish** that the caching claim is wrong — the three weaknesses above are exactly
+what would have to be closed for it to. Saying otherwise would restate, as a conclusion, the
+inference this paragraph has just disqualified. **Both halves of this entry still want the
+contained experiment**, and it remains the only thing that would close them. The blocking half
+additionally carries the prose hedge above. A route that avoids the classifier wall
+was proposed and not taken: a throwaway directory outside the repository with its own
+`.claude/settings.json` registering an unresolvable matcher, driven by `claude -p`, touching no
+repository file and no machine-global state. It spends a nested session's tokens, so it is the
+owner's call rather than a reviewer's.
+
+ADR-0077's design does not depend on the answer: a hook that cannot start cannot fail open, cannot
+report, and cannot be observed to have stopped policing, which is sufficient reason to prevent it.
+What depends on the answer is only how the ADR is allowed to *describe* the failure, and §5 is
+hedged accordingly. **Trigger:** the next session that can run the contained experiment (or a
+version-pinned citation from the Claude Code documentation); resolution updates ADR-0077 §5 and the
+`check_gate_invocation.py` docstring together, since both carry the hedge.
+
 **Unbalanced markdown emphasis is a rendering defect no gate catches**
 PyMarkdown enforces style, not inline correctness, so a paragraph that opens `**` and never closes it passes every gate green and then renders a literal `**` to the reader. Measured on the ADR-0072 branch (PR #83), twice: one broken bold span was found by a reviewer and hand-fixed, and the hunk that fixed it **introduced a second one in an adjacent paragraph of the same section**, which the next round then caught. That is a mechanism rather than bad luck — hand-editing emphasis in a long document re-triggers this class at some nonzero rate, and nothing before commit looks for it.
 
@@ -397,6 +488,16 @@ GitHub added a review-effort selector to the PR sidebar's reviewers section, whi
 The practical consequence is mild, which is why this is recorded rather than fixed: `Lite` is already the default, so a repository that has configured nothing is getting the level the owner would have chosen. What is genuinely unclosed is that **the level is a control which changes review depth and leaves no trace in any diff** — the same shape as the Greptile dashboard toggle above, and as the `fixWithAI` block before it. An agent cannot read the setting back, so [`/copilot-review`](../.claude/skills/copilot-review/SKILL.md) states the expected value for a human to confirm in the UI, which is the weakest form of control this repository accepts and is accepted here only because the alternative is nothing at all.
 
 Trigger: **a documented API surface for the level** — at which point `scripts/bot_review.py` can assert the expected value on every request the way it asserts the ask itself, and the skill's prose expectation becomes a mechanized one; **or** `Max` actually arriving, which changes what "the default" means and makes the unasserted setting worth more than it is now.
+
+**Which further rules earn a `PreToolUse` hook**
+[ADR-0077](adr/0077-local-invocation-hooks.md) stands up the hook mechanism for one rule — refusing local gate invocations that cannot work — and its §7 names two further candidates without shipping either, because a new mechanism plus a new policy inside one change is a shape this repository has repeatedly paid for. They are recorded here so the deferral has a trigger rather than living only inside the ADR that declined them.
+
+1. **Read-only `tests/**` while a fix is in progress.** ImpossibleBench measured Claude-family models cheating predominantly by editing the test file, and prose is not a control there (93% → 1%). This is the stronger candidate on evidence, and the weaker one on scope: "while a fix is in progress" is not a state the harness exposes, so an always-on rule would block the ordinary case of a change whose *point* is editing tests — which is most of this repository's recent history. What has to be settled first is therefore not whether the risk is real but **what signal distinguishes a test edit that is the work from one that is an escape hatch**, and no candidate signal has survived inspection yet.
+2. **The CLAUDE.md PowerShell UTF-8 encoding rule.** The 2026-08-06 harness audit called this "genuinely hook-gateable" and "the real target if hooks get built" — a check on command text (`Get-Content` without `-Encoding UTF8`) rather than a judgement about meaning, which is the same class as ADR-0077's four shapes and would slot in as a row rather than a new mechanism. It is unshipped only because it is unmeasured: nobody has counted how often the rule is actually broken, and a control justified by an uncounted risk is itself an unmeasured claim.
+
+**The boundary that governs both, and any third candidate:** ADR-0077 §7 restricts this mechanism to rules decidable from *command text*. A rule needing a judgement about *content* is ADR-0070's rejected option and does not become viable by moving into a hook — so a future candidate has to clear that bar before the trigger below is even reachable.
+
+Trigger: for (1), **a concrete signal that separates a test edit which is the work from one which is an escape hatch** — until one exists there is nothing to implement, and an always-on rule is worse than none. For (2), **a measurement**: any instance of the encoding rule actually being broken in a session, which turns an unquantified risk into a counted one. Either firing makes its candidate a row in the mechanism ADR-0077 established, not a new decision.
 
 ---
 

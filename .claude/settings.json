@@ -2,5 +2,27 @@
   "permissions": {
     "allow": [],
     "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,pathlib,runpy;h=pathlib.Path.cwd();e=os.environ.get('CLAUDE_PROJECT_DIR');g=next((p for p in [h,*h.parents] if (p/'.git').exists()),None);r=([g] if g else [])+([pathlib.Path(e)] if e else []);f=next((c for c in (p/'scripts'/'check_gate_invocation.py' for p in r) if c.is_file()),None);runpy.run_path(str(f),run_name='__main__') if f else None\""
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,pathlib,runpy;h=pathlib.Path.cwd();e=os.environ.get('CLAUDE_PROJECT_DIR');g=next((p for p in [h,*h.parents] if (p/'.git').exists()),None);r=([g] if g else [])+([pathlib.Path(e)] if e else []);f=next((c for c in (p/'scripts'/'check_gate_invocation.py' for p in r) if c.is_file()),None);runpy.run_path(str(f),run_name='__main__') if f else None\""
+          }
+        ]
+      }
+    ]
   }
 }
