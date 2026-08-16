@@ -50,7 +50,7 @@ Always parenthesize — `except (ValueError, OSError):` — never PEP 758's bare
 
 ## Local gates
 
-Run the local gates through `python scripts/run_gates.py` rather than assembling their commands by hand; `--list` shows the gates and how each one runs.
+Run the local gates through `python3 scripts/run_gates.py` rather than assembling their commands by hand; `--list` shows the gates and how each one runs.
 
 ## Subagent output pointers
 
