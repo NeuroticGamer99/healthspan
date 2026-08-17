@@ -367,10 +367,13 @@ and what it excludes); **angles for this round**; **already verified, with evide
 orchestrator's own uncertainties, numbered**; **the reporting bar**; and **the exact command to
 run**.
 
-**Gate results are mechanically filled.** Run the gates through `python scripts/run_gates.py` —
+**Gate results are mechanically filled.** Run the gates through `python3 scripts/run_gates.py` —
 never assemble their commands by hand — and state which were green at brief time. The interpreter
-is part of the invocation: the script carries no execute bit, so a bare `scripts/run_gates.py` is
-"Permission denied" on every POSIX leg and appears to work only on Windows. A reviewer told the
+is part of the invocation, twice over: the script carries no execute bit, so a bare
+`scripts/run_gates.py` is "Permission denied" on every POSIX leg and appears to work only on
+Windows — and the spelling is `python3`, per ADR-0077 §8, which registered it as the repository's
+interpreter and is the spelling `ci.yml` uses throughout. Measured on this machine: `python` does
+not exist in WSL at all, while `python3` resolves on both legs. A reviewer told the
 gates are green spends its attention elsewhere; one told nothing re-derives it.
 
 **The angle roster.** Different angle each round, drawn from what step 2 showed unexecuted, plus
