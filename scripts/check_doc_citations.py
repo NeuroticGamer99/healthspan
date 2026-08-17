@@ -71,6 +71,7 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     # The document is new, so in every caller the path appears only as this
     # citation; no needles needed.
     ".claude/operator-handoff.md": {
+        ".claude/skills/review-brief/SKILL.md": (),
         ".claude/skills/land/SKILL.md": (),
         ".claude/skills/review-prep/SKILL.md": (),
         ".claude/skills/review-handoff/SKILL.md": (),
@@ -86,7 +87,7 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     ".claude/bot-review-triage.md": {
         ".claude/skills/apply-review/SKILL.md": ("Under-reporting",),
     },
-    # The local gate runner. The four skill callers used to restate CI's gate
+    # The local gate runner. Four of the skill callers used to restate CI's gate
     # commands and pinned versions; measured, two of those copies had already
     # drifted apart, and `/land`'s named tool invocations that do not exist in
     # this project. `CLAUDE.md` converted nothing — it is a pointer added where
@@ -99,6 +100,7 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     # the pointer — that is judgement, and stays ungated for the reasons
     # ADR-0073 §3 gives.
     "scripts/run_gates.py": {
+        ".claude/skills/review-brief/SKILL.md": (),
         ".claude/skills/land/SKILL.md": (),
         ".claude/skills/ship/SKILL.md": (),
         ".claude/skills/apply-review/SKILL.md": (),
