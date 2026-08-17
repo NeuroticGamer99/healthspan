@@ -63,6 +63,28 @@ metadata, which is not available to a hook that must not import the world — so
 ``_CONSOLE_SCRIPTS`` states it. It is one entry, it is tested, and a wrong entry
 fails open (a missed deny) rather than closed.
 
+**Applying it once is not enough, and that is the part that was got wrong.** A
+typed name reaches the derived tool set as a ``uv run`` argument, a ``python
+-m`` module, a ``uvx`` spec, or a bare command word — and the bare word did not
+map. So ``uv run pymarkdownlnt``, ``python -m pymarkdownlnt`` and ``uvx
+pymarkdownlnt`` were all refused while a bare ``pymarkdownlnt`` was allowed and
+exited 127 — the *package* spelling, the one ``ci.yml``, ``pyproject.toml`` and
+ADR-0062 use to name the tool they install or run, so the likelier of the two to
+be reached for from memory. (All three also write ``pymarkdown``, as the
+``[tool.pymarkdown]`` config table — a spelling nobody types at a shell.)
+
+**Count the call sites, not those four shapes.** The two do not correspond, in
+both directions: ``python -m`` maps at two separate ``return``\\ s (the attached
+``-mfoo`` spelling and the spaced one), while ``uv tool run`` maps at none of
+its own, being rewritten to ``uvx`` before any resolution happens. Five sites,
+then, and ``test_both_spellings_of_a_tool_are_refused_at_every_call_site``
+enumerates them by hand so that an omission is a failure rather than an absence.
+Three of the five turned out to need it: the bare word, which was missing the
+call outright, and then ``unwrap_python_module``'s attached ``-m`` return and
+``parse_uv_run``, which had the call and nothing testing it — the mapping could
+have been deleted at either and the suite would have stayed green. A site added
+below inherits the same obligation.
+
 **Fail-open is deliberate, and made visible.** A hook that cannot derive its
 facts — or that hits an unexpected bug — allows the command and tells the user
 why, rather than blocking a session on its own defect. That converts the
@@ -1466,7 +1488,13 @@ def classify(argv: list[str], facts: Facts) -> Violation | None:
     if not argv:
         return None
 
-    program = program_name(argv[0])
+    # `_console_name` here, not inside `program_name`, which stays a purely
+    # lexical operation (basename, extension, case). Order matters and only a
+    # path- or extension-bearing word shows it: reversed, `.\pymarkdownlnt.exe`
+    # misses the mapping because it is not yet a bare name when the lookup runs.
+    # This is one of the five call sites the module docstring accounts for, and
+    # the one that did not map — the accounting lives there, not here.
+    program = _console_name(program_name(argv[0]))
     rest = list(argv[1:])
 
     # `uv tool run` is uvx's long spelling — same resolver, same unpinned

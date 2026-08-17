@@ -130,6 +130,15 @@ in CI *and* is a dev dependency, so `uv run pytest <path>` works and must never 
 missed denial) rather than closed (a wrongly refused command). Adding an entry is adding a copy,
 with a copy's obligations.
 
+**Applying it is a per-call-site obligation, not a one-off.** A typed name is matched against the
+derived set at several places, and the mapping has to be applied at every one of them: a site that
+skips it silently exempts the package spelling of every tool in the table. Three sites needed
+attention after this ADR was written: one was missing the call outright and allowed a bare
+`pymarkdownlnt`, and two more had the call with nothing testing it, so the mapping could have been
+deleted at either without reddening the suite. The count of sites and the enumeration that pins
+them live in `scripts/check_gate_invocation.py`'s module docstring and its tests, where they can be
+checked against the code rather than restated here.
+
 ### 5. Fail open, and make the failure visible — but only *running* code can fail open
 
 A hook that cannot derive its facts **allows the command and says so** in a `systemMessage`, rather

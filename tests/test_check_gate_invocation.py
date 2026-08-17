@@ -59,6 +59,14 @@ MUST_DENY = [
     "ruff check .",
     "pyright",
     "pymarkdown scan docs/",
+    # The package spelling of the entry above. Measured, it adds no detection
+    # power over `test_both_spellings_of_a_tool_are_refused_at_every_call_site`,
+    # which asserts both spellings and more besides: every mutation that
+    # reddened this line reddened that test too, and none was found that only
+    # this line catches. It is here because MUST_DENY is where a reader looks to
+    # see what is refused, and a corpus that showed one of two spellings read as
+    # a deliberate exemption of the other.
+    "pymarkdownlnt scan docs/",
     "uvx ruff check .",
     "uvx pymarkdownlnt --config pyproject.toml scan x.md",
     "cd /some/repo && uv run ruff format --check .",
@@ -192,6 +200,10 @@ MUST_DENY_POWERSHELL = [
     r"C:\tools\ruff.exe check .",
     r".\venv\Scripts\pytest.exe",
     r"C:\Python\Scripts\pyright.exe",
+    # The package-name spelling reaches the bare path through a Windows path
+    # too, so the two normalisations have to compose: basename and `.exe` first
+    # (lexical), then the console-script mapping.
+    r".\pymarkdownlnt.exe scan .",
     # PowerShell's line continuation is a backtick, and leaving it in argv did
     # two harms rather than bash's one: it faked a pytest test path *and* it
     # separated `uvx` from its tool, so rule 3 stopped firing as well.
@@ -420,6 +432,47 @@ def test_a_dev_dependency_is_never_treated_as_missing(facts: hook.Facts) -> None
     """
     assert "pytest" not in facts.ephemeral
     assert hook.check_command("uv run pytest tests/test_pool.py", facts) is None
+
+
+def test_the_dev_group_subtraction_maps_package_names_to_console_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The subtraction is by console script, so the dev group must be mapped too.
+
+    ``ephemeral`` is ``(pinned_uvx | executed) - dev_console``, and its left side
+    is keyed by console script. Subtracting raw *package* names would therefore
+    subtract nothing for any tool whose two names differ, leaving a genuinely
+    installed tool refused as "not installed on this machine".
+
+    This is the sixth ``_console_name`` call site — the one
+    ``test_both_spellings_of_a_tool_are_refused_at_every_call_site`` correctly
+    excludes, because it maps a dependency list rather than a typed word. Excluded
+    from that test is not the same as covered, and it was not: dropping the
+    mapping here left the whole suite green, because ``pymarkdownlnt`` is not
+    actually a dev dependency, so today the site is a no-op against the real
+    ``pyproject.toml``. It stops being one the moment a console-script-mismatched
+    tool is added to the dev group, which is exactly when a silent miscomputation
+    would be least expected. Hence a synthetic dev group rather than the real one.
+    """
+    real = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "\ndev = [\n" in real, "the dev group's shape changed; update this test"
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        real.replace("\ndev = [\n", '\ndev = [\n    "pymarkdownlnt>=0.9",\n', 1),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hook, "PYPROJECT", pyproject)
+
+    facts = hook.derive_facts()
+
+    assert "pymarkdown" not in facts.ephemeral, (
+        "a dev-installed pymarkdownlnt must not be reported as missing"
+    )
+    # The tool is still a pinned uvx tool, so rule 3 must keep policing it —
+    # this asserts the subtraction narrowed one rule and not the others.
+    assert "pymarkdown" in facts.pinned_uvx
+    assert hook.check_command("pymarkdownlnt scan .", facts) is None
+    assert hook.check_command("uvx pymarkdownlnt scan .", facts) is not None
 
 
 def test_the_dev_group_subtraction_reads_real_package_names() -> None:
@@ -999,6 +1052,14 @@ def test_the_remedy_names_the_gate_that_actually_runs_the_tool(
     assert facts.selector["pytest"] == "pytest"
     assert facts.selector["pyright"] == "pyright"
     assert facts.selector["pymarkdown"] == "markdown-lint"
+    # The multi-gate case, and the only one the group-collapsing branch of
+    # `_selectors` decides. `ruff` is produced by `ruff-check` *and*
+    # `ruff-format`, and naming either alone is the historical bug that
+    # function's docstring records — a denial of `uvx ruff format .` telling
+    # the author to run the linter. Measured: with that branch forced dead the
+    # selector becomes the joined `"ruff-check ruff-format"` and nothing else
+    # in the suite noticed, so the fix for a real bug had no regression test.
+    assert facts.selector["ruff"] == "ruff"
 
     violation = hook.check_command("pytest", facts)
     assert violation is not None
@@ -1131,7 +1192,12 @@ def test_only_a_version_that_cannot_drift_counts_as_pinned(
         # The requirement grammar the same parser now serves.
         ("ruff>=0.15", "ruff", None),
         ("ruff~=0.15.0", "ruff", None),
-        # The one restatement, applied consistently through every caller.
+        # The one restatement, as this caller applies it. "Applied consistently
+        # through every caller" is what this comment used to say, and it was
+        # false: the bare command word in `classify` did not map, which is the
+        # hole `test_both_spellings_of_a_tool_are_refused_at_every_call_site` now
+        # closes. A claim of universality in a comment is a checklist, and this
+        # one had never been walked.
         ("pymarkdownlnt@0.9.39", "pymarkdown", "0.9.39"),
         ("", "", None),
     ],
@@ -1192,6 +1258,188 @@ def test_the_python_module_walker_finds_the_tool_and_stops_at_the_script(
     args: list[str], expected: tuple[str, tuple[str, ...]] | None
 ) -> None:
     assert hook.unwrap_python_module(args) == expected
+
+
+# Every `_console_name` call site a *typed* word can reach, one case each, with
+# both spellings of the one tool whose package and console script differ.
+#
+# The unit is the **call site**, not the command shape, and that distinction is
+# the whole point: a first draft of this list enumerated "routes" and got the
+# pair wrong in both directions while still counting five. `uv tool run` looks
+# like a route of its own and is not one — `classify` rewrites it to `uvx`
+# *after* computing `program`, so it lands on the same `parse_spec` call — while
+# the attached `-m` spelling looks like the spaced one and is a separate
+# `return` with a separate call, which is how a surviving mutation hid there.
+# Five sites, six entries: the sixth pins that the rewrite still happens before
+# resolution, which is the one thing that would break if the two were reordered.
+#
+# Written out by hand rather than generated from `_CONSOLE_SCRIPTS` or from the
+# branches in `classify`: a test that builds its cases from the thing it checks
+# cannot see a case leave, and the case that mattered here had never been
+# present at all.
+_BOTH_SPELLINGS = [
+    # (call site, package-name spelling, console-script spelling)
+    ("classify bare word", "pymarkdownlnt scan .", "pymarkdown scan ."),
+    ("parse_uv_run", "uv run pymarkdownlnt scan .", "uv run pymarkdown scan ."),
+    (
+        "unwrap_python_module spaced",
+        "python -m pymarkdownlnt scan .",
+        "python -m pymarkdown scan .",
+    ),
+    (
+        "unwrap_python_module attached",
+        "python -mpymarkdownlnt scan .",
+        "python -mpymarkdown scan .",
+    ),
+    ("parse_spec", "uvx pymarkdownlnt scan .", "uvx pymarkdown scan ."),
+    (
+        "parse_spec via the uv-tool-run rewrite",
+        "uv tool run pymarkdownlnt scan .",
+        "uv tool run pymarkdown scan .",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("site", "package_spelling", "console_spelling"),
+    _BOTH_SPELLINGS,
+    ids=[site for site, _pkg, _console in _BOTH_SPELLINGS],
+)
+def test_both_spellings_of_a_tool_are_refused_at_every_call_site(
+    site: str,
+    package_spelling: str,
+    console_spelling: str,
+    facts: hook.Facts,
+) -> None:
+    """Neither spelling can work, so the hook has to refuse both on every route.
+
+    ``pymarkdownlnt`` is the package and ``pymarkdown`` is its console script,
+    and the mapping between them is the module's one restatement. The bug this
+    pins is that the restatement was applied at four of its five reachable call
+    sites and not at the fifth — ``parse_uv_run``, both ``return``\\ s in
+    ``unwrap_python_module`` and ``parse_spec`` each mapped, while ``classify``'s
+    bare command word did not. A bare ``pymarkdownlnt`` was therefore allowed and
+    exited 127, and it is the *likelier* spelling to be typed from memory: it is
+    the one ``ci.yml``, ``pyproject.toml`` and ADR-0062 use when naming the tool
+    to install or run. (All three also write ``pymarkdown``, as the
+    ``[tool.pymarkdown]`` config table — a spelling nobody types at a shell.)
+
+    The site list is the oracle. Deriving it from the branches in ``classify``
+    would have reproduced the omission exactly, since the omission was a branch
+    that did not do the mapping rather than a branch that was missing.
+
+    Mutations this survives, each measured rather than reasoned about. Dropping
+    ``_console_name`` from ``classify`` fails ``classify bare word`` and no other
+    case here — though it reddens tests elsewhere in this file too, so "no other"
+    is an accounting of these cases and not of the blast radius, which is
+    deliberately left un-numbered because it grows with the suite.
+    Dropping it at each of the other four sites fails that site's case, and the
+    two interesting ones fail **nothing else in the suite**: the *attached*
+    ``return`` in ``unwrap_python_module``, and ``parse_uv_run``. Both were
+    unwatched before this test — the corpus carried ``uv run pymarkdown`` but
+    never ``uv run pymarkdownlnt``, and no fixture anywhere used the attached
+    spelling with this tool — so the mapping could have been deleted at either
+    one and the file would have stayed green. Emptying ``_CONSOLE_SCRIPTS`` fails
+    every case, since the derived set is then keyed by the package name;
+    inverting the mapping fails every case too.
+
+    That last one is why the ``violation.tool`` and remedy assertions are here
+    rather than a bare "was it denied". Under the inverted mapping **both**
+    corpus entries still deny — ``classify`` and the derivation move together,
+    so the set is keyed by ``pymarkdownlnt`` and every site reaches it — and
+    the only observable damage is that the denial names a tool
+    ``facts.selector`` has no entry for, degrading the remedy from
+    ``run_gates.py markdown-lint`` to a bare runner call. A corpus of commands
+    cannot see that; it is a property of the message.
+    """
+    for command in (package_spelling, console_spelling):
+        violation = hook.check_command(command, facts)
+        assert violation is not None, f"{site}: {command!r} was allowed"
+        # The denial names the console script at every site, which is what
+        # keeps `facts.selector` — keyed by console script — reachable, so the
+        # remedy names the gate rather than degrading to a bare runner call.
+        assert violation.tool == "pymarkdown"
+        assert "run_gates.py markdown-lint" in violation.remedy(facts)
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        # Lower-casing must come *before* the suffix strip, or an upper-cased
+        # extension survives it. Reversed, `removesuffix(".exe")` sees `.EXE`,
+        # matches nothing, and `FOO.EXE` normalises to `foo.exe` — a name no
+        # rule can match.
+        ("FOO.EXE", "foo"),
+        ("Ruff.Exe", "ruff"),
+        # One case per separator, because the split has to honour both on every
+        # platform: narrowing the pattern to `[\\]` is caught only by `./ruff`,
+        # and narrowing it to `[/]` only by the backslash path. Neither is
+        # padding, and a bare `ruff` case was: measured, it survives even a
+        # `return word` identity mutation, so it detected nothing at all.
+        (r"C:\Tools\Ruff.EXE", "ruff"),
+        ("./ruff", "ruff"),
+    ],
+)
+def test_a_command_word_is_lowercased_before_its_extension_is_stripped(
+    word: str, expected: str
+) -> None:
+    """Asserted directly, because nothing else asserts it on purpose.
+
+    Reversing the two operations does redden this suite today — but only by
+    accident, and only here: ``shutil.which("uv")`` on the machine this was
+    written on resolves to ``uv.EXE``, so the reversal broke ``derive_facts``
+    outright and took 241 tests down with it as collateral. That is coverage
+    resting on one developer's binary casing. A runner whose ``uv`` is installed
+    lower-case would see the same reversal pass every gate, and the two POSIX
+    legs have no ``.exe`` to expose it at all — so the regression could reach
+    ``main`` green on all three.
+
+    ``program_name`` is not changed by the work that added this test; the gap is
+    older than the branch. It is closed here because the branch's own subject is
+    the order in which a command word is normalised, and this is the same
+    composition one layer down.
+
+    **What this cannot catch on Windows, stated because a local green here is
+    not evidence.** The function's docstring names ``Path(word).name`` as the
+    spelling it deliberately avoids, and substituting it *is* caught by the
+    backslash case above — on the two POSIX legs, where ``Path`` leaves a
+    backslash path whole. On Windows ``Path`` splits it correctly, so the
+    substitution is invisible to every case here and to the rest of the suite
+    (measured). That is inherent: no input distinguishes the two on Windows
+    while still asserting a contract worth having, since where they differ —
+    trailing separators, drive-relative ``C:ruff`` — ``Path``'s answer is
+    arguably the better one. The property is held by CI's POSIX legs and cannot
+    be held locally on this machine.
+    """
+    assert hook.program_name(word) == expected
+
+
+@pytest.mark.parametrize("word", ["./pymarkdownlnt", "pymarkdownlnt.exe"])
+def test_the_bare_word_is_mapped_after_the_lexical_normalisation(
+    word: str, facts: hook.Facts
+) -> None:
+    """`classify` composes `_console_name(program_name(w))`, in that order.
+
+    Reversed, the lookup runs against a word that is not yet a bare name —
+    ``"./pymarkdownlnt"`` and ``"pymarkdownlnt.exe"`` are not
+    ``_CONSOLE_SCRIPTS`` keys, so the mapping misses and the command is allowed.
+    Measured: under the reversal both spellings below resolve to
+    ``pymarkdownlnt`` instead of ``pymarkdown``.
+
+    This needs its own test because the case that *names* this call site cannot
+    reach the defect. A bare ``pymarkdownlnt`` is already lexically normal, so
+    the two orders coincide on it and
+    ``test_both_spellings_of_a_tool_are_refused_at_every_call_site[classify bare
+    word]`` stays green under the reversal — measured. The regression was caught
+    only by ``MUST_DENY_POWERSHELL``'s ``.\\pymarkdownlnt.exe`` entry, which is
+    there to pin that a Windows path composes with the mapping at all; resting a
+    named site's coverage on an unrelated entry's incidental reach means an edit
+    to that entry silently un-covers this.
+
+    Both forms are bash-legal, so this does not duplicate the PowerShell entry:
+    that one pins the dialect, this one pins the order.
+    """
+    assert hook.check_command(f"{word} scan .", facts) is not None
 
 
 def test_malformed_input_is_ignored_rather_than_fatal() -> None:
