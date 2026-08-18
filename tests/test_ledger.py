@@ -1280,10 +1280,19 @@ def test_the_cli_exits_one_when_reading_an_existing_digest_fails(
     _write_fragment(repo, branch, 1)
     real_read = Path.read_text
 
-    def exploding_read(self: Path, *args: object, **kwargs: object) -> str:
+    # The parameters are spelled out rather than taken as `*args: object`:
+    # pyright --strict cannot forward `object` into `read_text`'s `str | None`
+    # parameters, and three errors on one line is the cheapest possible reminder
+    # that a passthrough double is still typed code.
+    def exploding_read(
+        self: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
         if self == ledger.digest_path(repo, 96):
             raise PermissionError(13, "Permission denied")
-        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+        return real_read(self, encoding=encoding, errors=errors, newline=newline)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, "read_text", exploding_read)
