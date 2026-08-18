@@ -905,10 +905,23 @@ def _write_text(path: Path, text: str) -> None:
     that holds no rounds. A crash mid-write is the exact scenario this module's
     recovery path exists for, so a partial digest must never be reachable under
     the digest's own name.
+
+    **The staging file is removed if the swap fails**, because a failed
+    publication leaves bytes that are not the digest and are not recoverable
+    state. Left behind, `pr<PR>.md.tmp` sits untracked beside the digests until
+    someone runs `/squash-merge`, whose step 2 stages the ledger with
+    ``git add -A -- specs/reviews/angle-ledger`` -- so the stray is not merely
+    untidy, it rides into the merge commit. Measured before this cleanup
+    existed. ``missing_ok`` because the failure may be `os.replace` finding the
+    staging file already gone.
     """
     staging = path.with_name(path.name + ".tmp")
     staging.write_bytes(text.encode("utf-8"))
-    os.replace(staging, path)
+    try:
+        os.replace(staging, path)
+    except OSError:
+        staging.unlink(missing_ok=True)
+        raise
 
 
 def _remove_dir(directory: Path) -> None:

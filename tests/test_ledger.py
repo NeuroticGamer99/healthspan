@@ -57,6 +57,16 @@ import pytest
 # --------------------------------------------------------------------------
 
 
+# The convention four sibling modules already carry — `test_check_spec_links`,
+# `test_check_personal_containment`, `test_no_task_output_citations` and
+# `test_review_worktree`. This module was the one that did not, which a bot
+# review caught. Clearing the discovery variables below stops an ambient
+# repository leaking in; it does nothing about ambient *config*, so a machine
+# with `commit.gpgsign`, `core.hooksPath` or `init.templateDir` set globally
+# would fail these commits or run foreign hooks on them.
+_NEUTRAL_GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+
 def _git(cwd: Path, *args: str) -> str:
     env = dict(os.environ)
     for leak in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
@@ -67,6 +77,7 @@ def _git(cwd: Path, *args: str) -> str:
             "GIT_AUTHOR_EMAIL": "t@example.invalid",
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@example.invalid",
+            **_NEUTRAL_GIT_ENV,
         }
     )
     proc = subprocess.run(  # noqa: S603 - fixed argv built here, not from input
@@ -128,6 +139,39 @@ def _on_branch(repo: Path, branch: str) -> None:
 
 def _fragments(repo: Path, branch: str) -> list[tuple[int, Path]]:
     return ledger.read_fragments(ledger.fragment_dir(repo, ledger.branch_hash(branch)))
+
+
+def test_ambient_git_config_cannot_reach_the_fixture_repositories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins `_NEUTRAL_GIT_ENV`, which four sibling modules adopt untested.
+
+    Every git-backed test here commits into a throwaway repository, and `_git`
+    inherits the environment. Clearing `GIT_DIR` and friends stops an ambient
+    *repository* leaking in and does nothing about ambient *config*, so a
+    developer with `commit.gpgsign` set globally fails every fixture commit at
+    exit 128 — measured on `check_spec_links` by an external review, which is
+    why the four siblings carry this neutralization. A bot review caught that
+    this module did not.
+
+    The hostile config names a `gpg.program` that cannot exist, so the failure
+    does not depend on whether the machine running the suite has a working gpg
+    — the sibling comment's own scenario is otherwise untestable on a developer
+    box that happens to sign cleanly.
+    """
+    hostile = tmp_path / "hostile.gitconfig"
+    hostile.write_text(
+        "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = no-such-gpg-binary\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(hostile))
+
+    # Without `_NEUTRAL_GIT_ENV` in `_git`'s env this raises CalledProcessError
+    # from the seed commit; with it, the hostile file is never consulted.
+    repo = _repo(tmp_path)
+
+    assert (repo / "seed.txt").is_file()
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
 
 
 # --------------------------------------------------------------------------
@@ -1117,6 +1161,12 @@ def test_an_interrupted_digest_install_leaves_nothing_under_the_digests_name(
     with pytest.raises(OSError, match=re.escape(INTERRUPTED)):
         ledger.collapse(repo, 96, branch, "main")
 
+    strays = sorted(p.name for p in digest.parent.iterdir())
+    assert strays == [], (
+        "a failed publication left staging bytes beside the digests: "
+        f"{strays}. `/squash-merge` stages this directory with `git add -A`, "
+        "so a stray rides into the merge commit rather than merely sitting there"
+    )
     assert staged, "the install never reached os.replace — it is not a swap"
     assert b"Rounds captured:" in staged[0], "the swap ran before the text was whole"
     assert b"## Round 2" in staged[0], "the staged digest was missing an inlined round"
