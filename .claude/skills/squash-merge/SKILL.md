@@ -18,7 +18,7 @@ gate. Stop and report at any step that fails.
   clean and `git rev-parse HEAD` equals the PR's `headRefOid` (`gh pr view <N> --json
   headRefOid`). A mismatch means the message would be composed from commits the PR doesn't have
   (or miss ones it does); stop and reconcile. The fetch also refreshes `origin/main`, which
-  step 2's `rev-list` depends on — a stale tracking ref mis-picks the first commit.
+  step 3's `rev-list` depends on — a stale tracking ref mis-picks the first commit.
 - **All checks green**: `gh pr checks <N>` must exit 0. Exit code 8 means checks are still
   *pending* — that is not green; watch in the background (`gh pr checks <N> --watch`,
   `run_in_background: true`) and merge only when everything has passed. A red check stops the
@@ -80,7 +80,72 @@ gate. Stop and report at any step that fails.
 - The user has asked for the merge in this session. `/ship` and `/copilot-review` never merge;
   neither does this skill uninvited.
 
-## 2. Compose the squash message
+## 2. Collapse the review ledger
+
+Every external review round left a fragment at
+`specs/reviews/angle-ledger/branches/<b6>/round-<N>.md`, committed and tracked. They exist so two
+open branches never contend for a path; that need ends here, and `main` keeps **one digest per
+merged PR and no fragments** (ADR-0072 §8). Uncollapsed, they reach several thousand files a year
+and every one of them is walked by the link check, PyMarkdown, the containment history scan, the
+containment gate's live-repository test **on all three OS legs**, and every later round's own
+review diff.
+
+```bash
+python3 scripts/ledger.py collapse --pr <N>
+```
+
+It is idempotent and safe to re-run, and it refuses rather than guesses: an uncommitted fragment, a
+fragment this branch did not add, or one whose content the existing digest does not hold each stop
+it with the reason on stderr and a non-zero exit.
+
+**Read what it printed and follow that row's "Then" column** — no count is given here on purpose,
+because the one that was here went stale the moment `collapse` grew another return, and the row's
+own action is the thing you need anyway:
+
+| It printed | What it means | Then |
+|---|---|---|
+| `nothing to collapse` | this branch wrote no round fragments — the common case, since most PRs run no external round | skip the rest of step 2 **and** step 5's read-back |
+| `already collapsed` | a previous run finished; the digest is there and the fragments are gone (if their directory lingered behind them, empty, this run removed it — nothing git tracks) | skip the rest of step 2; step 5's read-back still applies |
+| `finished an interrupted collapse` | a previous run crashed between writing the digest and deleting the fragments; this run finished the deletion | commit and push below |
+| `collapsed round(s) …` | the ordinary first run | commit and push below |
+
+Naming only the first of those is what sends the operator into `git commit` with nothing staged,
+which exits 1 in the middle of a checklist whose rule is to stop and report at any step that fails.
+
+**Match on the prefix, and expect more messages than rows.** `collapse` returns more distinct
+messages than this table has rows, deliberately: several can open with the same label when they
+share its action — `already collapsed` covers both a digest whose fragments are already gone and
+one that additionally removed the empty directory they left behind. So read the label, not the
+whole line. No count of either appears here, because a count in this file is a claim about code in
+another one; the mapping is pinned instead, in **both** directions, by
+`tests/test_ledger.py::test_every_collapse_outcome_is_named_in_the_skill_and_every_row_is_real` —
+it reads the labels out of the table above and the messages out of `collapse`'s own returns, so a
+new message with no row here, and a row here matching no message, each redden. One arrived
+unannounced before that existed: the empty-directory case was labelled `finished an interrupted
+collapse`, which this table routes to `git add`/`git commit`, and it stages nothing.
+
+**The collapse is the branch's last commit, and it must be pushed before the merge.** The digest
+has to be *in* the merged content: `main`'s history is append-only and PR-mediated, so there is no
+post-merge commit to put it in. Committing it here also means the digest is lint-gated and
+link-gated by the PR that introduces it, which is what ADR-0072 §8's "clean by construction,
+permanently" actually rests on.
+
+```bash
+git add -A -- specs/reviews/angle-ledger
+git commit -m "Collapse the review ledger into the PR #<N> digest"
+git push
+```
+
+`git add -A` is scoped to one pathspec deliberately: the collapse both adds a file and deletes a
+directory, and a bare `git add -A` would sweep the whole tree — the shape `/savepoint` forbids for
+the same reason.
+
+**Then re-verify the two preconditions this push invalidated**: `gh pr checks <N>` must go green
+again on the new head, and `git rev-parse HEAD` must equal the refreshed `headRefOid`. Do not
+carry the earlier green forward — it belongs to a commit that is no longer the head. The bot sweep
+does not need re-running: the collapse posts no findings and answers none.
+
+## 3. Compose the squash message
 
 GitHub's default squash message concatenates every branch commit — the `/land`-approved message
 jumbled together with "address review" fixups. Always replace it:
@@ -100,6 +165,12 @@ jumbled together with "address review" fixups. Always replace it:
   messages themselves. If the first commit's body is somehow empty, compose from the PR
   description's "What landed" and `Decisions:` sections instead.
 
+  **A collapse in step 2 belongs in that line**, and it is content rather than bookkeeping: the
+  digest is a file landing on `main` that no other commit accounts for, and a reader of `main` has
+  only this message. Name it and the rounds it captured — "Includes the review-ledger collapse
+  (rounds 1–4 → `specs/reviews/angle-ledger/digests/0/pr96.md`)". A step-2 run that printed
+  `nothing to collapse` has nothing to say here.
+
   **The body must describe the merged state, not the first attempt.** The first commit's body is
   the *base*, not a quotation: where a later commit invalidated a claim it makes, correct that
   claim rather than reproducing it. The "Includes …" line records what rode along; it does not
@@ -114,11 +185,11 @@ jumbled together with "address review" fixups. Always replace it:
   fact — the claim is arguable, or rewriting it would change what the user approved at `/land` —
   surface the fork and let the user pick; everything else, fix and say so in the report.
 
-## 3. Merge
+## 4. Merge
 
 **Write the composed body to a file first**, then pass that path — do not pipe it in from a
 heredoc. `--body-file` takes a real path as happily as `-`, and keeping the composed text on disk
-is what makes step 4's comparison an actual diff instead of a spot-check. A body that exists only
+is what makes step 5's comparison an actual diff instead of a spot-check. A body that exists only
 inside a heredoc cannot be compared against what landed without retyping it, which compares your
 memory rather than your message.
 
@@ -131,7 +202,7 @@ gh pr merge <N> --squash --delete-branch --subject "<subject>" --body-file "$msg
 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))`.
 Every commit message in this repo is full of em dashes, and `Set-Content` without `-Encoding UTF8`
 writes cp1252 and corrupts them silently (`CLAUDE.md`, PowerShell file encoding). `gh` ships
-whatever bytes the file holds, and the damage is unrecoverable afterwards: step 4 forbids
+whatever bytes the file holds, and the damage is unrecoverable afterwards: step 5 forbids
 force-pushing `main` to repair a bad message.
 
 If you do pipe it, **`--body-file -` is the only stdin form and the heredoc delimiter must be
@@ -141,7 +212,7 @@ string `-` as the commit body — `gh` does not follow `git commit -F -` convent
 mistake shipped PR #43's squash commit (`97e43ce`, 2026-07-20) with a body of "`-`", and the same
 flag pair exists on `gh pr create` (see `/ship`, which carries the same rule for PR bodies).
 
-## 4. Verify — mandatory
+## 5. Verify — mandatory
 
 A zero exit is not a clean merge. Refresh the tracking ref (do not trust `gh pr merge` to have
 fast-forwarded it — that behavior is incidental, not guaranteed), then compare the **whole
@@ -190,7 +261,22 @@ git checkout main && git merge --ff-only origin/main
 message is wrong, stop and report what the body actually says — never force-push `main` to
 repair it; `main`'s history is append-only and the fix is the user's call.
 
-## 5. Report
+**Read the ledger back off `origin/main`, not off your working tree.** A collapse that ran but
+never reached the merge leaves `main` carrying the fragments it was supposed to remove, and the
+local tree — where the collapse ran — looks correct either way:
+
+```bash
+git ls-tree -r --name-only origin/main -- specs/reviews/angle-ledger/
+```
+
+The branch's `branches/<b6>/` must be absent and the PR's digest present. CI's
+`ledger-collapsed` gate asserts the fragment half of that on the next push to `main`, which catches
+a merge that skipped step 2 entirely; this catches it one step earlier, while you still know which
+PR it was, and it is the only check that also confirms the digest arrived. Skip it only when step 2
+printed `nothing to collapse` — there is no digest to look for in that case, and `already
+collapsed` is not the same answer.
+
+## 6. Report
 
 The merged SHA, confirmation the message verified, and the next queued step (worklist item or
 phase work item) if one is on deck.

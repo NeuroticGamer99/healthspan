@@ -96,44 +96,41 @@ The ledger lives at `specs/reviews/angle-ledger/`. A branch's fragments live und
 named for a hash of the branch, so two open branches never contend for a path:
 
 ```bash
-branch=$(git symbolic-ref --quiet --short HEAD) || { echo "detached HEAD — no branch to key the ledger on"; exit 1; }
-b6=$(printf '%s' "$branch" | shasum -a 256 | cut -c1-6)
-dir="specs/reviews/angle-ledger/branches/$b6"
+dir=$(python3 scripts/ledger.py fragment-dir) || exit 1
 ```
 
-**`symbolic-ref` and not `rev-parse --abbrev-ref`, and this one fails closed on purpose.**
-`--abbrev-ref` prints the literal string `HEAD` on a detached checkout — a `git checkout <sha>`, a
-bisect, or a linked worktree pinned to a commit, all reachable in ordinary use here given ADR-0068's
-reviewer worktrees. Every such session would then hash the same string and share **one** ledger
-directory: rounds from unrelated states pool together, `max(existing)+1` allocates against another
-state's fragments, and a per-branch collapse would sweep them up as if they were one branch's.
-`symbolic-ref --quiet` exits 1 there instead (measured). This is the same trap and the same remedy
-`/savepoint` already documents and ADR-0069 records; it is restated here only as the reason for the
-spelling, not as a new rule.
+**Ask for the directory; do not derive it here.** The hash rule has exactly one owner —
+`scripts/ledger.py` — and it is the module that answers `next-round` below from the same value.
+Computing `<b6>` in shell as well put the identity rule in two implementations that can disagree: a
+different branch checked out between the two invocations, a shell whose bytes for a non-ASCII
+branch name are not UTF-8, a linked worktree resolving `HEAD` differently. Any of those writes the
+fragment into a directory the allocator never read, so the number just allocated collides on the
+next round. The reasons behind the derivation — why the branch is resolved with `symbolic-ref`
+rather than `rev-parse --abbrev-ref`, why the name is hashed rather than used as a path component,
+why the hash covers the name with no trailing newline — live with the code that now owns them, in
+that module's `current_branch` and `branch_hash` docstrings.
 
-**`shasum -a 256` and not `sha256sum`**, which is a portability choice and not a style one:
-`sha256sum` is GNU coreutils and is absent from a stock macOS, while `shasum` ships with Perl and is
-present on macOS, Git Bash and WSL alike (the last two measured here). Both print the same digest in
-the same format, so `cut -c1-6` is unchanged. Do not "simplify" it back — `ci.yml`'s gitleaks step
-does use `sha256sum`, but that job is pinned to `ubuntu-latest`, where the question does not arise.
+**Test the exit status; never let a refusal become the value.** Both commands here print their
+answer on stdout and their reasons on stderr, so `$( )` captures the answer alone — but a failed
+run still *assigns*, leaving the variable empty rather than obviously wrong. Without `|| exit 1` a
+detached HEAD, the refusal this skill exists to fail closed on, flows straight into a fragment path
+built from an empty string.
 
-`printf '%s'` and not `echo`: the hash is over the branch name with **no trailing newline**, and
-an implementation that hashes the newline computes a different directory for the same branch. The
-hash is used rather than the name because a branch name contains `/`, and because a name used as a
-path component was measured normalizing differently across APIs on this platform (ADR-0072 §8).
+**Round number.** Ask for it; do not derive it here:
 
-**Round number.** `N` is `max(existing round numbers in "$dir") + 1`, and `1` when the directory
-does not exist. That is a sound derivation because the files being counted are written *by this
-skill at allocation* (step 5) rather than discovered afterwards — it is not the retired
-file-counting heuristic in disguise.
+```bash
+n=$(python3 scripts/ledger.py next-round) || exit 1
+```
 
-**It is sound only while the directory has not been emptied under it**, which is a real case and
-not a hypothetical: a collapse deletes the branch's fragment directory wholesale, so a
-`/review-brief` run afterwards sees no fragments and allocates round 1 again — over numbers already
-used, and against the invariant ADR-0072 §8 leans on to make "never recompose a digest" safe (no new
-fragment joins a branch's directory once its digest exists). Nothing enforces that, here or
-anywhere; it is listed with the other unenforced rules at the end of this file rather than left as
-a soundness claim with a hole in it.
+That is `max(existing round numbers) + 1` over **both** the fragments in `$dir` *and* the rounds
+any digest recorded having captured from this branch — and the second half is not a refinement, it
+is what makes the first half sound. A collapse deletes the branch's fragment directory wholesale
+(`/squash-merge` step 2), so a run that counted only the disk would allocate round 1 again over
+numbers already used, against the invariant ADR-0072 §8 leans on to make "never recompose a digest"
+safe. The digest retains what it captured precisely so the number survives its own collapse.
+
+It is a sound derivation and not the retired file-counting heuristic in disguise, because the files
+being counted are written *by this skill at allocation* (step 5) rather than discovered afterwards.
 
 **Read every existing fragment's angle record.** From them, assemble three things:
 
@@ -298,7 +295,8 @@ An untracked fragment leaves no trace *on the branch* at all, which is the very 
 paragraph above claims for it, and it dies to a `git clean` or a fresh worktree. Three parts of the
 design assume the fragment is committed: this step's durability argument, ADR-0072 §8's collision
 argument (a clash surfaces as an add/add conflict "since fragments are committed"), and
-`/squash-merge`'s future collapse, which reads a branch's fragments through `origin/main...HEAD`.
+`/squash-merge`'s collapse, which reads a branch's fragments through `origin/main...HEAD` and
+refuses outright on an uncommitted one.
 Commits here belong to `/savepoint`, which requires an explicit enumerated path list and forbids
 `git add -A`, so **name the fragment's path in the handoff (step 7) as owed to the next
 `/savepoint`**. Until it is committed, treat every durability claim above as pending rather than
@@ -498,8 +496,9 @@ step 1 lists. Concretely:
 Named rather than left to read as settled, in the spirit of ADR-0072 §10:
 
 - **Nothing verifies that `N` came from here** rather than from a session counting files. The cheap
-  mechanization, if one is ever wanted, is that a fragment whose `N` is not `max(existing) + 1` for
-  its branch is a detectable error.
+  mechanization, if one is ever wanted, is that a fragment whose `N` is not this skill's own answer
+  for its branch — `scripts/ledger.py next-round`, which reads the disk and the digests together —
+  is a detectable error.
 - **Nothing moves a branch's ledger directory when the branch is renamed.** `<b6>` is derived from
   the branch *name*, so a rename orphans the existing fragments under a stale hash and restarts
   allocation at round 1 against an empty directory. Rename a branch and move
@@ -511,11 +510,13 @@ Named rather than left to read as settled, in the spirit of ADR-0072 §10:
   see. The exclusion is scoped to that one leg, so edits to already-tracked ledger content are
   still caught by the other two; it is the new, still-untracked fragment that goes unwatched.
 - **Nothing stops a fragment being added to a branch's directory after that branch's digest
-  exists.** ADR-0072 §8 leans on that invariant to make "never recompose a digest" safe, and
-  allocation computes `max(existing) + 1` against whatever is on disk — so a collapse that has
-  emptied the directory (or crashed part-way through deleting it) is followed by an allocation
-  that restarts at round 1, re-issuing numbers the digest already holds. This is the case step 2's
-  soundness paragraph defers to.
+  exists** — but the two consequences that made it dangerous are now closed, so what remains is
+  narrower than it was. Allocation reads the digest as well as the disk (step 2), so a
+  post-collapse round no longer re-issues a number the digest holds; and `/squash-merge`'s collapse
+  refuses to delete a fragment its digest never captured, rather than assuming there is none. What
+  is still unenforced is the *adding*: nothing stops a round being briefed on a branch whose PR has
+  merged, and such a round's fragment will sit in a directory whose digest is already written,
+  waiting for a human to notice it when the next collapse refuses.
 - **Nothing compares a brief's stamp against the fragment's.** A revised brief writes a new `<h8>`
   into the fragment, but an *unedited superseded* brief still hashes to its own filename, so it
   passes the only check ADR-0072 §4 defines and the reviewer runs against a brief the orchestrator

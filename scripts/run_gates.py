@@ -644,6 +644,20 @@ GATES: tuple[Gate, ...] = (
         build=_docs_gate("check_doc_citations.py"),
     ),
     Gate(
+        name="ledger-collapsed",
+        job="docs",
+        summary="main carries no uncollapsed review-ledger fragment",
+        ci_steps=(
+            "Check main carries no uncollapsed review-ledger fragment (ADR-0072)",
+        ),
+        build=None,
+        ci_only_reason=(
+            "it asserts a property of `main` alone (ADR-0072 §8); on a branch, "
+            "uncollapsed fragments are the expected state, so a local run would "
+            "fail every branch that has been reviewed"
+        ),
+    ),
+    Gate(
         name="containment",
         job="secrets",
         summary="no personal-data path escapes specs/personal/ (branch scope)",

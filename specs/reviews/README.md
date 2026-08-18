@@ -16,19 +16,20 @@ It accumulates one fragment per external review round while a branch is open, an
 [ADR-0072](../adr/0072-review-pipeline-and-ledgers.md). It is indexed below as a
 directory, never a row per round.
 
-**Expect the directory to be absent much of the time, and read that as normal rather than as a
+**Expect `branches/` to be absent much of the time, and read that as normal rather than as a
 missing artifact.** `/review-brief` creates a branch's subdirectory when it allocates that
-branch's first round; git tracks no empty directory, so before any branch's first round there is
-nothing on disk. That is also why the index row below names the path in a code span rather than
-linking it: a link would resolve only while some branch happened to be mid-review, and
-`scripts/check_spec_links.py` would fail the moment the directory emptied.
+branch's first round, and the collapse deletes it wholesale at merge; git tracks no empty
+directory, so between reviews there is nothing on disk under it. `digests/` is the opposite — one
+file per merged PR that ran rounds, permanent once written. That mix is why the index row below
+names the path in a code span rather than linking it: a link into `branches/` would resolve only
+while some branch happened to be mid-review, and `scripts/check_spec_links.py` would fail the
+moment the collapse emptied it.
 
-**Only the creation half exists today.** ADR-0072 §8 specifies that `/squash-merge` collapses a
-branch's fragments into a per-PR digest at merge, but that is **new machinery BRIEF-5 has still to
-build** — `/squash-merge` performs no collapse of any kind at present. Until it lands, fragments
-accumulate rather than being removed at merge, and the growth argument §8 rests the collapse
-requirement on is unaddressed rather than handled. Do not read the paragraph above as saying merge
-cleans up after itself.
+**Both halves exist as of BRIEF-5b.** `/squash-merge` step 2 runs `scripts/ledger.py collapse`
+before the merge, folding the branch's fragments into `digests/<PR//100>/pr<PR>.md` and deleting
+them, so `main` carries one digest per merged PR and no fragments — asserted on every push to
+`main` by CI's `ledger-collapsed` gate. The digest **inlines** what the fragments held rather than
+linking to them, because the same run deletes them.
 
 | Record | Date | Scope |
 |--------|------|-------|
