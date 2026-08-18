@@ -141,8 +141,9 @@ def _fragments(repo: Path, branch: str) -> list[tuple[int, Path]]:
     return ledger.read_fragments(ledger.fragment_dir(repo, ledger.branch_hash(branch)))
 
 
+@pytest.mark.parametrize("ambient", ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"])
 def test_ambient_git_config_cannot_reach_the_fixture_repositories(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ambient: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pins `_NEUTRAL_GIT_ENV`, which four sibling modules adopt untested.
 
@@ -158,13 +159,27 @@ def test_ambient_git_config_cannot_reach_the_fixture_repositories(
     does not depend on whether the machine running the suite has a working gpg
     — the sibling comment's own scenario is otherwise untestable on a developer
     box that happens to sign cleanly.
+
+    **Both keys, and the case list is hand-written rather than derived from the
+    dict.** The first version hostiled only `GIT_CONFIG_GLOBAL`, so dropping
+    `GIT_CONFIG_SYSTEM` from `_NEUTRAL_GIT_ENV` left all 103 tests green — the
+    docstring claimed to pin the constant and pinned half of it. Parametrizing
+    over `_NEUTRAL_GIT_ENV`'s own keys would repeat that in a subtler form: a
+    removed key removes its own case, so the suite would still pass. The names
+    below are therefore typed out, and the assertion under them fails if the
+    constant and this list stop agreeing in either direction.
     """
+    assert set(_NEUTRAL_GIT_ENV) == {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"}, (
+        "the neutralized variables and this test's hand-written case list have "
+        f"diverged: {sorted(_NEUTRAL_GIT_ENV)}"
+    )
+
     hostile = tmp_path / "hostile.gitconfig"
     hostile.write_text(
         "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = no-such-gpg-binary\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(hostile))
+    monkeypatch.setenv(ambient, str(hostile))
 
     # Without `_NEUTRAL_GIT_ENV` in `_git`'s env this raises CalledProcessError
     # from the seed commit; with it, the hostile file is never consulted.
