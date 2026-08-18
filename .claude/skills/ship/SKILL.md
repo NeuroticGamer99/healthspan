@@ -248,6 +248,14 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   the shell something executable. The collapse block quotes `"$mb"` for a different reason with
   the same moral: the quoting is part of the recipe, not decoration.
 
+**This collapse is the savepoint one, and it is the only collapse `/ship` performs.** The review
+ledger's fragments are ordinary tracked files here: they ride along in the composed commit like
+anything else, and they are folded into the PR's digest by `/squash-merge` step 2, at merge
+(ADR-0072 §8). The two share a philosophy — branch-local scaffolding gone at a single seam — and
+nothing else, so do not reach for `scripts/ledger.py` here. What *does* matter at this step is the
+untracked rule above: a round fragment allocated by `/review-brief` and never checkpointed shows
+as a `??` line, and the collapse would push a branch whose ledger never reached the remote.
+
 ## 3. Open or update the PR
 
 - If a PR already exists for the branch, the push updates it — say so and reuse it.

@@ -92,6 +92,14 @@ Run `git diff --cached --name-only`, compare it against the echoed list, and sto
 path; the enumeration is only a containment control if the commit provably contains nothing
 else.
 
+**A review-round fragment is owed to this list whenever one is outstanding.**
+`/review-brief` allocates a round number by creating
+`specs/reviews/angle-ledger/branches/<b6>/round-<N>.md`, and it cannot commit — commits are this
+skill's, with the scan and the enumeration that go with them. Until the fragment is committed, the
+number it reserves is not durable: a `git clean` or a fresh worktree takes the allocation with it,
+and `/squash-merge`'s collapse refuses outright on an uncommitted fragment rather than inlining
+content that never reached the branch (ADR-0072 §5, §8). The handover names the path; list it.
+
 **That path list is necessary and not sufficient — the staged *content* must match too.**
 `git diff --cached --name-only` proves which paths are in the index, never that each one holds the
 bytes the scan read, and the two diverge wherever `git add` silently declines to update an entry.

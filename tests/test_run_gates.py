@@ -1012,7 +1012,12 @@ def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
         return run_gates.GateResult.PASSED
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
-    docs = run_gates.groups()["docs"]
+    # Local gates only: `main` never runs a CI-only gate, so folding one into
+    # the expected count would make this assertion track the registry's shape
+    # rather than what ran. The docs group has held a CI-only gate since
+    # ADR-0072's ledger check, which asserts a property of `main` alone.
+    by_name = run_gates.gate_by_name()
+    docs = [name for name in run_gates.groups()["docs"] if by_name[name].local]
     # Non-zero even though every gate that *ran* passed: the empty one examined
     # nothing, and `/land` reads this exit code.
     assert run_gates.main(["docs"]) == 1

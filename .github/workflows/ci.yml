@@ -122,6 +122,20 @@ jobs:
         # reasoning is the drift the gate itself exists to stop.
         run: python3 scripts/check_doc_citations.py
 
+      - name: Check main carries no uncollapsed review-ledger fragment (ADR-0072)
+        # `main` holds one digest per merged PR and no round fragments: the
+        # collapse runs on the PR head, as its last commit, before the merge
+        # (ADR-0072 §8). Only `main` can be checked — on a PR branch the
+        # fragments are the expected state, which is why the step is gated on
+        # the ref rather than the script deciding for itself.
+        #
+        # This detects rather than prevents: it fires after a merge that skipped
+        # `scripts/ledger.py collapse`, which is the one moment the collapse can
+        # be skipped and the only side of the merge that can observe it. The
+        # prevention is `/squash-merge`'s own read-back.
+        if: github.ref == 'refs/heads/main'
+        run: python3 scripts/ledger.py check-collapsed
+
       - name: Markdown style lint (PyMarkdown, ADR-0062)
         # Scope (ADR-0062 §4, widened): every *.md git considers part of the
         # repo — tracked plus untracked-but-not-ignored, the same file-set
