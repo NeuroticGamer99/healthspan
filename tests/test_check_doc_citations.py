@@ -7,10 +7,17 @@ same defect one layer out, so every assertion below breaks exactly one
 precondition and requires the gate to notice. The live-repo case alone would
 stay green if `check()` returned `[]` unconditionally.
 
-Nothing here hardcodes a caller path. `CITATIONS` is the only source of which
-files exist in a fixture, so renaming a caller and updating the registry — the
-two-file edit ADR-0073 describes — moves this suite with it instead of raising
-`FileNotFoundError` from a path the fixture never wrote.
+No fixture hardcodes a caller path. `CITATIONS` is the only source of which
+files exist in a fixture, so renaming a caller and updating the registry moves
+this suite with it instead of raising `FileNotFoundError` from a path the
+fixture never wrote.
+
+`_EXPECTED_PAIRS` is the deliberate exception and the only one: derivation
+cannot see a row *leave* the registry, because the deleted row deletes its own
+case. Membership is pinned by hand there; every other structure stays derived.
+The two are not in tension — derived for *what to exercise*, pinned for *what
+must be present* — but the split is stated because a later editor who reads only
+the paragraph above will otherwise read the pin as the drift it guards against.
 """
 
 from __future__ import annotations
@@ -43,6 +50,77 @@ _NEEDLE_ROWS = [
     for caller, needles in callers.items()
     if needles
 ]
+
+# Hand-maintained, deliberately, and the only structure here that is. Everything
+# above derives from `CITATIONS` so a renamed caller moves the suite with it;
+# derivation is exactly why none of it can see a row *leave* the registry, since
+# a deleted row deletes its own parametrized case instead of reddening one.
+# Membership therefore needs an expectation that does not come from the thing it
+# is checking. Measured here: dropping a row took this module 27 passed -> 26
+# passed with zero failures. (The RUNG-3 branch measured the same *shape* at
+# 25 -> 24 against an 11-row registry — a different measurement, not this one.)
+#
+# The accepted cost, stated because it is the argument that deferred this twice:
+# registering a caller is now a three-file edit — the registry, the caller's own
+# citation, and this set — where it used to be two. That is the point rather
+# than an oversight. A membership change nobody announced is the failure mode.
+#
+# Scope, stated where the next editor will be standing: this pins *which pairs
+# are registered*, not the needle tuple attached to a pair. Emptying a needle
+# leaves its pair registered and does not fire this test. Harmless only while
+# exactly one row carries needles, because emptying that one also empties
+# `_NEEDLE_ROWS` and reddens `test_the_registry_is_not_empty`. **Adding a second
+# needle row is the trigger** to extend the oracle — specs/open-questions.md
+# carries the entry and the acceptance criterion.
+_EXPECTED_PAIRS = frozenset(
+    {
+        (".claude/operator-handoff.md", ".claude/skills/review-brief/SKILL.md"),
+        (".claude/operator-handoff.md", ".claude/skills/land/SKILL.md"),
+        (".claude/operator-handoff.md", ".claude/skills/review-prep/SKILL.md"),
+        (".claude/operator-handoff.md", ".claude/skills/review-handoff/SKILL.md"),
+        (".claude/operator-handoff.md", ".claude/skills/apply-review/SKILL.md"),
+        (".claude/operator-handoff.md", ".claude/skills/ship/SKILL.md"),
+        (".claude/bot-review-triage.md", ".claude/skills/apply-review/SKILL.md"),
+        ("scripts/run_gates.py", ".claude/skills/review-brief/SKILL.md"),
+        ("scripts/run_gates.py", ".claude/skills/land/SKILL.md"),
+        ("scripts/run_gates.py", ".claude/skills/ship/SKILL.md"),
+        ("scripts/run_gates.py", ".claude/skills/apply-review/SKILL.md"),
+        ("scripts/run_gates.py", ".claude/skills/wi/SKILL.md"),
+        ("scripts/run_gates.py", "CLAUDE.md"),
+    }
+)
+
+
+def test_the_registry_membership_is_pinned() -> None:
+    """A row leaving `CITATIONS` reddens here, where nothing else sees it.
+
+    The failure this closes is a pointer and its guard disappearing together in
+    one edit: drop the citation from a caller *and* drop that caller's row, and
+    every other test in this file stays green because each derives its cases
+    from the registry being edited.
+
+    Deliberately compares whole sets rather than counting. A pinned count is the
+    cheaper spelling and admits the edit that removes one row while adding
+    another — and a bare count is a claim whose shelf life expires quietly the
+    first time the registry legitimately grows.
+    """
+    actual = frozenset(_REGISTERED_PAIRS)
+    unregistered = actual - _EXPECTED_PAIRS
+    dropped = _EXPECTED_PAIRS - actual
+    # One assertion over both directions, not two sequential ones. Two bare
+    # asserts unwind at the first, so a refactor that adds one row and drops
+    # another reports only the addition; the operator pins the new pair, the
+    # test goes green, and the dropped row -- the failure this test exists for
+    # -- is never shown. That is the shape the open-questions entry diagnosed
+    # for the sibling test, reproduced here by the remedy for it.
+    assert (unregistered, dropped) == (frozenset(), frozenset()), (
+        f"registry membership drifted from the pin. Added without being pinned: "
+        f"{sorted(unregistered)} -- add them to _EXPECTED_PAIRS in the same edit, "
+        f"since the pin is what makes their later removal visible. Left CITATIONS: "
+        f"{sorted(dropped)} -- if that is intended, remove them from _EXPECTED_PAIRS "
+        "too and say why in the commit; if it is not, a caller has lost the pointer "
+        "to the document owning its rule."
+    )
 
 
 def test_the_live_repository_conforms() -> None:

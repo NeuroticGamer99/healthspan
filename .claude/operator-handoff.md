@@ -1,17 +1,17 @@
 # Operator handoff — printing something the user has to act on
 
 The single authoritative statement of **how** a session presents a filesystem path or a command
-the user has to open, copy, or run. The skills that hand one back — `/land`, `/review-prep`,
-`/review-handoff`, `/apply-review`, `/ship` — cite this file rather than restating it. Decision
-record: [ADR-0073](../specs/adr/0073-operator-handoff-presentation.md).
+the user has to open, copy, or run. The skills that hand one back — `/review-brief`, `/land`,
+`/review-prep`, `/review-handoff`, `/apply-review`, `/ship` — cite this file rather than restating
+it. Decision record: [ADR-0073](../specs/adr/0073-operator-handoff-presentation.md).
 
 Named without step numbers on purpose. `scripts/check_doc_citations.py` gates that each of those
 skills still cites this file; it cannot see a step *number*, so an ordinal here would be a
 cross-reference nothing checks — and this change renumbered two skill sections while it was being
 written, which is the drift arriving during its own remedy.
 
-Each of those five already said *that* it should surface the thing, and each said it in its own
-words: "print both paths", "resolved and absolute", "the path of the carrier file", "name the
+The five that predate this document already said *that* they should surface the thing, and each
+said it in its own words: "print both paths", "resolved and absolute", "the path of the carrier file", "name the
 file". **Three of them — `/land`, `/review-prep`, `/ship` — named neither absoluteness nor form**,
 and `/apply-review` named absoluteness only in a clause quoting `/review-handoff`, while its own
 fallback instruction named neither. That spread is the tell: the presentation was never decided
