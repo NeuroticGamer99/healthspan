@@ -1008,6 +1008,27 @@ def main(argv: list[str] | None = None) -> int:
         # `scripts/` reports its errors the same way.
         print(str(exc), file=sys.stderr)
         return 1
+    except OSError as exc:
+        # The docstring promises exit 1 with the reason on stderr for any
+        # failure, and every subcommand here touches the filesystem: ten
+        # functions in this module call something that raises `OSError`, and
+        # none of them wraps it. Measured before this clause existed -- a
+        # collapse whose digest path was unreadable died with a
+        # `PermissionError` traceback out of `_read_text`, which is the same
+        # contract breach the `UnicodeDecodeError` guard there already closes
+        # for the decode half. `subprocess.run` is on that list too, so a
+        # missing `git` arrives here as `FileNotFoundError` rather than a
+        # stack trace.
+        #
+        # A separate clause rather than `except (LedgerError, OSError)`: a
+        # `LedgerError` is a refusal this module composed and its text stands
+        # alone, while an `OSError` is the environment failing and reads as
+        # `[Errno 13] Permission denied: <path>` -- printing them through one
+        # handler would present a full disk as a ledger refusal. Splitting them
+        # also keeps this file clear of the bare-comma `except` trap CLAUDE.md
+        # documents, since neither clause carries a tuple.
+        print(f"filesystem error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -1204,6 +1204,51 @@ def test_the_cli_exits_one_on_a_fragment_that_is_not_utf8(
     assert "not valid UTF-8" in capsys.readouterr().err
 
 
+def test_the_cli_exits_one_when_the_filesystem_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`OSError` escaped the same contract the decode guard above closes.
+
+    The module promises exit 1 with the reason on stderr for any failure, and
+    every subcommand touches the filesystem — ten functions call something that
+    raises `OSError` and none of them wraps it. `main` caught only
+    `LedgerError`, so a collapse against an unreadable digest died with a
+    `PermissionError` traceback naming an errno instead of a reason. Found by
+    Copilot on PR #96, and reproduced against this module before the fix: it
+    surfaced from `_read_text`, not from the `_write_text` the finding named,
+    which is why the fix is one handler in `main` rather than a wrapper at the
+    site.
+
+    The fault is injected at `os.replace` rather than by arranging a real
+    permission error, because a test that depends on filesystem ACLs answers
+    differently per platform and per CI runner — and this assertion is about
+    `main`'s handler, not about which syscall failed.
+    """
+    repo = _repo(tmp_path)
+    branch = "feat/x"
+    _on_branch(repo, branch)
+    _write_fragment(repo, branch, 1)
+    _commit_ledger(repo, "round 1")
+
+    def exploding_replace(src: object, dst: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ledger.os, "replace", exploding_replace)
+        code = ledger.main(
+            ["--root", str(repo), "collapse", "--pr", "96", "--base", "main"]
+        )
+
+    captured = capsys.readouterr()
+    assert code == 1, "an OSError must not escape as a traceback"
+    assert "filesystem error" in captured.err
+    assert "Permission denied" in captured.err
+    assert captured.out == "", (
+        "the reason belongs on stderr — /review-brief captures stdout into a "
+        "shell variable and would name a fragment after it"
+    )
+
+
 def test_the_recovery_message_names_what_it_actually_deleted(tmp_path: Path) -> None:
     """It reported the digest's captured count, which is not a measurement.
 
