@@ -45,7 +45,10 @@ gate will reject. Inlining -- never linking -- is likewise not a style choice:
 ``scripts/check_spec_links.py`` resolves every relative markdown link, and the
 fragments are deleted by the same run that writes the digest.
 
-Exit 0 on success (including "nothing to do"), 1 on any refusal. The answer
+Exit 0 on success (including "nothing to do"), 1 on any refusal **or
+environment failure** -- the two are different things and `main` reports them
+separately, but both are exit 1, because every caller branches on the status
+rather than on the kind. The answer
 goes to stdout and the reason for a refusal to stderr, because `/review-brief`
 captures stdout (``n=$(... next-round)``) and a refusal printed there becomes the
 round number. Stdlib only; every file is read and written as UTF-8 without a BOM and
@@ -1010,9 +1013,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except OSError as exc:
         # The docstring promises exit 1 with the reason on stderr for any
-        # failure, and every subcommand here touches the filesystem: ten
-        # functions in this module call something that raises `OSError`, and
-        # none of them wraps it. Measured before this clause existed -- a
+        # failure, and every subcommand here touches the filesystem: functions
+        # throughout this module call something that raises `OSError` and none
+        # of them wraps it. No count is given, deliberately -- the first draft
+        # of this comment said "ten", and a reviewer measured 9 or 11 depending
+        # on whether a function reaching `OSError` only through `_read_text`,
+        # `_write_text` or `_remove_dir` is counted. Both readings are
+        # defensible, which is what makes the number the wrong thing to assert;
+        # what matters is that every one of them is reachable only from inside
+        # this `try`. Measured before this clause existed -- a
         # collapse whose digest path was unreadable died with a
         # `PermissionError` traceback out of `_read_text`, which is the same
         # contract breach the `UnicodeDecodeError` guard there already closes

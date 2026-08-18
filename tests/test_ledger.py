@@ -1249,6 +1249,55 @@ def test_the_cli_exits_one_when_the_filesystem_fails(
     )
 
 
+def test_the_cli_exits_one_when_reading_an_existing_digest_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other branch — and the one the original reproduction actually hit.
+
+    `collapse` has two paths that touch the filesystem, and they fail in
+    different places: a first collapse writes, while a re-entry *reads* the
+    existing digest at `parse_digest(_read_text(digest))`. The test above
+    injects at `os.replace`, which only the write path reaches, so a smoke
+    round mutated the read path to re-raise its `OSError` as a type `main`
+    does not catch — reinstating exactly the pre-fix traceback on the
+    digest-exists branch — and the whole suite stayed green.
+
+    That gap mattered here more than it usually would: the failure this fix
+    was written for was reproduced on *this* branch, out of `_read_text`, not
+    out of the `_write_text` the finding named. One handler covers both, but
+    a test that never enters the recovery path cannot show it.
+    """
+    repo = _repo(tmp_path)
+    branch = "feat/x"
+    _on_branch(repo, branch)
+    _write_fragment(repo, branch, 1)
+    _commit_ledger(repo, "round 1")
+    ledger.collapse(repo, 96, branch, "main")
+    assert ledger.digest_path(repo, 96).is_file(), "fixture must reach re-entry"
+
+    # A second collapse takes the `digest.exists()` branch, whose first act is
+    # to read that digest.
+    _write_fragment(repo, branch, 1)
+    real_read = Path.read_text
+
+    def exploding_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self == ledger.digest_path(repo, 96):
+            raise PermissionError(13, "Permission denied")
+        return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "read_text", exploding_read)
+        code = ledger.main(
+            ["--root", str(repo), "collapse", "--pr", "96", "--base", "main"]
+        )
+
+    captured = capsys.readouterr()
+    assert code == 1, "an OSError on the recovery path must not escape either"
+    assert "filesystem error" in captured.err
+    assert "Permission denied" in captured.err
+    assert captured.out == ""
+
+
 def test_the_recovery_message_names_what_it_actually_deleted(tmp_path: Path) -> None:
     """It reported the digest's captured count, which is not a measurement.
 
