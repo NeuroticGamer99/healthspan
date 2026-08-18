@@ -97,7 +97,7 @@ named for a hash of the branch, so two open branches never contend for a path:
 
 ```bash
 branch=$(git symbolic-ref --quiet --short HEAD) || { echo "detached HEAD — no branch to key the ledger on"; exit 1; }
-b6=$(printf '%s' "$branch" | sha256sum | cut -c1-6)
+b6=$(printf '%s' "$branch" | shasum -a 256 | cut -c1-6)
 dir="specs/reviews/angle-ledger/branches/$b6"
 ```
 
@@ -110,6 +110,12 @@ state's fragments, and a per-branch collapse would sweep them up as if they were
 `symbolic-ref --quiet` exits 1 there instead (measured). This is the same trap and the same remedy
 `/savepoint` already documents and ADR-0069 records; it is restated here only as the reason for the
 spelling, not as a new rule.
+
+**`shasum -a 256` and not `sha256sum`**, which is a portability choice and not a style one:
+`sha256sum` is GNU coreutils and is absent from a stock macOS, while `shasum` ships with Perl and is
+present on macOS, Git Bash and WSL alike (the last two measured here). Both print the same digest in
+the same format, so `cut -c1-6` is unchanged. Do not "simplify" it back — `ci.yml`'s gitleaks step
+does use `sha256sum`, but that job is pinned to `ubuntu-latest`, where the question does not arise.
 
 `printf '%s'` and not `echo`: the hash is over the branch name with **no trailing newline**, and
 an implementation that hashes the newline computes a different directory for the same branch. The
