@@ -132,7 +132,13 @@ jobs:
         # This detects rather than prevents: it fires after a merge that skipped
         # `scripts/ledger.py collapse`, which is the one moment the collapse can
         # be skipped and the only side of the merge that can observe it. The
-        # prevention is `/squash-merge`'s own read-back.
+        # prevention is `/squash-merge` step 2, which commits and pushes the
+        # collapse as the branch's last commit before the merge. Step 5's
+        # read-back is the other detector, firing one step earlier than this
+        # gate; it cannot prevent anything, because it runs after step 4 has
+        # already merged. ADR-0072 §10 owns this three-way split; the section
+        # is cited rather than quoted, because its bold lead-ins are edited
+        # often and nothing gates a quotation of one from this file.
         if: github.ref == 'refs/heads/main'
         run: python3 scripts/ledger.py check-collapsed
 
