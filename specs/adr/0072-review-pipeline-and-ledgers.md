@@ -369,3 +369,4 @@ A third candidate, named because its absence is what let one representation drif
 - Related: [`specs/reviews/README.md`](../reviews/README.md) — the "new review reports belong here" rule that decides §8's path
 - Related: [CLAUDE.md](../../CLAUDE.md) § Subagent output pointers — the agent-output-pointer rule §10 cites as its mechanization precedent
 - Related: [open-questions.md](../open-questions.md) — "Harness agent-output files are empty", the expiring observation the capture-as-it-arrives obligation rests on; and "Where the two branch-keyed carriers live", resolved by §9
+- **Owed before this ADR is accepted**: [open-questions.md](../open-questions.md) — "Should ADR-0072's §8 and §10 be consolidated before the ADR is accepted?" settles a structural-only consolidation of §8 and §10, triggered before this `## Status` field leaves `Proposed`. Read it before changing that field
