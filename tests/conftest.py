@@ -151,6 +151,48 @@ def write_file() -> Callable[[Path, str], Path]:
     return _write
 
 
+# --- Differential-harness import hygiene --------------------------------------
+# Shared by both `diff_harness` suites rather than living in one of them. It
+# started as an autouse fixture inside tests/test_diff_harness.py, and its
+# sibling tests/test_diff_check_spec_links.py -- which loads sides of its own
+# and drives a `main` that loads two more -- never got a copy. Measured on that
+# sibling alone: four `_diff_*` entries outlive the module, every one of them a
+# module object whose `__file__` names a staging directory that has already
+# been deleted. Copying the fixture into the second file would have given one
+# property two encodings, which is the drift this repository has paid for
+# repeatedly; a shared fixture applied by `pytest.mark.usefixtures` at the top
+# of each module is one implementation with two consumers.
+#
+# Not autouse here. Autouse in a conftest reaches the whole suite, and this
+# property belongs to two modules.
+
+
+@pytest.fixture
+def clean_import_state() -> Iterator[None]:
+    """Drop the per-side modules each `load_side` leaves in `sys.modules`.
+
+    `diff_harness._import` registers every snapshot under `_diff_<label>_<stem>`
+    and never removes it, which is correct at run time -- an executing module
+    needs to stay reachable -- and is a leak across tests, where the same label
+    is reused with different bytes behind it.
+
+    A fixture rather than a `try`/`finally` per test: pytest guarantees teardown
+    on failure, error and skip alike, so the property stops being any one test's
+    to remember.
+
+    What it does not reach, stated because it is not closed here: a side loaded
+    by a *module*-scoped fixture is created before this one runs, so its entry
+    is already in the snapshot and survives the module. Both suites have one.
+    """
+    saved = dict(sys.modules)
+    try:
+        yield
+    finally:
+        for name in set(sys.modules) - set(saved):
+            if name.startswith("_diff_"):
+                del sys.modules[name]
+
+
 # --- Permission-exposure helpers (ADR-0066) -----------------------------------
 # Shared rather than per-module: the Windows branch encodes ADR-0066's
 # "foreign principal" semantics, so a private copy per test module would have to

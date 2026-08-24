@@ -27,7 +27,7 @@ gate. Stop and report at any step that fails.
   floor, so every round of every reviewer is in scope:
 
   ```bash
-  uv run python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
+  uv run --locked python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
   ```
 
   **Exit 2 clears this gate**: every finding any bot posted has a threaded reply from someone

@@ -21,7 +21,7 @@ Items 1–3 arrived in that sequence — three fixes, three rounds, three new ho
 - Enumeration is ordinary code with a decidable answer; content is judgement with none. The observed defect distribution (6–0) says exactly where mechanization pays.
 - The failure mode of this control is **silence**, not noise. Every hole above produced a clean report, which is the one outcome no reviewer re-examines.
 - Prevention and detection are different jobs. A CI gate fires after the push, by which time the blob is in the remote's object store; only a pre-push run prevents.
-- Precedent bar: the repo's other `check_*.py` gates are stdlib-only, expose a `check()` for tests, and are exercised against synthetic fixtures that each break one precondition ([ADR-0061](0061-markdown-link-check-gate.md), [ADR-0062](0062-markdown-style-lint-gate.md)).
+- Precedent bar: the repo's other `check_*.py` gates expose a `check()` for tests and are exercised against synthetic fixtures that each break one precondition ([ADR-0061](0061-markdown-link-check-gate.md), [ADR-0062](0062-markdown-style-lint-gate.md)). This bullet also read "stdlib-only" until 2026-08-23; ADR-0061's gate stopped meeting that half on 2026-08-22, when it adopted `markdown-it-py` — the two halves that survive are the ones this ADR's §1 actually builds on.
 - [CLAUDE.md](../../CLAUDE.md) rule 1: this creates a new blocking enforcement surface and a CLI contract two skills and a CI job depend on, so it needs an ADR rather than a `Decisions: none` note.
 
 ## Considered Options

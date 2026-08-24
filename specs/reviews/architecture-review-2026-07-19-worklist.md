@@ -97,7 +97,7 @@ The thinking is already done in the review; these are careful transcription. Saf
 ### T3.3 — Code polish (rule 6 — no spec record)
 
 - [ ] `ConnectionPool`: replace the global-`Lock` trace-callback statement counter with per-thread counters summed on read (or `itertools.count`) (review 3.D).
-- [ ] `scripts/check_adr_index.py`: write the missing test, mirroring `test_check_spec_links.py` — this finally closes the 07-07 §4.B docs-consistency carryover (review 4.D).
+- [x] `scripts/check_adr_index.py`: write the missing test, mirroring `test_check_spec_links.py` — this finally closes the 07-07 §4.B docs-consistency carryover (review 4.D). *Resolved 2026-08-23: `tests/test_check_adr_index.py` exists and is run by the pytest gate. Ticked late — the work landed on the `mark-1` branch without the checkbox, against this worklist's own "each PR ticks its own checkboxes in the same PR" rule, and was caught by a review rather than by the PR.*
 - [ ] `LivenessRateLimiter`: opportunistic idle sweep mirroring `AuthFailureRateLimiter._maybe_sweep` (review 2.5 — optional now; required before any non-loopback bind via T3.1's gate-list line).
 
 ### T3.4 — `draw_utc` shape backstop (review 3.D) — rides the first Phase 3.5 migration

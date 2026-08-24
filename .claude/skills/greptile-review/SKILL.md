@@ -26,7 +26,7 @@ If there is no open PR for the current branch, stop and say so — run `/ship` f
 ## 2. Trigger the review
 
 ```bash
-uv run python scripts/bot_review.py request --bot greptile --pr <N>
+uv run --locked python scripts/bot_review.py request --bot greptile --pr <N>
 ```
 
 That posts `@greptileai review` and verifies the created comment reads back exactly as written —
@@ -52,7 +52,7 @@ stamped before the trigger, a re-review edits the summary in place, and step 3 w
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot greptile --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py wait --bot greptile --pr <N> --since <the floor from step 2>
 ```
 
 Run with `run_in_background: true`. Runs have taken 2–8 minutes. Exit codes:
@@ -80,7 +80,7 @@ returning inside that window hands step 4 a review whose findings have not lande
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot greptile --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py fetch --bot greptile --pr <N> --since <the floor from step 2>
 ```
 
 This prints the summary comment and **the findings that have no reply yet**, with the `id` to reply

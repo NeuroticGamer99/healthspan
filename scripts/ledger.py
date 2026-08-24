@@ -133,6 +133,12 @@ FENCE_RE = re.compile(r"^ {0,3}(?P<char>`{3,}|~{3,})(?P<info>.*)$")
 # hundred entries at any merge rate (ADR-0072 sec.8).
 DIGEST_BUCKET = 100
 
+# A hung git fails the ledger rather than hanging it. These two runners were the
+# gap two sibling comments correctly named -- and stopped at, which is how a
+# sixth runner in `run_gates` stayed unfound. `tests/test_git_runners.py` now
+# holds the invariant for the whole family, so closing these two closes it.
+_GIT_TIMEOUT = 30
+
 
 class LedgerError(Exception):
     """A refusal: the reason is the message, and the caller prints it."""
@@ -180,13 +186,17 @@ def current_branch(root: Path) -> str:
     would sweep up rounds belonging to unrelated states. ``/review-brief``
     carries the same spelling for the same reason.
     """
-    proc = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=_GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LedgerError(f"could not run `git symbolic-ref`: {exc}") from exc
     if proc.returncode != 0 or not proc.stdout.strip():
         raise LedgerError(
             "detached HEAD: no branch to key the ledger on. "
@@ -202,13 +212,17 @@ def _git(root: Path, *args: str) -> str:
     # worth the extra line, since `tests/test_ledger.py` records that a
     # destructive verb passed by a future caller is how the ledger's read/write/
     # delete guard gets bypassed without that test seeing it.
-    proc = subprocess.run(  # noqa: S603 - argv is a list, never a shell string
-        ["git", *args],  # noqa: S607
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv is a list, never a shell string
+            ["git", *args],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=_GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LedgerError(f"could not run `git {' '.join(args)}`: {exc}") from exc
     if proc.returncode != 0:
         raise LedgerError(
             f"`git {' '.join(args)}` failed ({proc.returncode}): "
@@ -374,9 +388,11 @@ def scan_fences(markdown: str) -> tuple[list[tuple[str, bool]], bool]:
                 # A backtick fence's info string may not contain a backtick
                 # (CommonMark), so a prose line that opens with an inline
                 # ``...`` span is prose and not a fence.
-                # `scripts/check_spec_links.py`'s `_fence_open` already carries
-                # this rule, and the two models disagreed: measured, a line
-                # beginning with a triple-backtick inline span opened a phantom
+                # `scripts/check_spec_links.py` already carried this rule (in a
+                # `_fence_open` helper it has since replaced with a real
+                # CommonMark parser), and the two models disagreed: measured, a
+                # line beginning with a triple-backtick inline span opened a
+                # phantom
                 # fence here, left every heading after it undemoted (`## S`
                 # came back `## S`), and reported the fragment as carrying an
                 # unclosed fence -- a false refusal reaching `/squash-merge`

@@ -62,6 +62,10 @@ docs-consistency job as `.github/workflows/ci.yml` defines it, rather than the t
 line used to name — and because the group is derived from that job, it stays correct when CI gains
 a gate. Naming the count here would be the drift this selector exists to remove.
 
+It is no longer a *cheap* group, and that is worth knowing before reaching for it: `spec-links`
+runs under `uv run --locked`, so the group needs uv and a synced project environment rather than
+the stdlib alone.
+
 ## 4. Ask the clarifying questions
 
 Use `AskUserQuestion`. Ask only what would genuinely change the work and what the specs leave open

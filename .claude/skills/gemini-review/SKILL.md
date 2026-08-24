@@ -42,7 +42,7 @@ If there is no open PR for the current branch, stop and say so — run `/ship` f
 ## 2. Dispatch the review
 
 ```bash
-uv run python scripts/bot_review.py request --bot gemini --pr <N>
+uv run --locked python scripts/bot_review.py request --bot gemini --pr <N>
 ```
 
 The script dispatches the workflow on `main` with the PR number as input, then **verifies a new
@@ -66,7 +66,7 @@ Use those exact values in steps 3 and 4 — do not mint your own.
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot gemini --pr <N> --since <floor> --run <run id>
+uv run --locked python scripts/bot_review.py wait --bot gemini --pr <N> --since <floor> --run <run id>
 ```
 
 The `--run` id is what lets a failed workflow run end the wait immediately — that run was the
@@ -89,7 +89,7 @@ Run with `run_in_background: true`. Exit codes:
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot gemini --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py fetch --bot gemini --pr <N> --since <the floor from step 2>
 ```
 
 Prints the review and only that review's comments, with the `id` to reply to, plus a `NOTE:` on a

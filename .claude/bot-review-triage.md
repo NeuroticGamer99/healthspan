@@ -189,8 +189,17 @@ the state §1 was rewritten to make visible.
 **Do not change code without the user's explicit go.** Verification and replies are automatic;
 fixes are not. When the go comes, the sequence is **fix → gates → reviewer rounds until they
 settle → gates again if those rounds edited anything → push → replies**. "Gates" is the full
-`/land`/`/ship` set, including `uv run python scripts/check_spec_links.py`, since Markdown edits
-outside `specs/` can break spec-link targets. The replies come last so each "fixed in `<sha>`"
+`/land`/`/ship` set, including the spec-link check, since Markdown edits outside `specs/` can break
+spec-link targets. Run it through `python3 scripts/run_gates.py spec-links` rather than by hand:
+that gate now invokes `uv run --locked`, and the hand-assembled spelling this line used to print
+omitted `--locked`, so on a dependency-touching branch it silently rewrote the tracked `uv.lock`
+from a step billed as a link check. CLAUDE.md says the same thing generally — run the gates through
+the runner rather than assembling their commands. **That correction landed at this one paragraph
+and stopped there**, which a later review measured: 14 pasteable `uv run` copy-blocks across the
+bot-review skills and this file, plus the WSL recipe in `specs/testing-strategy.md`, still omitted
+the flag — every one of them a command an agent pastes mid-review, which is exactly when an
+unannounced rewrite of a tracked file is hardest to notice. All of them now carry it. The rule for
+a new copy-block is the same as `run_gates._uv_run`'s: `--locked` is structural, not remembered. The replies come last so each "fixed in `<sha>`"
 reply names the commit that survived every round.
 
 **The reviewer rounds in that sequence are not optional, and their position in it is the point.**
@@ -236,7 +245,7 @@ You can check §2's "never leave a finding unanswered" mechanically at any point
 once:
 
 ```bash
-uv run python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
+uv run --locked python scripts/bot_review.py outstanding --pr <N> --since <PR createdAt>
 ```
 
 Exit 2 means nothing is unanswered; exit 0 lists what is. Exit 1 means either the sweep found a
