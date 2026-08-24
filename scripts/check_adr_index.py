@@ -30,10 +30,31 @@ INDEX = ADR_DIR / "README.md"
 TEMPLATE = "0000-template.md"
 
 ROW_RE = re.compile(r"^\| \[ADR-(\d{4})\]\(([^)]+)\) \| (.+?) \| (.+?) \|\s*$")
-LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+# One bracket level deep, matching `check_spec_links.LINK_RE` -- deliberately
+# the same shape rather than a second, flatter answer to "what is a markdown
+# link". A `[^\]]+` text run stops at the first `]`, which for a badge link
+# (`[![alt](img.png)](0070-x.md)`) is the *inner* image's, so the substitution
+# consumed `[![alt](img.png)` and left `](0070-x.md)` behind: measured, the
+# flat form turned that into `![status](0070-x.md)` -- an alt text glued to the
+# outer destination, a string neither side of the comparison could produce, so
+# the status cell and the file would be reported as disagreeing when they do
+# not. That is a blocking gate failing on correct markdown, which is the same
+# direction as the defect the sibling pattern was hardened for.
+#
+# Measured over this repository at the revision that changed it: **0**
+# divergence between the two patterns across every ADR `## Status` value and
+# every index row cell -- no ADR carries a nested-bracket status today. The
+# change buys agreement between the repository's two link readers, not a fix
+# to a live corpus failure.
+LINK_RE = re.compile(r"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^)]+\)")
 
 
 def strip_links(text: str) -> str:
+    """A status value with its markdown link markup removed.
+
+    "Superseded by [ADR-0023](0023-x.md)" has to compare equal to the index's
+    "Superseded by ADR-0023", which is what this is for.
+    """
     return LINK_RE.sub(r"\1", text).strip()
 
 
@@ -75,11 +96,25 @@ def main() -> int:
             continue
 
         actual = file_status(path)
+        # `strip_links` on **both** sides, which is what makes this an
+        # agreement test rather than a comparison of two different
+        # normalizations. The file's value was stripped and the index cell was
+        # compared raw, so hardening `LINK_RE` for the badge nesting changed
+        # *which* residue survived and not whether the two could ever match:
+        # measured, a file status of `Superseded by [![badge](img.png)](0070-x.md)`
+        # stripped to `Superseded by ![badge](img.png)` under the balanced form
+        # and to `Superseded by ![badge](0070-x.md)` under the flat one, and
+        # neither equals the plain index cell `Superseded by ADR-0070` nor the
+        # raw badge cell. So the blocking failure the pattern change was written
+        # to remove -- "the status cell and the file reported as disagreeing
+        # when they do not" -- survived it untouched, on either pattern. One
+        # side normalized is not normalization.
+        indexed = strip_links(index_status)
         if actual is None:
             errors.append(f"{filename} has no readable '## Status' value")
-        elif actual != index_status.strip():
+        elif actual != indexed:
             errors.append(
-                f"{filename}: index says status '{index_status.strip()}' "
+                f"{filename}: index says status '{indexed}' "
                 f"but the file says '{actual}'"
             )
 

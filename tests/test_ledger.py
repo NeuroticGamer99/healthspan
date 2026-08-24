@@ -417,9 +417,10 @@ def test_one_fragments_open_fence_cannot_swallow_the_next_round() -> None:
 def test_a_prose_line_opening_with_an_inline_span_is_not_a_fence(line: str) -> None:
     """CommonMark: a backtick fence's info string may not contain a backtick.
 
-    `scripts/check_spec_links.py`'s `_fence_open` already carried this rule and
-    this module did not, so the two disagreed about the same corpus. The cost
-    was not cosmetic: every heading after such a line went undemoted and the
+    `scripts/check_spec_links.py` already carried this rule — in a `_fence_open`
+    helper it has since replaced with a real CommonMark parser — and this module
+    did not, so the two disagreed about the same corpus. The cost was not
+    cosmetic: every heading after such a line went undemoted and the
     fragment was reported as carrying an unclosed fence — a false refusal
     reaching `/squash-merge` after every check is green.
     """

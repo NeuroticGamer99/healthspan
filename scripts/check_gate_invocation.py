@@ -406,7 +406,74 @@ _WRAPPERS = frozenset(
 )
 
 # Command words that run a Python interpreter, so `-m <module>` names the tool.
-_PYTHON_PROGRAMS = frozenset({"python", "python3", "py"})
+_PYTHON_PROGRAMS = frozenset({"python", "python3", "py", "pypy", "pypy3"})
+# A versioned spelling of the same interpreter: `python3.12`, `pyw`, `pypy3.10`,
+# and the free-threaded `python3.14t`, which is a live spelling here because
+# this project sets `requires-python = ">=3.14"`. Matched against an
+# already-normalized (basename, lower-cased, `.exe`-stripped) word, so no
+# IGNORECASE.
+#
+# **The `t` binds to a dotted version, and that is a correction.** It was
+# written `\d*(?:\.\d+)*t?`, a free-floating optional `t` over an optional
+# version, so it matched `pyt`, `pywt`, `pythont`, `py2t` and `python3t` --
+# none of which is a spelling of anything. CPython's free-threaded build is
+# always fully qualified (`python3.14t`, `python3.13t`), so requiring the dot
+# is not a guess about the tail; it is the tail.
+#
+# **The undotted tail is one digit, and that is the same correction one round
+# later.** It was `\d+`, so `py12`, `pypy12`, `python12` and `pyw12` all
+# classified as interpreters: the `t` fix above bound the letter and left the
+# number alone. Undotted is the only ambiguous position -- a two-digit
+# component is a *minor* version and always follows a dot (`python3.14`) -- so
+# the dotted major stays `\d+` and this requires no guess about how long
+# Python's major line runs. Measured at the fail-open call site:
+# `_tool_of(Step(['uv','run','py12','x.py'],''))` returned `None` before and
+# `('py12', False)` after.
+#
+# **And over-matching is not the safe direction here**, which the comment this
+# replaces asserted it was. It is at the *other* two call sites -- `classify`'s
+# and `unwrap_python_module`'s -- where reading a word as an interpreter makes
+# the hook look one level deeper. At `_tool_of` it *drops* the word from the
+# enforced tool set, so any future gate whose console script matched the tail
+# would silently stop being policed by rule 2: the fail-open direction this
+# module says a blocking hook must never take. Measured:
+# `_tool_of(Step(['uv','run','pyt','x.py'],''))` returned `None` where the same
+# call for `ruff` returned `('ruff', False)`.
+#
+# The `pypy` family is in `_PYTHON_PROGRAMS` above and reachable through the
+# `py` branch here for the opposite reason: missing a real interpreter puts it
+# back in `facts.ephemeral` and restores the false "is not installed on this
+# machine" denial this predicate exists to remove. A false positive is how a
+# hook gets switched off.
+_PYTHON_PROGRAM_RE = re.compile(r"(?:pypy|python|py)w?(?:\d+(?:\.\d+)+t?|\d)?\Z")
+
+
+def _is_python_program(word: str | None) -> bool:
+    """Whether `word` spells a Python interpreter, however it was written.
+
+    One predicate for a question asked at three sites, each of which tested raw
+    membership of `_PYTHON_PROGRAMS` against an un-normalized command word --
+    so `python.exe`, `PYTHON` and `python3.12` answered no at all three.
+    Measured before this existed, with the docs gate on `uv run python`:
+    `_tool_of(['uv','run','python.exe','scripts/x.py'])` returned
+    `('python.exe', False)`, putting an interpreter back into `facts.ephemeral`
+    and restoring the denial of every bare `python scripts/run_gates.py` with
+    the false reason "python is not installed on this machine". `PYTHON` and
+    `python3.12` did the same.
+
+    The three agreed only by arithmetic -- `_tool_of` had stopped emitting the
+    one spelling they all recognised -- rather than by a shared rule, which is
+    what "past two sites, prefer one named mechanism" is about.
+
+    Normalization is `program_name`'s, so this inherits its limit: it strips
+    `.exe` and not `.bat` or `.cmd`. Widening that belongs in `program_name`,
+    where it would change every tool's matching rather than only this one's.
+    """
+    if not word:
+        return False
+    stem = program_name(word)
+    return stem in _PYTHON_PROGRAMS or bool(_PYTHON_PROGRAM_RE.fullmatch(stem))
+
 
 # Interpreter options whose *next* token is a value, not the script or module.
 # Same failure shape as the uv and pytest sets above: miss one and the walker
@@ -495,8 +562,14 @@ class Violation:
         return (
             f"{self.reason}\n\n"
             f"Use the local gate runner instead:  python3 {target}\n"
+            # "how each one runs", not "the exact command": `markdown-lint` and
+            # `pytest`'s canary step render a placeholder (`<N files>`,
+            # `<pytest log>`) rather than a pasteable argv, so telling an author
+            # the listing hands them a command to paste is false for two of the
+            # thirteen. Cut item C7's sweep, paid at this site because this
+            # change touches this file.
             f"`python3 {RUNNER} --list` shows every gate, its derived version, "
-            "and the exact command."
+            "and how each one runs."
         )
 
 
@@ -697,7 +770,24 @@ def parse_uv_run(args: Sequence[str]) -> UvRun:
         return UvRun(
             provided=frozenset(provided),
             supplies_unknown=opaque,
-            executed=_console_name(arg),
+            # `program_name` before `_console_name`, the same order and for the
+            # same reason as `classify`'s own first line: a path- or
+            # extension-bearing word is not yet a bare name when the mapping
+            # runs. It was missing entirely here, so `executed` came back as
+            # whatever was typed -- measured, `parse_uv_run(['pytest.exe','-v'])
+            # .executed == 'pytest.exe'` and `['./pytest','-v']` gave
+            # `'./pytest'`.
+            #
+            # Every comparison downstream is against a bare name, so all of them
+            # missed together: `tool in facts.ephemeral`, `tool == "pytest"`
+            # guarding the serial-full-suite denial, and the interpreter
+            # question. Only the last had been repaired, inside
+            # `_is_python_program` -- which is normalizing at the *predicate*
+            # while its own docstring argues that past two sites you prefer one
+            # named mechanism. This is that mechanism, at the source, and it
+            # repairs the other two comparisons as a consequence rather than by
+            # being extended to them.
+            executed=_console_name(program_name(arg)),
             rest=tuple(args[index + 1 :]),
         )
     return UvRun(provided=frozenset(provided), supplies_unknown=opaque)
@@ -798,7 +888,29 @@ def _tool_of(step: run_gates.Step) -> tuple[str, bool] | None:
         # argument shape drifted apart once already — one knew `-p`, the other
         # did not — so they read one implementation now.
         parsed = parse_uv_run(argv[2:])
-        return (parsed.executed, False) if parsed.executed else None
+        if not parsed.executed:
+            return None
+        # `uv run python <script.py>` runs a *script* under the project
+        # interpreter. The thing executed is the interpreter, which is not a
+        # project dependency and never will be -- so counting it puts `python`
+        # in the ephemeral tool set, and the hook then denies every bare
+        # `python scripts/run_gates.py` with the false reason "python is not
+        # installed on this machine", as well as the `uv run python
+        # scripts/...` spelling the docs gate and ADR-0061's reproduction
+        # command both use. Measured before this guard, with the spec-links
+        # gate moved onto `uv run`: `ephemeral` came back as `['pip-audit',
+        # 'pymarkdown', 'pyright', 'python', 'ruff']` and both commands were
+        # denied. A false positive is how a hook gets switched off, which this
+        # module's own tests say in as many words.
+        #
+        # `uv run python -m <tool>` is the opposite case and must still count:
+        # there the interpreter is a wrapper around a tool that genuinely has
+        # to be present. `unwrap_python_module` is what tells the two apart,
+        # and it is the same helper rule 1 uses below.
+        if _is_python_program(parsed.executed):
+            unwrapped = unwrap_python_module(list(parsed.rest))
+            return (unwrapped[0], False) if unwrapped is not None else None
+        return (parsed.executed, False)
 
     return None
 
@@ -1507,7 +1619,7 @@ def classify(argv: list[str], facts: Facts) -> Violation | None:
     # word. Normalising here rather than adding a fourth rule keeps every rule
     # below written once, against the tool actually executed.
     via_python = False
-    if program in _PYTHON_PROGRAMS:
+    if _is_python_program(program):
         unwrapped = unwrap_python_module(rest)
         if unwrapped is not None:
             program, module_args = unwrapped
@@ -1544,7 +1656,7 @@ def classify(argv: list[str], facts: Facts) -> Violation | None:
         # would be denied with the false reason "uv cannot spawn it" — the
         # exact false accusation `supplies_unknown` exists to prevent.
         uv_via_python = False
-        if tool in _PYTHON_PROGRAMS:
+        if _is_python_program(tool):
             unwrapped = unwrap_python_module(list(tool_args))
             if unwrapped is not None:
                 tool, tool_args = unwrapped

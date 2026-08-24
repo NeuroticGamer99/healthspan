@@ -102,7 +102,23 @@ jobs:
         run: python3 scripts/check_adr_index.py
 
       - name: Check every relative markdown link in the repo resolves (ADR-0061)
-        run: python3 scripts/check_spec_links.py
+        # `uv run`, not bare `python3`: this gate parses CommonMark with
+        # markdown-it-py (ADR-0061 revision), so it needs the project
+        # environment. The job already installs uv above.
+        #
+        # `--locked` because this step is a bare `uv run` against the project:
+        # without it, the one gate whose verdict *is* parser behaviour would
+        # re-resolve the `markdown-it-py` requirement against a lockfile that
+        # already pins a version, so the gate and the lockfile could disagree
+        # about which parser ran — and a re-resolve rewrites the tracked
+        # `uv.lock`.
+        #
+        # This read "the only uv-using job with no `uv sync --locked` step of
+        # its own" until a review measured it: `lint`, `pip-audit` and this job
+        # are all three of them, so the claim named a property this job does not
+        # uniquely have. ADR-0061 §2 works the argument through — the two words
+        # doing the work are `uv run`, not the job's sync state.
+        run: uv run --locked python scripts/check_spec_links.py
 
       - name: Check the two markdown-lint configs stay in sync (ADR-0062)
         run: python3 scripts/check_markdownlint_config_sync.py

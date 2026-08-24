@@ -20,7 +20,7 @@ If there is no open PR for the current branch, stop and say so — run `/ship` f
 ## 2. Request the review
 
 ```bash
-uv run python scripts/bot_review.py request --bot copilot --pr <N>
+uv run --locked python scripts/bot_review.py request --bot copilot --pr <N>
 ```
 
 The script requests the review and then **confirms the ask reached GitHub**, failing loud if it
@@ -111,7 +111,7 @@ whole toolchain keeps paying for.
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot copilot --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py wait --bot copilot --pr <N> --since <the floor from step 2>
 ```
 
 Run with `run_in_background: true`. Exit 0 means a findings review is ready; exit 1 is a timeout —
@@ -120,7 +120,7 @@ Run with `run_in_background: true`. Exit 0 means a findings review is ready; exi
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot copilot --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py fetch --bot copilot --pr <N> --since <the floor from step 2>
 ```
 
 Prints the review and only that review's comments, with the `id` to reply to, plus a `NOTE:` when

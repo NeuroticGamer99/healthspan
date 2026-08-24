@@ -342,6 +342,110 @@ def test_every_local_gate_names_a_runnable_program(
         )
 
 
+@pytest.mark.parametrize("gate", LOCAL_GATES, ids=lambda g: g.name)
+def test_every_uv_run_step_is_locked(gate: run_gates.Gate, tmp_path: Path) -> None:
+    """Report finding 5: `uv run` without `--locked` rewrites the lockfile.
+
+    The flag reached one builder and not the two that construct their own
+    `uv run --with ...` argv, and the single assertion covering it pinned the
+    spec-links argv alone — so nothing objected. Without it, `uv run` re-locks
+    whenever `pyproject.toml` has moved ahead of `uv.lock` and rewrites that
+    *tracked* file from a step that reads as read-only.
+
+    Ordering is not the answer, which is why this is an invariant over every
+    gate rather than another ordering test: the lockfile gate runs ahead of both
+    in a *full* run, and `run_gates.py pyright` / `pytest` / `test` each run
+    their step with nothing in front of it — so `uv lock --check` afterwards
+    certifies the file the typecheck gate just repaired.
+
+    The rendered line is asserted too. It is what `--print` and `--list` hand an
+    operator to paste, so a rendering that omits the flag reintroduces the defect
+    one copy-paste later.
+
+    **Asserted on `shown()`, not on `display`, and that is cut item C4.**
+    `display` is an *override* that defaults to `""`; `--list` and `--print`
+    both call `shown()`, which falls back to the argv. So the next gate added
+    through `_uv_run` without a hand-spelled display line would have reddened
+    here while being perfectly correct — and the fix an author reaches for in
+    that moment is to hand-spell a second copy of the argv, which is precisely
+    the duplication `_uv_run` exists to delete. A test that pushes an author
+    toward the defect it is guarding is worse than no test.
+    """
+    for step in gate.steps(_context(tmp_path)):
+        if Path(step.argv[0]).stem != "uv" or step.argv[1:2] != ["run"]:
+            continue
+        assert "--locked" in step.argv, (
+            f"{gate.name} builds a `uv run` without --locked: {step.argv}"
+        )
+        assert "--locked" in step.shown(), (
+            f"{gate.name}'s rendered command omits --locked: {step.shown()!r}"
+        )
+
+
+@pytest.mark.parametrize("gate", LOCAL_GATES, ids=lambda g: g.name)
+def test_every_uv_run_step_carries_the_misattribution_note(
+    gate: run_gates.Gate, tmp_path: Path
+) -> None:
+    """Report finding 14: `--locked` generalized and its explanation did not.
+
+    The note was written into `_uv_python_step` in the same change that put
+    `--locked` on every `uv run` — so the two builders that construct their own
+    `uv run --with ...` argv, pyright and pytest, were newly put at risk and
+    told nothing. `run_gates.py pyright`, `run_gates.py pytest` and
+    `run_gates.py test` each run their step with no lockfile gate ahead of them,
+    so on a branch that edits `pyproject.toml` without re-locking — exactly what
+    adding `markdown-it-py` did — the step aborts inside `uv run --locked`
+    before the tool starts and prints a bare `FAILED: pytest (exit N)` over uv's
+    resolver output.
+
+    **This is an invariant over every gate because the obvious control test
+    cannot see the fix.** The report flagged the trap explicitly:
+    `test_the_uv_python_gate_names_the_cause_its_gate_name_hides` pins the
+    absence of a note on `adr-index`, which `_docs_gate` builds with
+    `sys.executable` rather than `uv run` — so moving the note onto the `uv run`
+    mechanism does not redden it, and its staying green is no evidence at all.
+    Only a sweep over the gates that actually build a `uv run` is.
+
+    The wording is asserted not to name a dead link, which is the other half:
+    the note was hard-coded to the docs gates' failure mode from inside a
+    generic builder, so a pytest step would have told its author to go looking
+    for one.
+    """
+    for step in gate.steps(_context(tmp_path)):
+        if Path(step.argv[0]).stem != "uv" or step.argv[1:2] != ["run"]:
+            continue
+        assert step.on_failure, (
+            f"{gate.name} builds a `uv run` step with no failure note: {step.display!r}"
+        )
+        assert "lockfile" in step.on_failure, step.on_failure
+        assert "dead link" not in step.on_failure, (
+            f"{gate.name}'s note names the docs gates' failure mode: "
+            f"{step.on_failure!r}"
+        )
+
+
+@pytest.mark.parametrize("gate", LOCAL_GATES, ids=lambda g: g.name)
+def test_a_step_that_is_not_a_uv_run_carries_no_note(
+    gate: run_gates.Gate, tmp_path: Path
+) -> None:
+    """The boundary the sweep above needs, stated as the same kind of sweep.
+
+    A runner that put the note on *every* step would satisfy the invariant
+    above while making it meaningless — the note's whole value is that it
+    appears where a project sync can be the real cause and nowhere else.
+    Written as a sweep rather than as one hand-picked gate for the reason the
+    trap above records: a control naming a single gate stops being a control
+    the moment that gate's builder changes.
+    """
+    for step in gate.steps(_context(tmp_path)):
+        if Path(step.argv[0]).stem == "uv" and step.argv[1:2] == ["run"]:
+            continue
+        assert step.on_failure == "", (
+            f"{gate.name} puts a uv-sync note on a step that runs no uv: "
+            f"{step.display!r}"
+        )
+
+
 @pytest.mark.parametrize("gate", CI_ONLY_GATES, ids=lambda g: g.name)
 def test_a_ci_only_gate_refuses_to_build_steps(
     gate: run_gates.Gate, tmp_path: Path
@@ -1202,3 +1306,154 @@ def test_the_markdown_gate_reads_the_live_repository_files() -> None:
     assert "CLAUDE.md" in files
     assert all(name.endswith(".md") for name in files)
     assert not any(name.startswith("specs/personal/") for name in files)
+
+
+# --------------------------------------------------------------------------
+# 4. A gate that needs the project environment must be invoked through it
+# --------------------------------------------------------------------------
+
+
+def test_a_uv_python_gate_builds_a_complete_uv_run_invocation(tmp_path: Path) -> None:
+    """The docs gate that needs project dependencies spells `uv run python`.
+
+    `test_every_local_gate_names_a_runnable_program` proves only that
+    `argv[0]` resolves on this machine, so it cannot see a malformed invocation
+    of a program that *does* resolve: dropping `"run"` leaves `uv python <script>`,
+    which is a real and unrelated uv subcommand, and the whole of this module
+    stayed green under that mutation. The assertion is therefore on the argv the
+    step actually carries, not on whether it starts.
+
+    `spec-links` needs this because it parses CommonMark with markdown-it-py
+    (ADR-0061, revised); a bare `python3` raises `ModuleNotFoundError` there.
+    The gate is looked up rather than named literally, so that removing it from
+    the registry fails here rather than silently skipping.
+    """
+    gate = next(g for g in run_gates.GATES if g.name == "spec-links")
+    steps = gate.steps(_context(tmp_path))
+
+    assert len(steps) == 1, steps
+    argv = [str(part) for part in steps[0].argv]
+    # `--locked` is part of the invocation, not decoration: without it `uv run`
+    # re-locks whenever pyproject.toml has moved ahead of uv.lock, and this gate
+    # runs *before* the lockfile gate — so it would repair the tracked uv.lock
+    # that `uv lock --check` then certifies. Local green, CI red on a clean
+    # checkout, from a gate that reads as read-only.
+    assert [Path(argv[0]).stem, *argv[1:4]] == [
+        "uv",
+        "run",
+        "--locked",
+        "python",
+    ], argv
+    assert argv[4].endswith("check_spec_links.py"), argv
+    assert steps[0].display == "uv run --locked python scripts/check_spec_links.py", (
+        steps[0].display
+    )
+
+
+def test_the_uv_python_gate_names_the_cause_its_gate_name_hides(
+    tmp_path: Path,
+) -> None:
+    """Report finding 4: `uv run` folds a project sync into a link check.
+
+    The step syncs the project environment before running anything, so a stale
+    lockfile or a failed wheel build fails *here* and the runner prints
+    `FAILED: spec-links` — sending the author to hunt a dead link. The
+    `lockfile` gate is the one that names the commonest such cause, and
+    `test_the_docs_gate_runs_before_the_lockfile_gate` pins that it runs after
+    this one, so it cannot get there first.
+
+    Asserted on the step rather than on the printed output because the print is
+    one line in `run_gate`; what can regress is the hint going missing from the
+    step that needs it. The `lockfile` reference is asserted explicitly: a hint
+    that does not name where to look next is decoration.
+    """
+    gate = next(g for g in run_gates.GATES if g.name == "spec-links")
+    step = gate.steps(_context(tmp_path))[0]
+
+    assert step.on_failure, "the uv-run docs gate carries no failure hint"
+    assert "lockfile" in step.on_failure, step.on_failure
+
+    # The control: a gate that runs under this process's own interpreter has no
+    # sync to misattribute, so it carries no hint. Without this the assertion
+    # above would pass for a runner that put the same hint on every step.
+    plain = next(g for g in run_gates.GATES if g.name == "adr-index")
+    assert plain.steps(_context(tmp_path))[0].on_failure == ""
+
+
+def test_a_failing_step_prints_its_failure_note(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Smoke-round finding: the field was set but nothing read it.
+
+    `test_the_uv_python_gate_names_the_cause_its_gate_name_hides` proves
+    `_uv_python_step` *sets* `on_failure`; that leaves it data. `run_gate` is
+    what turns it into something an operator sees, and deleting the two lines
+    that do so left the whole of this module green — measured, 143 passed.
+    A mechanism tested at its builder and not at its call site is a shape this
+    repository has been caught by before.
+
+    On stderr beside the command, because that is where the failure report
+    goes; asserting on stdout would pass for a note nobody reading the failure
+    would find.
+    """
+
+    def fake_run_step(_step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
+        return 1
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    gate = next(g for g in run_gates.GATES if g.name == "spec-links")
+
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
+
+    err = capsys.readouterr().err
+    assert "FAILED: spec-links" in err, err
+    assert "note: " in err, err
+    assert "lockfile" in err, err
+
+
+def test_a_failing_step_without_a_note_prints_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The boundary: the note is conditional, not decoration on every failure.
+
+    Without this, the assertion above would pass for a `run_gate` that printed
+    a `note:` line unconditionally — which would put an irrelevant remedy under
+    every failing gate in the registry.
+    """
+
+    def fake_run_step(_step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
+        return 1
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    gate = next(g for g in run_gates.GATES if g.name == "adr-index")
+
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
+
+    err = capsys.readouterr().err
+    assert "FAILED: adr-index" in err, err
+    assert "note: " not in err, err
+
+
+def test_the_docs_gate_runs_before_the_lockfile_gate() -> None:
+    """The ordering `--locked` exists for, pinned as a relation not an ordinal.
+
+    An unlocked `uv run` re-locks whenever `pyproject.toml` has moved ahead of
+    `uv.lock`. That only matters because this gate runs *before* the lockfile
+    gate: it would repair the tracked `uv.lock` that `uv lock --check` then
+    certifies, so local passes while CI fails on a clean checkout.
+
+    A relation, deliberately, and no positions. `_uv_python_step`'s docstring
+    once claimed a specific one — "runs sixth", invented rather than measured,
+    then copied into ADR-0061 — and any ordinal into a registry that gains
+    entries is wrong the moment one is inserted above it. Its own test is what
+    makes it findable: this lived inside the argv-construction test, where a
+    reader looking for "what pins spec-links before lockfile" would not find it
+    and a refactor of the argv assertions could take it along.
+    """
+    order = [gate.name for gate in run_gates.GATES]
+
+    assert order.index("spec-links") < order.index("lockfile"), order

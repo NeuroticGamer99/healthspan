@@ -21,7 +21,7 @@ If there is no open PR for the current branch, stop and say so — run `/ship` f
 ## 2. Trigger the review
 
 ```bash
-uv run python scripts/bot_review.py request --bot coderabbit --pr <N>
+uv run --locked python scripts/bot_review.py request --bot coderabbit --pr <N>
 ```
 
 CodeRabbit is not requestable through `requested_reviewers` — its ask channel is the
@@ -45,7 +45,7 @@ can exclude the very review it caused, and improvising one is how that bug arriv
 ## 3. Wait for the review
 
 ```bash
-uv run python scripts/bot_review.py wait --bot coderabbit --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py wait --bot coderabbit --pr <N> --since <the floor from step 2>
 ```
 
 Run with `run_in_background: true`. Exit codes:
@@ -61,7 +61,7 @@ Run with `run_in_background: true`. Exit codes:
 ## 4. Triage and reply
 
 ```bash
-uv run python scripts/bot_review.py fetch --bot coderabbit --pr <N> --since <the floor from step 2>
+uv run --locked python scripts/bot_review.py fetch --bot coderabbit --pr <N> --since <the floor from step 2>
 ```
 
 Prints the review and only that review's comments, with the `id` to reply to, plus a `NOTE:` when

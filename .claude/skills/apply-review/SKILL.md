@@ -148,7 +148,9 @@ Don't declare a finding fixed on faith. Per finding, run the gates that can see 
   here: on a documentation fix `ruff pyright` verifies *nothing*, and this skill's findings are
   frequently ADR/spec/skill edits. The `docs` group carries the spec-link check, which has to run
   on any edit anywhere — it validates link targets across the whole repository, so a rename
-  *outside* `specs/` is what breaks a spec link.
+  *outside* `specs/` is what breaks a spec link. That check runs under `uv run --locked`, so this
+  group needs uv and a synced project environment; it is no longer the stdlib-only group its name
+  suggests, which matters where an isolated reviewer is told not to spend that.
 - **Anything under `.claude/`** — `python scripts/run_gates.py docs pytest`. The `docs` group alone
   is **not** sufficient for this file class and reports green without checking it: CLAUDE.md's
   task-output citation rule for `.claude/**` is gated by a pytest test, and no gate in `docs` runs

@@ -128,6 +128,86 @@ _GIT = shutil.which("git") or "git"
 _UV = shutil.which("uv") or "uv"
 _UVX = shutil.which("uvx") or "uvx"
 
+# A hung git fails the runner rather than hanging it. The gate *steps* below are
+# deliberately unbounded -- a full pytest run legitimately takes minutes -- but
+# this bound covers the git calls the runner makes to *build* those steps, which
+# produce no output at all while they wait. `tests/test_git_runners.py` holds the
+# invariant across every script, so no comment here has to enumerate the family.
+_GIT_TIMEOUT = 30
+
+
+def _uv_run(*args: str) -> list[str]:
+    """A `uv run` argv, with `--locked` structural rather than remembered.
+
+    Every `uv run` in this file goes through here, which is the point. The flag
+    was added to the docs-gate builder alone and the two that build their own
+    `[_UV, "run", "--with", ...]` -- pyright and pytest -- were left without it,
+    because there was nothing to add it to; the one assertion covering it pinned
+    the spec-links argv, so nothing objected. Without `--locked`, `uv run`
+    re-locks whenever `pyproject.toml` has moved ahead of `uv.lock` and
+    **rewrites that tracked file**, from a step that reads as read-only.
+
+    Gate *ordering* bounds a full run -- the lockfile gate is ahead of both --
+    but a selector is not ordered: `run_gates.py pyright`, `run_gates.py pytest`
+    and `run_gates.py test` each run their own step with no lockfile gate in
+    front of it, so `uv lock --check` afterwards certifies a file the typecheck
+    gate just repaired. `test_every_uv_run_step_is_locked` holds the invariant
+    for whatever gate is added next, which is the half prose could not do.
+    """
+    return [_UV, "run", "--locked", *args]
+
+
+# The note every `uv run` step carries, for the same reason `--locked` is
+# structural rather than remembered: the exposure belongs to the *mechanism*.
+#
+# It was written into `_uv_python_step` alone, in the same change that
+# generalized `--locked` to every `uv run` — so the two builders that construct
+# their own `uv run --with ...` argv were newly put at risk and told nothing.
+# `run_gates.py pyright`, `run_gates.py pytest` and `run_gates.py test` each run
+# their step with no lockfile gate ahead of them, so on a branch that edits
+# `pyproject.toml` without re-locking — exactly what adding `markdown-it-py`
+# did — the step now aborts inside `uv run --locked` before pytest or pyright
+# starts, printing a bare `FAILED: pytest (exit N)` over uv's resolver output.
+#
+# And its wording named "a dead link" from inside a generic builder, which is
+# only true of the docs gates. `_uv_step` below is what attaches it, so a gate
+# added through `_uv_run` inherits the note the way it inherits the flag.
+_UV_RUN_NOTE = (
+    "`uv run --locked` syncs the project environment before running anything, "
+    "so this can fail on a stale `uv.lock` or a failed install rather than on "
+    "whatever this gate is named for. If the output above is uv's rather than "
+    "the command's, run `run_gates.py lockfile`."
+)
+
+
+def _uv_step(
+    argv: list[str],
+    display: str,
+    *,
+    env: dict[str, str] | None = None,
+    capture_to: Path | None = None,
+) -> Step:
+    """A `Step` for a `uv run` argv, carrying the shared misattribution note.
+
+    One factory rather than three hand-set `on_failure=` fields, on the
+    argument `_uv_run`'s own docstring makes about `--locked`: past two sites,
+    the thing that must not be forgotten belongs in the mechanism rather than
+    in the memory of whoever adds the next gate.
+
+    The keyword arguments are spelled out rather than forwarded as `**kwargs`
+    so that a `Step` field renamed underneath this stays a type error instead
+    of a silently dropped argument -- `capture_to` going missing would turn the
+    canary scan's input into an empty glob, which the scanner fails closed on
+    but only after the test step has already run.
+    """
+    return Step(
+        argv,
+        display,
+        env=env or {},
+        capture_to=capture_to,
+        on_failure=_UV_RUN_NOTE,
+    )
+
 
 class GateError(RuntimeError):
     """A gate could not be built or run — distinct from a gate that failed."""
@@ -264,6 +344,14 @@ class Step:
     # the reason where it sets it: "Must run on test FAILURE too — a failing
     # test's traceback is the likeliest place for a leaked value."
     always_run: bool = False
+    # Printed under the command when this step fails. For a step whose failure
+    # can have a cause *outside* what its gate is named for, naming that cause
+    # at the moment of failure is what stops the author hunting the wrong
+    # thing. `_lockfile`'s own comment records the same class from the other
+    # direction -- an old uv "naming the lockfile for a toolchain problem" --
+    # and answered it with `tool_pin`, which only helps someone reading
+    # `--list` before the failure rather than the failure itself.
+    on_failure: str = ""
 
     def shown(self) -> str:
         return self.display or " ".join(self.argv)
@@ -388,24 +476,100 @@ def _docs_gate(script: str, *args: str) -> Builder:
     return build
 
 
-def _tracked_markdown() -> list[str]:
-    """CI's own file set: tracked plus untracked-but-not-ignored ``*.md``."""
-    result = subprocess.run(  # noqa: S603 - fixed executable, no shell
-        [
-            _GIT,
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "*.md",
-            ":(exclude)specs/personal/**",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
+def _uv_python_step(script: str, *args: str) -> Step:
+    """A docs gate that needs the project's dependencies, so `uv run` supplies
+    them.
+
+    The sibling gates run under `sys.executable` -- this process's own
+    interpreter, which is not the project environment either unless the runner
+    itself was launched from it: measured, `import markdown_it` raises
+    `ModuleNotFoundError` there on this machine. (What they *display* is CI's
+    `python3` spelling, which is what the sentence here used to describe;
+    `_python` above says why the two differ.) `uv run` is the same spelling CI
+    uses for this step, and the docs-consistency job already installs uv for
+    it -- so this is one line in each place rather than a new CI step.
+
+    **`--locked`, and it is not optional.** Without it `uv run` re-locks and
+    re-syncs whenever `pyproject.toml` has moved ahead of `uv.lock` -- rewriting
+    a *tracked* file, from a gate that reads as read-only. The ordering makes it
+    worse than untidy: this gate runs *before* the `lockfile` gate, so on a
+    branch that edits `pyproject.toml` without re-locking -- which is exactly
+    what adding `markdown-it-py` did -- the docs gate repairs `uv.lock` and
+    `uv lock --check` then certifies the file it just repaired. Local green, CI
+    red on a clean checkout: the inversion this runner exists to prevent.
+    `--locked` turns that into a refusal naming the lockfile.
+
+    The *relation* is the load-bearing fact and the ordinal is not, so only the
+    relation is stated -- and it is pinned, by
+    `test_the_docs_gate_runs_before_the_lockfile_gate`, rather than left to
+    prose. This sentence read "runs sixth" until a reviewer measured it;
+    the number was invented rather than derived, the report that raised the
+    finding having handed over the real positions, and it was then copied
+    verbatim into ADR-0061. Deliberately no positions are quoted here now: any
+    ordinal into a registry that gains entries is wrong the moment one is
+    inserted above it, which is the same failure one layer down.
+    """
+    # `uv run` syncs the project environment before it runs anything, so this
+    # step can fail for a reason that has nothing to do with what its gate is
+    # named for -- a stale lockfile, a wheel that will not build, an
+    # interpreter uv has to fetch. Unqualified, the runner prints
+    # `FAILED: spec-links` and sends the author hunting a dead link. The
+    # `lockfile` gate is the one that names the commonest of those causes and
+    # it runs *after* this one, so it cannot get there first. The note itself
+    # lives on `_uv_step`, because the exposure is `uv run`'s and not this
+    # builder's -- see `_UV_RUN_NOTE`.
+    return _uv_step(
+        _uv_run("python", str(REPO_ROOT / "scripts" / script), *args),
+        " ".join(["uv", "run", "--locked", "python", f"scripts/{script}", *args]),
     )
+
+
+def _uv_docs_gate(script: str, *args: str) -> Builder:
+    def build(_: Context) -> list[Step]:
+        return [_uv_python_step(script, *args)]
+
+    return build
+
+
+def _tracked_markdown() -> list[str]:
+    """CI's own file set: tracked plus untracked-but-not-ignored ``*.md``.
+
+    Bounded and guarded, because this one runs at gate-*build* time rather than
+    inside a step: `_markdown_lint` (`job="docs"`) calls it while assembling the
+    docs gate, so an unbounded hang here stops `python3 scripts/run_gates.py
+    docs` -- and therefore a landing -- inside the builder with nothing printed
+    at all. It was the runner two sibling comments' hand-written enumerations
+    both missed while claiming the family was closed; the enumeration is now a
+    test rather than prose.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed executable, no shell
+            [
+                _GIT,
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                "*.md",
+                ":(exclude)specs/personal/**",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+            timeout=_GIT_TIMEOUT,
+        )
+    except OSError as exc:  # git missing, or not executable
+        raise GateError(
+            f"could not run `git ls-files` while building the markdown gate's "
+            f"file list: {exc}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GateError(
+            "`git ls-files` did not return within "
+            f"{_GIT_TIMEOUT}s while building the markdown gate's file list"
+        ) from exc
     if result.returncode != 0:
         raise GateError(
             "git ls-files failed while building the markdown gate's file list: "
@@ -457,17 +621,16 @@ def _pyright(ctx: Context) -> list[Step]:
     # The --with pytest is not redundant: it is how CI resolves the test files'
     # imports, so dropping it typechecks differently than CI does.
     return [
-        Step(
-            [
-                _UV,
-                "run",
+        _uv_step(
+            _uv_run(
                 "--with",
                 f"pyright=={pyright}",
                 "--with",
                 f"pytest=={pytest}",
                 "pyright",
-            ],
-            f'uv run --with "pyright=={pyright}" --with "pytest=={pytest}" pyright',
+            ),
+            f'uv run --locked --with "pyright=={pyright}" '
+            f'--with "pytest=={pytest}" pyright',
         )
     ]
 
@@ -495,10 +658,8 @@ def _pytest(ctx: Context) -> list[Step]:
     # threaded into a builder at all; `dry` is now a concern of `scratch_dir`
     # alone.
     return [
-        Step(
-            [
-                _UV,
-                "run",
+        _uv_step(
+            _uv_run(
                 "--with",
                 f"pytest=={pytest}",
                 "--with",
@@ -508,8 +669,9 @@ def _pytest(ctx: Context) -> list[Step]:
                 "-n",
                 "auto",
                 "--log-level=DEBUG",
-            ],
-            f'uv run --with "pytest=={pytest}" --with "pytest-xdist=={xdist}" '
+            ),
+            f'uv run --locked --with "pytest=={pytest}" '
+            f'--with "pytest-xdist=={xdist}" '
             "pytest -v -n auto --log-level=DEBUG",
             env={"CANARY_CAPTURE_DIR": str(canary_dir)},
             capture_to=log,
@@ -614,7 +776,20 @@ GATES: tuple[Gate, ...] = (
         ci_steps=(
             "Check every relative markdown link in the repo resolves (ADR-0061)",
         ),
-        build=_docs_gate("check_spec_links.py"),
+        build=_uv_docs_gate("check_spec_links.py"),
+        # The only docs gate that runs `uv run` against the *project*
+        # environment, so uv's own version is a real dependency of its verdict
+        # -- the same reason the lockfile gate carries it, and `--list` should
+        # say so beside both.
+        #
+        # "The only docs gate that runs through uv" is what this said, and it
+        # was false: `markdown-lint` is `job="docs"` too and runs
+        # `uvx pymarkdownlnt@<pin>`. It needs no `tool_pin` because uvx
+        # resolves an isolated ephemeral tool at a version the spec names, so
+        # uv is a launcher there rather than part of the answer. Here it
+        # resolves and syncs the project, which is what makes its version
+        # load-bearing.
+        tool_pin="UV_VERSION",
     ),
     Gate(
         name="markdownlint-config-sync",
@@ -939,6 +1114,8 @@ def run_gate(gate: Gate, ctx: Context) -> GateResult:
         if code != 0:
             print(f"\nFAILED: {gate.name} (exit {code})", file=sys.stderr)
             print(f"  command: {step.shown()}", file=sys.stderr)
+            if step.on_failure:
+                print(f"  note: {step.on_failure}", file=sys.stderr)
             # Not an early return: a later `always_run` step still has to run,
             # and its own failure is folded into the same verdict.
             failed = True
@@ -961,7 +1138,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--list",
         action="store_true",
-        help="show every gate, its pinned version, and the exact command it runs",
+        # Not "the exact command": two gates render a placeholder rather than a
+        # pasteable argv -- `markdown-lint`'s `<N files>` and `pytest`'s canary
+        # step, whose argument list is only knowable after the test step has
+        # run. Cut item C7's sweep, paid here because this file is one of the
+        # six sites it names and this change touches it.
+        help="show every gate, its pinned version, and how it runs",
     )
     parser.add_argument(
         "--print",

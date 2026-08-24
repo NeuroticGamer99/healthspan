@@ -151,6 +151,81 @@ def write_file() -> Callable[[Path, str], Path]:
     return _write
 
 
+# --- Differential-harness import hygiene --------------------------------------
+# Shared by both `diff_harness` suites rather than living in one of them. It
+# started as an autouse fixture inside tests/test_diff_harness.py, and its
+# sibling tests/test_diff_check_spec_links.py -- which loads sides of its own
+# and drives a `main` that loads two more -- never got a copy. Measured on that
+# sibling alone: four `_diff_*` entries outlive the module, every one of them a
+# module object whose `__file__` names a staging directory that has already
+# been deleted. Copying the fixture into the second file would have given one
+# property two encodings, which is the drift this repository has paid for
+# repeatedly; a shared fixture applied by `pytest.mark.usefixtures` at the top
+# of each module is one implementation with two consumers.
+#
+# Not autouse here. Autouse in a conftest reaches the whole suite, and this
+# property belongs to two modules.
+
+
+@pytest.fixture
+def clean_import_state() -> Iterator[None]:
+    """Drop the per-side modules each `load_side` leaves in `sys.modules`.
+
+    `diff_harness._import` registers every snapshot under `_diff_<label>_<stem>`
+    and never removes it, which is correct at run time -- an executing module
+    needs to stay reachable -- and is a leak across tests, where the same label
+    is reused with different bytes behind it.
+
+    A fixture rather than a `try`/`finally` per test: pytest guarantees teardown
+    on failure, error and skip alike, so the property stops being any one test's
+    to remember.
+
+    **The comparison is identity, not membership** (Copilot, PR #100). Dropping
+    the keys in `set(sys.modules) - set(saved)` reaches only the *added* ones,
+    and a key that already existed when this fixture ran is not in that set --
+    so a test that *overwrites* one escaped teardown however many times it did
+    so. Both suites create exactly such a key from a *module*-scoped fixture,
+    which runs before this function-scoped one snapshots. Measured on
+    tests/test_diff_check_spec_links.py **before this was fixed**: the
+    module-scoped `_diff_only_check_spec_links` was replaced once per parameter
+    by `test_a_renamed_constant_refuses_instead_of_being_silently_created`, and
+    the third replacement outlived the entire session.
+
+    **Deleting a changed entry rather than restoring the saved one is the
+    correction to the correction**, and the reason is measured. The first
+    remedy here put the saved object back. Both suites reuse the labels `base`
+    and `head` -- `tests/test_diff_harness.py`'s module-scoped `sides` fixture
+    and `diff_check_spec_links._run` -- so `saved` in the *second* module to
+    run already held the *first* module's objects, and restoring reinstated a
+    finished suite's modules over the ones the running test had just created.
+    Measured with `pytest tests/test_diff_harness.py
+    tests/test_diff_check_spec_links.py` in that order: every `main`-driven
+    test in the second suite ended with both keys pointing back into the first
+    suite's `sides0` staging. Deleting cannot resurrect anything, and costs
+    nothing -- `load_side` re-registers on every call, and a `Side` holds its
+    module directly rather than through `sys.modules`.
+
+    An earlier docstring here named a *narrower* exclusion than the one that
+    held -- it said the module-scoped side "survives the module", when what
+    survived was a function-scoped replacement of it under the module-scoped
+    key. A stated limitation that understates the real one is worse than none,
+    because it reads as though the gap has been measured.
+
+    What this still does not reach, stated because it is not closed here: an
+    entry no test touched outlives its module, so a later module can still
+    inherit one. That is what makes the identity comparison load-bearing rather
+    than tidy -- it is what stops the inherited entry from being handed back to
+    a module that did not create it.
+    """
+    saved = dict(sys.modules)
+    try:
+        yield
+    finally:
+        for name, module in list(sys.modules.items()):
+            if name.startswith("_diff_") and saved.get(name) is not module:
+                del sys.modules[name]
+
+
 # --- Permission-exposure helpers (ADR-0066) -----------------------------------
 # Shared rather than per-module: the Windows branch encodes ADR-0066's
 # "foreign principal" semantics, so a private copy per test module would have to

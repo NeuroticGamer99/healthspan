@@ -77,6 +77,25 @@ plugins.md038.enabled = false        # no-space-in-code — house style: code sp
 [dependency-groups]
 dev = [
     "hypothesis>=6.140",
+    # scripts/check_spec_links.py parses CommonMark with it, in the one public
+    # function this repository decides what is code in.
+    # Declared even though it already resolves transitively through typer ->
+    # rich: a rich change would otherwise break the docs gate blaming the wrong
+    # PR, which is the same reasoning as the pydantic line below. Hand-rolled
+    # parsing shipped silent defects here repeatedly; the block structure this
+    # gets right (a fence indented under a list item, a tab-led fence, a code
+    # span crossing a newline) is what the regexes got wrong.
+    #
+    # Upper-bounded, unlike its neighbours here, because this one decides a
+    # *gate's verdict*: which CommonMark revision the tokenizer implements is
+    # what counts as code, and therefore which links the docs gate checks. The
+    # other pinned tools live in ci.yml's `env` block; this is a project
+    # dependency, so the lockfile plus `--locked` is what holds it -- and only
+    # until something re-locks. dependabot's grouped `patterns: ["*"]` update
+    # is exactly that, so `>=3` alone would let a major bump change the gate's
+    # verdict inside a routine dependency PR. The bound makes that bump an
+    # explicit edit here instead.
+    "markdown-it-py>=3,<5",
     # scripts/gemini_review_logic.py (the tested half of the CI-only Gemini
     # review agent) imports it directly; without this line it resolves only
     # transitively through fastapi, and a fastapi change would break test

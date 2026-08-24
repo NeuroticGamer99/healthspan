@@ -122,6 +122,41 @@ whose remedy is wrong is worse than no denial.
 **The dev-group subtraction is what keeps `pytest` legitimate.** pytest is reached through `--with`
 in CI *and* is a dev dependency, so `uv run pytest <path>` works and must never be refused.
 
+**An interpreter running a *script* is the mirror of the `--with` case, and the rule above had to
+narrow for it** (2026-08-22). `uv run python <script.py>` executes the project interpreter, which is
+not a dependency and never will be — so reading its executed word as a tool put `python` into the
+derived set, and the hook then denied both `uv run python scripts/...` and every bare `python
+scripts/run_gates.py` with the false reason "python is not installed on this machine". Latent until
+[ADR-0061](0061-markdown-link-check-gate.md) §2 moved the first gate onto `uv run python`, and
+measured the moment it did: `ephemeral` came back as `['pip-audit', 'pymarkdown', 'pyright',
+'python', 'ruff']`. `uv run python -m <tool>` is the opposite case and still counts, because there
+the interpreter wraps a tool that genuinely has to be present — `unwrap_python_module` is what
+separates the two, and it is the helper rule 1 already uses. The point §3 rests on is unchanged: a
+derivation whose output includes something no invocation could fail to find was not naming "exactly
+those that a bare or `uv run` invocation cannot find", which is this section's own definition. A
+false positive is how a hook gets switched off.
+
+**"`python`" above is a *predicate*, not a word, and this paragraph described the word** (revised
+2026-08-23). The carve-out reads `_is_python_program`, which normalises the command word
+(basename, `.exe` stripped, lower-cased) and then accepts the plain names, a versioned spelling
+(`python3.12`, `pyw`), CPython's free-threaded `python3.14t`, and the PyPy family. Written as
+membership of a literal set it answered *no* for `python.exe`, `PYTHON` and `python3.12`, which
+re-lands the interpreter in the derived set and restores the exact false denial this section is
+about. Three corrections landed on the predicate itself and are worth recording because they run in
+opposite directions. Its version pattern carried a free-floating optional `t`, so it also matched
+`pyt`, `pywt`, `pythont`, `py2t` and `python3t` — none of which spells anything — and
+**over-matching is not the safe direction here**, which the code's own comment asserted it was: at
+`_tool_of` classifying a word as an interpreter *drops* it from the enforced tool set, so a future
+gate whose console script matched the tail would silently stop being policed by rule 2. That is
+fail-open, from a predicate defended as fail-closed. In the other direction it missed PyPy
+entirely. The rule that reconciles them is that the predicate must answer for exactly the
+interpreters that exist: CPython's free-threaded build is always fully qualified, so the `t` binds
+to a dotted version. The third correction is that same rule one position to the left — the first
+fix bound the letter and left the number `\d+`, so `py12`, `pypy12`, `python12` and `pyw12` still
+read as interpreters. A two-digit component is a *minor* version and never appears without its
+dot, so the undotted tail is one digit while a dotted major stays `\d+`, which keeps the predicate
+from guessing how long Python's major line runs.
+
 ### 4. One restatement, named rather than hidden
 
 `pymarkdownlnt` is the package; its console script is `pymarkdown`. That mapping is in neither
@@ -427,6 +462,13 @@ is where ADR-0071 puts exactly this kind of local-only preference.
   than added as new rules, so each rule stays written once. The normalisation is itself an
   enumeration with the same rot risk as the walkers below — `_PYTHON_VALUE_FLAGS` exists because
   `python -X dev -m pytest` otherwise stops the walk at `dev`.
+  **A fifth spelling was found unnormalised** (2026-08-23): `classify` put its own bare command word
+  through `program_name`, but the `uv run` branch compared `parse_uv_run`'s `executed` as typed —
+  so `uv run pytest.exe` and `uv run ./pytest` reached neither the `facts.ephemeral` comparison nor
+  the serial-full-suite denial, the latter being a rule whose own message says such a run "exceeds
+  the 600 s command timeout and is killed". Repaired at the source rather than at each comparison:
+  `parse_uv_run` normalises once, which is the same argument this bullet already makes about
+  writing each rule once.
 - **Wrapper commands are unwrapped only in their bare form, and the retreat to that rule is the
   most instructive thing in this ADR.** A command whose trailing words are themselves a command —
   `sudo pytest`, `env pytest`, `exec`, `nohup`, `command` — reaches the rule. Anything carrying

@@ -423,6 +423,149 @@ def test_the_derived_tools_are_exactly_what_the_registry_names(
     assert expected, "the registry names no uvx tool at all — derivation is broken"
 
 
+def test_a_script_run_under_the_project_interpreter_names_no_tool() -> None:
+    """`uv run python <script.py>` executes a script, not a dependency.
+
+    The docs-consistency `spec-links` gate runs this way because it parses
+    CommonMark with markdown-it-py and so needs the project environment. Reading
+    the executed word as the *tool* put `python` into the ephemeral set, and the
+    hook then denied `uv run python -c ...` and every bare
+    `python scripts/run_gates.py` with the reason "python is not installed on
+    this machine" — commands this module's own MUST_ALLOW list calls legitimate.
+    A false positive is how a hook gets switched off.
+
+    `-m` is the case that must still count: there the interpreter wraps a tool
+    that genuinely has to be present.
+    """
+    script = run_gates.REPO_ROOT / "scripts" / "check_spec_links.py"
+    plain = run_gates.Step(
+        ["uv", "run", "python", str(script)], f"uv run python {script}"
+    )
+    module = run_gates.Step(
+        ["uv", "run", "python", "-m", "ruff", "check", "."],
+        "uv run python -m ruff check .",
+    )
+
+    assert hook._tool_of(plain) is None  # pyright: ignore[reportPrivateUsage]
+    assert hook._tool_of(module) == (  # pyright: ignore[reportPrivateUsage]
+        "ruff",
+        False,
+    )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "python",
+        "python3",
+        "py",
+        "python.exe",
+        "PYTHON",
+        "python3.12",
+        "python3.14t",
+        "python3.13t",
+        "pyw",
+        # Report finding 4's other direction. The predicate missed the whole
+        # PyPy family, so `uv run pypy3 -m pytest` re-landed `pypy3` in
+        # `facts.ephemeral` and restored the false "is not installed on this
+        # machine" denial the carve-out exists to remove.
+        "pypy",
+        "pypy3",
+        "pypy3.10",
+        # The other side of the undotted-tail narrowing below: only the
+        # *undotted* position is restricted to one digit, because that is the
+        # only ambiguous one. A dotted major stays `\d+`, so this keeps
+        # matching however long Python's major line runs.
+        "python10.0",
+    ],
+)
+def test_every_interpreter_spelling_reaches_the_carve_out(spelling: str) -> None:
+    """Report finding 8: the carve-out compared a raw command word.
+
+    `parsed.executed` is not normalized, so `python.exe`, `PYTHON` and
+    `python3.12` all missed a bare `in _PYTHON_PROGRAMS` test and re-landed an
+    interpreter in `facts.ephemeral` — restoring the measured denial of every
+    bare `python scripts/run_gates.py` with the false reason "python is not
+    installed on this machine".
+
+    `python3.14t` is the free-threaded build and is a live spelling here, since
+    this project sets `requires-python = ">=3.14"`.
+    """
+    step = run_gates.Step(
+        ["uv", "run", spelling, "scripts/x.py"], f"uv run {spelling} scripts/x.py"
+    )
+
+    assert hook._tool_of(step) is None, spelling  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "word",
+    [
+        "ruff",
+        "pyright",
+        "pytest",
+        "pymarkdown",
+        "",
+        None,
+        # Report finding 4: the version pattern carried a free-floating `t?`
+        # over an optional version, so every one of these matched. None spells
+        # anything — CPython's free-threaded build is always fully qualified
+        # (`python3.14t`), which the positive list above pins.
+        "pyt",
+        "pywt",
+        "py2t",
+        "python3t",
+        "pythont",
+        "pypyt",
+        "pypy3t",
+        # Greptile, PR #100: the same over-match one position to the left. The
+        # `…t` fix bound the letter and left the number `\d+`, so an undotted
+        # multi-digit tail still read as a version. A two-digit component is a
+        # minor version and always follows a dot, so none of these spells
+        # anything either.
+        "py12",
+        "pypy12",
+        "python12",
+        "pyw12",
+    ],
+)
+def test_a_non_interpreter_is_not_swept_into_the_carve_out(word: str | None) -> None:
+    """The boundary: widening the predicate must not swallow a real tool.
+
+    Without this, `_is_python_program` returning True for everything would
+    satisfy every assertion above while disabling the hook entirely — the
+    carve-out's own failure mode, one layer up. `pyright` and `pymarkdown` are
+    the pointed cases: both begin with `py`.
+
+    The `…t` spellings are the measured half. Over-matching was argued to be the
+    safe direction because it "denies more", and at `_tool_of` it does the
+    opposite: classifying a word as an interpreter *drops* it from the enforced
+    tool set, so a future gate whose console script matched the tail would
+    silently stop being policed. That is fail-open, from a predicate defended as
+    fail-closed.
+    """
+    assert hook._is_python_program(word) is False, word  # pyright: ignore[reportPrivateUsage]
+
+
+def test_the_interpreter_is_never_an_ephemeral_tool(facts: hook.Facts) -> None:
+    """The consequence of the above, asserted where it bites.
+
+    `python` can never be a project dependency, so a derivation that lands it in
+    the ephemeral set denies the interpreter itself. Measured with the docs gate
+    moved onto `uv run` and before the carve-out: `ephemeral` came back as
+    `['pip-audit', 'pymarkdown', 'pyright', 'python', 'ruff']`, and both a bare
+    `python scripts/run_gates.py` and the `uv run python scripts/...` spelling
+    that ADR-0061 prints as its reproduction command were denied.
+
+    The second assertion is the discriminating half: the first alone would pass
+    for a derivation that found no tools at all, which `derive_facts` is
+    supposed to refuse outright.
+    """
+    assert "python" not in facts.ephemeral
+    assert facts.ephemeral, "an empty tool set would satisfy the line above"
+    assert hook.check_command("uv run python -c 'print(1)'", facts) is None
+
+
 def test_a_dev_dependency_is_never_treated_as_missing(facts: hook.Facts) -> None:
     """pytest is reached through ``--with`` in CI *and* is a dev dependency.
 
@@ -1360,6 +1503,73 @@ def test_both_spellings_of_a_tool_are_refused_at_every_call_site(
         # remedy names the gate rather than degrading to a bare runner call.
         assert violation.tool == "pymarkdown"
         assert "run_gates.py markdown-lint" in violation.remedy(facts)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "pytest",
+        "pytest.exe",
+        "PYTEST",
+        "./pytest",
+        "bin/pytest",
+        # Quoted, because an *unquoted* backslash is eaten by the lexer before
+        # any of this runs -- `uv run .\\pytest` reaches `program_name` as
+        # `.pytest`. That is a property of shell quoting rather than of the
+        # normalization under test, and `program_name`'s own separator cases
+        # below cover the backslash directly.
+        r'".\pytest"',
+        r'"C:\Tools\pytest.exe"',
+    ],
+)
+def test_a_path_or_extension_bearing_uv_run_word_still_reaches_every_rule(
+    spelling: str, facts: hook.Facts
+) -> None:
+    """Report finding 5: only the *python* question was normalized.
+
+    `classify` normalizes its own bare command word on its first line, but the
+    `uv run` branch compares `parsed.executed` — which `_console_name` alone
+    produced, and `_console_name` strips nothing. Measured:
+    `parse_uv_run(['pytest.exe','-v']).executed == 'pytest.exe'` and
+    `['./pytest','-v']` gave `'./pytest'`, while `program_name('pytest.exe')`
+    has always been `'pytest'`.
+
+    So `uv run pytest.exe` and `uv run ./pytest` never reached
+    `tool == "pytest" and _pytest_is_full_suite(tool_args)` — the denial whose
+    own message says such a run "exceeds the 600 s command timeout and is
+    killed" — and the same words escaped the `facts.ephemeral` comparison
+    beside it. The interpreter question was the one comparison already repaired,
+    inside `_is_python_program`; normalizing at the source repairs all three.
+
+    The `-n auto` control is the discriminating half: a normalization that
+    denied everything would satisfy the first assertion alone.
+    """
+    denied = hook.check_command(f"uv run {spelling}", facts)
+    assert denied is not None, f"{spelling}: a serial full suite was allowed"
+    assert denied.tool == "pytest"
+
+    scoped = hook.check_command(f"uv run {spelling} -n auto", facts)
+    assert scoped is None, f"{spelling}: a distributed run was denied"
+
+
+@pytest.mark.parametrize(
+    "spelling", ["pymarkdownlnt.exe", "./pymarkdownlnt", "PyMarkdownLnt"]
+)
+def test_the_ephemeral_comparison_sees_through_a_path_or_extension(
+    spelling: str, facts: hook.Facts
+) -> None:
+    """The second comparison finding 5's one-line fix repairs.
+
+    `tool in facts.ephemeral` is keyed by console-script name, so every spelling
+    below missed it and `uv run pymarkdownlnt.exe scan .` was allowed — a
+    command that exits 2, since uv cannot spawn a tool that is not a project
+    dependency. Kept separate from the pytest case above because the two
+    comparisons sit on different branches and a fix could repair one alone.
+    """
+    violation = hook.check_command(f"uv run {spelling} scan .", facts)
+
+    assert violation is not None, f"{spelling} was allowed"
+    assert violation.tool == "pymarkdown"
 
 
 @pytest.mark.parametrize(
