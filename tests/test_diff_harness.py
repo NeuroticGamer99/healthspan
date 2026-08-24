@@ -229,7 +229,25 @@ def test_a_module_the_harness_did_not_register_is_not_evicted(
 
     def import_and_intrude(module_name: str, path: Path) -> ModuleType:
         module = real_import(module_name, path)
-        sys.modules[stem] = intruder
+        # `setitem` rather than a bare assignment, so the entry is removed at
+        # teardown whether or not the assertion below passes (CodeRabbit, PR
+        # #100). The `delitem` above records *nothing* to fall back on: pytest
+        # appends an undo entry only when the key is present, and this one is
+        # absent by then --
+        #
+        #     if name not in dic:
+        #         if raising:
+        #             raise KeyError(name)
+        #     else:
+        #         self._setitem.append(...)
+        #
+        # Measured: zero undo records after that `delitem`, and the intruder
+        # still in `sys.modules` after `undo()`. So a failing assertion used to
+        # leave `check_spec_links` bound to the intruder for every later test in
+        # the worker -- the cross-test import pollution this module exists to
+        # prevent, arriving through its own test. `setitem` on an absent key
+        # records `NOTSET`, and its undo deletes.
+        monkeypatch.setitem(sys.modules, stem, intruder)
         return module
 
     monkeypatch.setattr(harness, "_import", import_and_intrude)
@@ -237,9 +255,6 @@ def test_a_module_the_harness_did_not_register_is_not_evicted(
     harness.load_side("s", None, tmp_path / "staging", (PARSER,), (PARSER,))
 
     assert sys.modules.get(stem) is intruder
-    # Clean up after ourselves: `monkeypatch.delitem` above recorded the name as
-    # absent, so it restores nothing.
-    del sys.modules[stem]
 
 
 def test_a_module_from_this_sides_staging_is_still_evicted(tmp_path: Path) -> None:
