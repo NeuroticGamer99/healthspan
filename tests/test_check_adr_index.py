@@ -54,7 +54,7 @@ def test_a_nested_bracket_link_does_not_leave_half_of_itself_behind() -> None:
 
 
 def _tiny_repo(tmp_path: Path, file_status: str, index_status: str) -> None:
-    """An `specs/adr/` holding one ADR and a one-row index, both status-settable."""
+    """A `specs/adr/` holding one ADR and a one-row index, both status-settable."""
     adr_dir = tmp_path / "specs" / "adr"
     adr_dir.mkdir(parents=True)
     (adr_dir / "0070-x.md").write_text(
