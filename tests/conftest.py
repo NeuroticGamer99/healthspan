@@ -180,9 +180,28 @@ def clean_import_state() -> Iterator[None]:
     on failure, error and skip alike, so the property stops being any one test's
     to remember.
 
-    What it does not reach, stated because it is not closed here: a side loaded
-    by a *module*-scoped fixture is created before this one runs, so its entry
-    is already in the snapshot and survives the module. Both suites have one.
+    **Two halves, because removing the added keys is not enough** (Copilot, PR
+    #100). A key that already existed when this fixture ran is not in
+    `set(sys.modules) - set(saved)`, so a test that *overwrites* it escapes the
+    first loop however many times it does so -- and both suites create exactly
+    such a key from a *module*-scoped `side` fixture, before this
+    function-scoped one snapshots. Measured on
+    tests/test_diff_check_spec_links.py: the module-scoped
+    `_diff_only_check_spec_links` is replaced three times by
+    `test_a_renamed_constant_refuses_instead_of_being_silently_created`, once
+    per parameter, and the third replacement outlived the whole session. The
+    second loop therefore puts the saved object back rather than deleting it.
+
+    The docstring this replaces named a *narrower* exclusion than the one that
+    held -- it said the module-scoped side "survives the module", when what
+    survived was a function-scoped replacement of it under the module-scoped
+    key. A stated limitation that understates the real one is worse than none,
+    because it reads as though the gap has been measured.
+
+    What it still does not reach, stated because it is not closed here: the
+    module-scoped entry itself outlives the module. That one is deliberate --
+    deleting it would pull the side out from under the fixture that owns it
+    while its module is still running.
     """
     saved = dict(sys.modules)
     try:
@@ -191,6 +210,9 @@ def clean_import_state() -> Iterator[None]:
         for name in set(sys.modules) - set(saved):
             if name.startswith("_diff_"):
                 del sys.modules[name]
+        for name, module in saved.items():
+            if name.startswith("_diff_") and sys.modules.get(name) is not module:
+                sys.modules[name] = module
 
 
 # --- Permission-exposure helpers (ADR-0066) -----------------------------------

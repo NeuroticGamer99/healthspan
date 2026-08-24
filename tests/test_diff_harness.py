@@ -821,3 +821,53 @@ def test_every_suite_that_loads_a_side_applies_the_shared_fixture() -> None:
     # failure and not an accident: deleting the `pytestmark` line leaves the
     # name undefined, which is exactly the edit that must not pass quietly.
     assert "clean_import_state" in pytestmark.args, pytestmark.args
+
+
+def test_the_shared_fixture_restores_a_replaced_entry_not_only_new_ones() -> None:
+    """Copilot, PR #100: removing the added keys is not the whole property.
+
+    The teardown compared `set(sys.modules) - set(saved)`, which by
+    construction cannot reach a key that *already existed* when the fixture
+    snapshotted — so a test that overwrites such a key escaped it entirely.
+    Both diff suites create exactly that key, from a **module**-scoped `side`
+    fixture that runs before this function-scoped one. Measured on
+    tests/test_diff_check_spec_links.py before the fix: the module-scoped
+    `_diff_only_check_spec_links` was replaced once per parameter by
+    `test_a_renamed_constant_refuses_instead_of_being_silently_created`, and
+    the third replacement — pointing at that test's own staging directory —
+    outlived the entire session. After the fix the surviving entry is the
+    module-scoped side again.
+
+    The fixture's wiring is checked above; this checks what it *does*, which
+    the wiring test cannot see. Driven through `__wrapped__` because pytest 9
+    refuses a direct call on a fixture object, and an inner `pytester` session
+    would cost a plugin registration in the root conftest to assert the same
+    two facts.
+
+    Both halves are asserted, not just the new one: a remedy that restored the
+    saved value while forgetting to drop the added key would satisfy the
+    finding and reintroduce the leak the fixture was written for.
+    """
+    import conftest
+
+    original = ModuleType("_diff_probe_preexisting")
+    replacement = ModuleType("_diff_probe_preexisting")
+    added = ModuleType("_diff_probe_added")
+
+    sys.modules["_diff_probe_preexisting"] = original
+    try:
+        teardown = conftest.clean_import_state.__wrapped__()
+        next(teardown)  # setup: snapshots sys.modules
+
+        # What a test does between setup and teardown: overwrite one, add one.
+        sys.modules["_diff_probe_preexisting"] = replacement
+        sys.modules["_diff_probe_added"] = added
+
+        with pytest.raises(StopIteration):
+            next(teardown)
+
+        assert sys.modules["_diff_probe_preexisting"] is original
+        assert "_diff_probe_added" not in sys.modules
+    finally:
+        sys.modules.pop("_diff_probe_preexisting", None)
+        sys.modules.pop("_diff_probe_added", None)
