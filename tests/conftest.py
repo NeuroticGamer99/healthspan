@@ -180,39 +180,50 @@ def clean_import_state() -> Iterator[None]:
     on failure, error and skip alike, so the property stops being any one test's
     to remember.
 
-    **Two halves, because removing the added keys is not enough** (Copilot, PR
-    #100). A key that already existed when this fixture ran is not in
-    `set(sys.modules) - set(saved)`, so a test that *overwrites* it escapes the
-    first loop however many times it does so -- and both suites create exactly
-    such a key from a *module*-scoped `side` fixture, before this
-    function-scoped one snapshots. Measured on
-    tests/test_diff_check_spec_links.py: the module-scoped
-    `_diff_only_check_spec_links` is replaced three times by
-    `test_a_renamed_constant_refuses_instead_of_being_silently_created`, once
-    per parameter, and the third replacement outlived the whole session. The
-    second loop therefore puts the saved object back rather than deleting it.
+    **The comparison is identity, not membership** (Copilot, PR #100). Dropping
+    the keys in `set(sys.modules) - set(saved)` reaches only the *added* ones,
+    and a key that already existed when this fixture ran is not in that set --
+    so a test that *overwrites* one escaped teardown however many times it did
+    so. Both suites create exactly such a key from a *module*-scoped fixture,
+    which runs before this function-scoped one snapshots. Measured on
+    tests/test_diff_check_spec_links.py **before this was fixed**: the
+    module-scoped `_diff_only_check_spec_links` was replaced once per parameter
+    by `test_a_renamed_constant_refuses_instead_of_being_silently_created`, and
+    the third replacement outlived the entire session.
 
-    The docstring this replaces named a *narrower* exclusion than the one that
+    **Deleting a changed entry rather than restoring the saved one is the
+    correction to the correction**, and the reason is measured. The first
+    remedy here put the saved object back. Both suites reuse the labels `base`
+    and `head` -- `tests/test_diff_harness.py`'s module-scoped `sides` fixture
+    and `diff_check_spec_links._run` -- so `saved` in the *second* module to
+    run already held the *first* module's objects, and restoring reinstated a
+    finished suite's modules over the ones the running test had just created.
+    Measured with `pytest tests/test_diff_harness.py
+    tests/test_diff_check_spec_links.py` in that order: every `main`-driven
+    test in the second suite ended with both keys pointing back into the first
+    suite's `sides0` staging. Deleting cannot resurrect anything, and costs
+    nothing -- `load_side` re-registers on every call, and a `Side` holds its
+    module directly rather than through `sys.modules`.
+
+    An earlier docstring here named a *narrower* exclusion than the one that
     held -- it said the module-scoped side "survives the module", when what
     survived was a function-scoped replacement of it under the module-scoped
     key. A stated limitation that understates the real one is worse than none,
     because it reads as though the gap has been measured.
 
-    What it still does not reach, stated because it is not closed here: the
-    module-scoped entry itself outlives the module. That one is deliberate --
-    deleting it would pull the side out from under the fixture that owns it
-    while its module is still running.
+    What this still does not reach, stated because it is not closed here: an
+    entry no test touched outlives its module, so a later module can still
+    inherit one. That is what makes the identity comparison load-bearing rather
+    than tidy -- it is what stops the inherited entry from being handed back to
+    a module that did not create it.
     """
     saved = dict(sys.modules)
     try:
         yield
     finally:
-        for name in set(sys.modules) - set(saved):
-            if name.startswith("_diff_"):
+        for name, module in list(sys.modules.items()):
+            if name.startswith("_diff_") and saved.get(name) is not module:
                 del sys.modules[name]
-        for name, module in saved.items():
-            if name.startswith("_diff_") and sys.modules.get(name) is not module:
-                sys.modules[name] = module
 
 
 # --- Permission-exposure helpers (ADR-0066) -----------------------------------
