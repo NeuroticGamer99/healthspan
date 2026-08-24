@@ -420,6 +420,16 @@ _PYTHON_PROGRAMS = frozenset({"python", "python3", "py", "pypy", "pypy3"})
 # always fully qualified (`python3.14t`, `python3.13t`), so requiring the dot
 # is not a guess about the tail; it is the tail.
 #
+# **The undotted tail is one digit, and that is the same correction one round
+# later.** It was `\d+`, so `py12`, `pypy12`, `python12` and `pyw12` all
+# classified as interpreters: the `t` fix above bound the letter and left the
+# number alone. Undotted is the only ambiguous position -- a two-digit
+# component is a *minor* version and always follows a dot (`python3.14`) -- so
+# the dotted major stays `\d+` and this requires no guess about how long
+# Python's major line runs. Measured at the fail-open call site:
+# `_tool_of(Step(['uv','run','py12','x.py'],''))` returned `None` before and
+# `('py12', False)` after.
+#
 # **And over-matching is not the safe direction here**, which the comment this
 # replaces asserted it was. It is at the *other* two call sites -- `classify`'s
 # and `unwrap_python_module`'s -- where reading a word as an interpreter makes
@@ -435,9 +445,7 @@ _PYTHON_PROGRAMS = frozenset({"python", "python3", "py", "pypy", "pypy3"})
 # back in `facts.ephemeral` and restores the false "is not installed on this
 # machine" denial this predicate exists to remove. A false positive is how a
 # hook gets switched off.
-_PYTHON_PROGRAM_RE = re.compile(
-    r"(?:pypy|python|py)w?(?:\d+(?:\.\d+)+t|\d+(?:\.\d+)*)?\Z"
-)
+_PYTHON_PROGRAM_RE = re.compile(r"(?:pypy|python|py)w?(?:\d+(?:\.\d+)+t?|\d)?\Z")
 
 
 def _is_python_program(word: str | None) -> bool:

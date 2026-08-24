@@ -472,6 +472,11 @@ def test_a_script_run_under_the_project_interpreter_names_no_tool() -> None:
         "pypy",
         "pypy3",
         "pypy3.10",
+        # The other side of the undotted-tail narrowing below: only the
+        # *undotted* position is restricted to one digit, because that is the
+        # only ambiguous one. A dotted major stays `\d+`, so this keeps
+        # matching however long Python's major line runs.
+        "python10.0",
     ],
 )
 def test_every_interpreter_spelling_reaches_the_carve_out(spelling: str) -> None:
@@ -513,6 +518,15 @@ def test_every_interpreter_spelling_reaches_the_carve_out(spelling: str) -> None
         "pythont",
         "pypyt",
         "pypy3t",
+        # Greptile, PR #100: the same over-match one position to the left. The
+        # `…t` fix bound the letter and left the number `\d+`, so an undotted
+        # multi-digit tail still read as a version. A two-digit component is a
+        # minor version and always follows a dot, so none of these spells
+        # anything either.
+        "py12",
+        "pypy12",
+        "python12",
+        "pyw12",
     ],
 )
 def test_a_non_interpreter_is_not_swept_into_the_carve_out(word: str | None) -> None:

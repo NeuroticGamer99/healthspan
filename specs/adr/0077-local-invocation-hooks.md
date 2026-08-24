@@ -142,7 +142,7 @@ false positive is how a hook gets switched off.
 (`python3.12`, `pyw`), CPython's free-threaded `python3.14t`, and the PyPy family. Written as
 membership of a literal set it answered *no* for `python.exe`, `PYTHON` and `python3.12`, which
 re-lands the interpreter in the derived set and restores the exact false denial this section is
-about. Two corrections landed on the predicate itself and are worth recording because they run in
+about. Three corrections landed on the predicate itself and are worth recording because they run in
 opposite directions. Its version pattern carried a free-floating optional `t`, so it also matched
 `pyt`, `pywt`, `pythont`, `py2t` and `python3t` — none of which spells anything — and
 **over-matching is not the safe direction here**, which the code's own comment asserted it was: at
@@ -151,7 +151,11 @@ gate whose console script matched the tail would silently stop being policed by 
 fail-open, from a predicate defended as fail-closed. In the other direction it missed PyPy
 entirely. The rule that reconciles them is that the predicate must answer for exactly the
 interpreters that exist: CPython's free-threaded build is always fully qualified, so the `t` binds
-to a dotted version.
+to a dotted version. The third correction is that same rule one position to the left — the first
+fix bound the letter and left the number `\d+`, so `py12`, `pypy12`, `python12` and `pyw12` still
+read as interpreters. A two-digit component is a *minor* version and never appears without its
+dot, so the undotted tail is one digit while a dotted major stays `\d+`, which keeps the predicate
+from guessing how long Python's major line runs.
 
 ### 4. One restatement, named rather than hidden
 
