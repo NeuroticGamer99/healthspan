@@ -29,8 +29,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 import diff_harness as harness
 import pytest
@@ -856,7 +858,15 @@ def test_the_shared_fixture_restores_a_replaced_entry_not_only_new_ones() -> Non
 
     sys.modules["_diff_probe_preexisting"] = original
     try:
-        teardown = conftest.clean_import_state.__wrapped__()
+        # `__wrapped__` is the generator behind the fixture object. Cast because
+        # pytest types the object itself and not what it wraps, so `--strict`
+        # reads five unknowns off this line otherwise. If a future pytest drops
+        # the attribute this fails loudly, which is the right way to find out.
+        wrapped = cast(
+            "Callable[[], Iterator[None]]",
+            conftest.clean_import_state.__wrapped__,  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        )
+        teardown = wrapped()
         next(teardown)  # setup: snapshots sys.modules
 
         # What a test does between setup and teardown: overwrite one, add one.
