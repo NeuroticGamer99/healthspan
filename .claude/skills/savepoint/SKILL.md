@@ -1,6 +1,6 @@
 ---
 name: savepoint
-description: Make a local checkpoint commit — containment scan, explicit git add path list, commit. Local-only scaffolding that /ship collapses into the composed commit before the first push. Use after each finding batch in /apply-review, before a smoke pass, or at end of session.
+description: Make a local checkpoint commit — containment scan, explicit git add path list, commit. Local-only scaffolding that /ship collapses into the composed commit before the first push. Use before any spec-reviewer/test-reviewer smoke, after each finding batch in /apply-review, or at end of session.
 ---
 
 # /savepoint — a local checkpoint commit
