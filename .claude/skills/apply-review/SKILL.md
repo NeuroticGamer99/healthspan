@@ -300,6 +300,18 @@ trade off.
 - **From round 2 on, only defects reopen the loop** — correctness, spec conformance, test
   validity. A cosmetic note can still be applied; it just does not earn another round. Report it
   in step 6 either way. That is what makes the loop terminate.
+- **A finding against tooling this apply itself added gets a sharper test than one against the
+  artifact under review.** Ask whether it says the mechanism *fails at its stated job*, or that its
+  *coverage could be finer*. The first is a defect and reopens the loop: a mechanization that does
+  not check what it claims is the same class as the prose it replaced — a scan proving a `try`
+  exists while never proving it raises. The second is a documented exclusion, written into the
+  mechanism's own docstring with its revisit trigger; that note is documentation rather than
+  behaviour, so writing it does not itself reopen the loop. Without the split, each round's remedy
+  manufactures the next round's findings and the loop runs on gilding.
+- **Ask each reviewer for a materiality judgement alongside its findings, every round** — is the
+  remaining risk worth another round? It costs a sentence in the prose you brief each agent with.
+  Wanted *alongside* any finding, never instead of one: framed that way it does not cost coverage,
+  and both reviewers have returned findings and said stop in the same report.
 - **A round that edits ends with a `/savepoint`** — scan, path list, commit, tagged
   **`[x<N>s<M>]`** for smoke pass `M` inside external review `N`'s apply — before the next
   round's teardown + setup (ADR-0069). **Derive `M` the same way as `N`, and never reuse one**:
