@@ -91,7 +91,7 @@ mechanics are a script now.
 
 ## Launch
 
-**If the round is likely to edit, `/savepoint` first.** The launcher pins a *tree*, not a commit,
+**If the tree is dirty, `/savepoint` first.** The launcher pins a *tree*, not a commit,
 so without one every round of a loop shares a single `HEAD` — and the per-round `HEAD` and
 `HEAD^{tree}` this section asks you to record are then **identical every round**, a record that
 looks complete and identifies nothing. Measured: five rounds, one `HEAD`, no diffable boundary.
