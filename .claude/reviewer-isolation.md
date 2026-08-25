@@ -91,6 +91,15 @@ mechanics are a script now.
 
 ## Launch
 
+**If the tree is dirty, `/savepoint` first.** The launcher pins a *tree*, not a commit,
+so without one every round of a loop shares a single `HEAD` — and the per-round `HEAD` and
+`HEAD^{tree}` this section asks you to record are then **identical every round**, a record that
+looks complete and identifies nothing. Measured: five rounds, one `HEAD`, no diffable boundary.
+`/apply-review` step 5 asks for the same boundary at a round's *end* — where that savepoint is
+still `HEAD` and the tree is clean, it already is this one; otherwise, whatever the caller, make
+it here. A dirty tree is still reviewable (carrying uncommitted state is what the launcher is
+for) and is never a reason to refuse the round.
+
 ```bash
 python "$(git rev-parse --show-toplevel)/scripts/review_worktree.py" setup --scratch <session scratchpad dir>
 ```
@@ -117,9 +126,7 @@ deliberately rewrites the savepoints, leaving every recorded pre-collapse `HEAD`
 gc timer, so a later session comparing against one alone would read a permanent false
 "not an ancestor". The tree hash is what survives the collapse unchanged (`reset --soft` +
 recommit rebuilds the commit, not the tree); record both, compare commit first, fall back to
-tree. A `/savepoint` immediately before the round is the recommended way to put the round
-boundary on a commit — but a dirty tree is still reviewable (carrying uncommitted state is what
-the launcher is for) and is never a reason to refuse the round.
+tree.
 
 - **Exit 0** — ready. The manifest on **stdout** names the snapshot SHA, the base ref, one
   worktree path per reviewer, a per-agent venv path, and the untracked files replicated into
