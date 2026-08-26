@@ -43,10 +43,13 @@ A branch built with `/savepoint` carries most of the work item in local checkpoi
 python scripts/run_gates.py
 ```
 
-That is the whole step. `scripts/run_gates.py` owns which gates exist, the exact
-command each one runs, and the pinned tool version each one uses — all derived
-from `.github/workflows/ci.yml`, so it cannot drift from CI and this file cannot
-drift from it. `--list` shows every gate and its command; a single gate or group
+That is the whole step. `scripts/run_gates.py` owns which gates exist, how each
+one runs, and the pinned tool version each one uses. The *versions* are derived
+from `.github/workflows/ci.yml` at every invocation, so they cannot drift from
+CI; each gate **command** is a hand-written builder in the script, and a few
+deliberately differ from CI's form ([ADR-0075](../../../specs/adr/0075-local-gate-divergence-from-ci.md)
+tabulates which). Either way the script is the one copy and this file does not
+restate it. `--list` shows every gate and how it runs; a single gate or group
 runs by name (`python scripts/run_gates.py ruff`).
 
 **Do not reconstruct the commands here.** The list this step used to carry named

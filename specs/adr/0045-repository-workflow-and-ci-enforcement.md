@@ -107,6 +107,7 @@ The remaining gates — ruff lint+format, pyright strict, the test matrix, the l
 - Extended by: [ADR-0070](0070-personal-data-containment-gate.md) — adds the personal-data containment scan to the §6 `gitleaks` job, which is renamed to name both scans
 - Extended by: [ADR-0075](0075-local-gate-divergence-from-ci.md) — states when a *local* reproduction of a gate may use a different command from its CI step, and why the runner's drift test compares gate identity rather than argv
 - Extended by: [ADR-0077](0077-local-invocation-hooks.md) — states when a `PreToolUse` hook may refuse a local invocation outright, covering the path *to* a gate rather than the gate itself
+- Extended by: [ADR-0078](0078-gate-growth-beyond-an-enumerated-contract.md) — states when a check added to a gate needs an extension ADR of its own, because §6's enumeration of what each gate verifies cannot be edited in place
 - Related: [testing-strategy.md](../testing-strategy.md) — CI Gates (gate content and the ship-with-first-code rule; this ADR decides the enforcement mechanics around them)
 - Related: [CLAUDE.md](../../CLAUDE.md) — ADR governance rule mechanized by the docs-consistency gate
 - Related: [ADR-0036](0036-plugin-package-installation-integrity.md) — the hash-verification discipline the gitleaks install step follows

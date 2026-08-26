@@ -158,8 +158,8 @@ Don't declare a finding fixed on faith. Per finding, run the gates that can see 
   never examined the rule in question. Note `--fast` drops `pytest`, so it is the wrong flag here.
 - **Behavior with a runtime surface** — drive it (the `verify` skill).
 
-`scripts/run_gates.py` derives every command and pinned version from `.github/workflows/ci.yml`,
-so nothing here needs to name one. Report a gate that comes back red — never paper over it.
+`scripts/run_gates.py` derives every pinned version from `.github/workflows/ci.yml` and builds
+each gate command itself, so nothing here needs to name one. Report a gate that comes back red — never paper over it.
 
 At each savepoint boundary run the full `python scripts/run_gates.py`: the per-finding selections
 above are deliberately partial, and the batch is where that stops being good enough.

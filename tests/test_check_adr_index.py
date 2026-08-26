@@ -56,7 +56,9 @@ def test_a_nested_bracket_link_does_not_leave_half_of_itself_behind() -> None:
 def _tiny_repo(tmp_path: Path, file_status: str, index_status: str) -> None:
     """A `specs/adr/` holding one ADR and a one-row index, both status-settable."""
     adr_dir = tmp_path / "specs" / "adr"
-    adr_dir.mkdir(parents=True)
+    # `exist_ok` so one test can rewrite the same tree with a different pair
+    # and re-run the gate; the two files are overwritten, not appended to.
+    adr_dir.mkdir(parents=True, exist_ok=True)
     (adr_dir / "0070-x.md").write_text(
         f"# ADR-0070\n\n## Status\n{file_status}\n", encoding="utf-8"
     )
@@ -130,5 +132,391 @@ def test_the_gate_agrees_with_the_repository_it_ships_with() -> None:
     `strip_links` is reachable only through the whole check, and a pattern
     change that satisfied every unit above while breaking an actual row would
     show up here and nowhere else. Exit 0 is the gate's own contract.
+
+    **This also carries the coverage a deleted unit test used to hold.**
+    `test_a_status_link_in_the_file_still_compares_equal_to_the_plain_index`
+    asserted `strip_links` against ADR-0001's real phrasing and was removed as
+    decorative — a reviewer proved by mutation that it stayed green while its
+    siblings caught the regression its docstring claimed to guard. ADR-0001 is
+    in the real corpus, so that exact shape is still exercised here, as an
+    integration property rather than a unit one. Recorded because a deletion
+    with no stated replacement is indistinguishable from a coverage loss.
     """
     assert gate.main() == 0
+
+
+_OWNERS = {"0023": "0023-new.md", "0070": "0070-x.md"}
+"""A number-to-filename map standing in for `adr_files_by_number()`'s read.
+
+Passed explicitly so these stay unit tests: the destination check needs to
+know which file a number owns, and taking that from the real `specs/adr/`
+would make every case below depend on the corpus it is meant to be
+independent of.
+"""
+
+
+def test_a_supersession_link_must_point_at_the_adr_it_names() -> None:
+    """The coverage `strip_links` gives up, restored beside it.
+
+    `strip_links` substitutes the link *text*, so once both sides are stripped
+    **any** destination compares equal: a tree whose `0022-old.md` declares
+    `Superseded by ADR-0023` against an index cell reading
+    `Superseded by [ADR-0023](0099-completely-wrong.md)` reconciles at exit 0.
+    `check_spec_links` catches a destination that does not exist, never one
+    that exists and is wrong — and a wrong one sends a reader following a
+    supersession to the wrong ADR, which is the navigation this gate's own
+    subject exists to keep honest.
+
+    Not the `## Links` section, and the distinction is worth keeping straight:
+    CLAUDE.md's ADR-governance rules 2 and 4 place their navigation link there,
+    and nothing here reads it. This checks the two *status* values only.
+
+    Honest about the trade: the pre-symmetry code *did* reject that pair, and
+    rejected the correct `[ADR-0023](0023-new.md)` identically, so it
+    validated no destination at all.
+    """
+    wrong = gate.link_target_errors(
+        "0022-old.md",
+        "Superseded by [ADR-0023](0099-completely-wrong.md)",
+        "index cell",
+        _OWNERS,
+    )
+    assert len(wrong) == 1, wrong
+    assert "ADR-0023" in wrong[0], wrong
+    assert "0099-completely-wrong.md" in wrong[0], wrong
+    # The owner is named in the message, so the report says what the link
+    # should have pointed at rather than only that it is wrong.
+    assert "0023-new.md" in wrong[0], wrong
+
+
+@pytest.mark.parametrize(
+    ("cell", "why", "says"),
+    [
+        # Copilot's finding on PR #103, and the reason the comparison is
+        # against the exact filename rather than the `NNNN-` prefix: this
+        # basename starts with `0023-` while ADR-0023 is `0023-new.md`, so the
+        # prefix form passed it — and `check_spec_links` passed it too, because
+        # a decoy has to exist to be a decoy. Two green gates, wrong document.
+        (
+            "Superseded by [ADR-0023](../reviews/0023-notes.md)",
+            "a decoy sharing the four digits",
+            "which is not that ADR's file (0023-new.md)",
+        ),
+        # CodeRabbit's finding on the same PR, and the reason the comparison
+        # moved from basenames to the whole path: this carries ADR-0023's
+        # *exact* filename in another directory, so a basename comparison
+        # accepted it — and `check_spec_links` would too, if such a file were
+        # ever created, because its question is only whether a path resolves.
+        # ADR-0078 meanwhile claimed green certifies the link "names its own
+        # ADR's file", unqualified, so the gate's owning record was promising
+        # what the gate did not deliver.
+        (
+            "Superseded by [ADR-0023](../reviews/0023-new.md)",
+            "the exact filename in the wrong directory",
+            "which is not that ADR's file (0023-new.md)",
+        ),
+        # Also Copilot's: a pure fragment names no file, so the prefix form
+        # produced an empty stem and skipped it. Nothing else would ever look
+        # — `check_spec_links` skips anchors by design (ADR-0061 §3).
+        (
+            "Superseded by [ADR-0023](#adr-0023)",
+            "a destination naming no file",
+            "which names no file",
+        ),
+        # The number itself is unowned. Distinct from the two above: there is
+        # no file to disagree with, and saying so beats reporting a mismatch
+        # against a filename that does not exist.
+        (
+            "Superseded by [ADR-0099](0099-nothing.md)",
+            "a number no file owns",
+            "but no 0099-*.md exists",
+        ),
+        # The digit-boundary case. It no longer discriminates a `startswith`
+        # variant — that code is gone — but it is still a wrong destination a
+        # reader could plausibly write, so it stays as a regression case.
+        (
+            "Superseded by [ADR-0023](00230-other.md)",
+            "a longer number sharing a prefix",
+            "which is not that ADR's file (0023-new.md)",
+        ),
+    ],
+)
+def test_a_destination_that_is_not_the_named_adr_s_file_is_reported(
+    cell: str, why: str, says: str
+) -> None:
+    """Each shape the exact-filename comparison catches that the prefix did not.
+
+    Parametrized rather than looped so a regression names which shape broke:
+    the four differ in *why* they are wrong, and a loop reporting "one of four"
+    is the report that sends someone reading all four.
+    """
+    errors = gate.link_target_errors("0022-old.md", cell, "index cell", _OWNERS)
+
+    assert len(errors) == 1, (why, errors)
+    assert "0022-old.md" in errors[0], (why, errors)
+    # The *message*, not merely that one fired. Measured: without this,
+    # deleting either the empty-stem branch or the unowned-number branch left
+    # the suite green -- both shapes fall through to the mismatch branch and
+    # still report an error, just the wrong one. An operator sent to fix "not
+    # that ADR's file" when the real defect is "that ADR has no file" is being
+    # pointed at the wrong document.
+    assert says in errors[0], (why, errors)
+
+
+def test_a_correct_destination_stays_silent_however_it_is_spelled() -> None:
+    """The false positive the symmetric comparison removed, held removed.
+
+    Every one of these names `0023-new.md`, which is what ADR-0023 owns. A
+    check that reported any of them would be the blocking-failure-on-correct-
+    markdown direction this gate cannot afford.
+    """
+    for benign in (
+        "Superseded by [ADR-0023](0023-new.md)",
+        # An anchored spelling: the `#`-split is what makes this pass, and
+        # without it the stem reads `0023-new.md#status` and mismatches.
+        "Superseded by [ADR-0023](0023-new.md#status)",
+        # A subdirectory spelling. The comparison is on the basename, so the
+        # directory is not checked here — `check_spec_links` owns whether the
+        # path resolves, and the docstring records that residue.
+        "Extended by [ADR-0023](../adr/0023-new.md)",
+        # The backslash arm of the separator class, which nothing else reaches.
+        r"Extended by [ADR-0023](..\adr\0023-new.md)",
+        # No link at all, which most statuses are.
+        "Accepted",
+    ):
+        assert (
+            gate.link_target_errors("0022-old.md", benign, "index cell", _OWNERS) == []
+        ), benign
+
+
+def test_the_number_map_gives_each_adr_its_own_file() -> None:
+    """`adr_files_by_number` over the real corpus, since `main()` trusts it.
+
+    Two properties, and the second is why this is not just a smoke test: every
+    key is the filename's own four-digit prefix, and the template is excluded —
+    without that exclusion `0000` would own `0000-template.md` and a link to
+    ADR-0000 would validate against a file the index deliberately has no row
+    for.
+    """
+    owners = gate.adr_files_by_number()
+
+    assert owners, "the real corpus has ADRs"
+    assert all(name.startswith(f"{number}-") for number, name in owners.items())
+    assert "0000" not in owners
+    assert gate.TEMPLATE not in set(owners.values())
+
+
+def test_a_wrong_destination_fails_the_gate_even_when_the_status_text_agrees(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through `main()`, because the call site is half the finding.
+
+    `link_target_errors` returning the right list is worthless if `main()`
+    never calls it, or calls it only on the branch where the status text
+    already disagreed — the shape that matters is precisely the one where the
+    two sides *do* agree, since stripping the links is what makes them agree.
+    """
+    _tiny_repo(
+        tmp_path,
+        "Superseded by ADR-0070",
+        "Superseded by [ADR-0070](0099-completely-wrong.md)",
+    )
+    monkeypatch.setattr(gate, "ADR_DIR", tmp_path / "specs" / "adr")
+    monkeypatch.setattr(gate, "INDEX", tmp_path / "specs" / "adr" / "README.md")
+
+    assert gate.main() == 1
+
+    # And the same tree with the destination corrected reconciles, so the
+    # assertion above cannot be passing because the fixture is broken some
+    # other way.
+    _tiny_repo(
+        tmp_path,
+        "Superseded by ADR-0070",
+        "Superseded by [ADR-0070](0070-x.md)",
+    )
+    assert gate.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("file_status", "branch"),
+    [
+        ("Superseded by ADR-0070", "the status text agrees after stripping"),
+        ("Proposed", "the status text disagrees"),
+        (None, "the file has no readable '## Status' value"),
+    ],
+)
+def test_the_destination_check_runs_on_every_status_branch(
+    file_status: str | None,
+    branch: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The property the call-site comment claims, held rather than asserted.
+
+    `main()` runs `link_target_errors` outside the `actual is None` branch and
+    after the status comparison, on purpose: the destination is a separate
+    claim from the status text, so a cell can carry the right words and the
+    wrong link — or the wrong words and the wrong link, or no readable status
+    at all. Only the first of those three was covered, which is the branch the
+    check was *written* for and therefore the one a regression would keep.
+
+    **Asserted on stdout, not on the exit code**, and that is the whole design
+    of this test. Two of the three rows fail the gate for a reason of their own
+    — a status mismatch, a missing `## Status` — so `main() == 1` holds in them
+    whether or not the destination was ever examined. An exit-code assertion
+    would pass against a call site moved back inside the agreeing branch, which
+    is exactly the regression this exists to catch.
+    """
+    # The third row's status is overwritten below; `_tiny_repo` needs *some*
+    # value to build a well-formed file first.
+    _tiny_repo(
+        tmp_path,
+        file_status or "Proposed",
+        "Superseded by [ADR-0070](0099-completely-wrong.md)",
+    )
+    adr_dir = tmp_path / "specs" / "adr"
+    if file_status is None:
+        (adr_dir / "0070-x.md").write_text(
+            "# ADR-0070\n\nThis file has no status heading at all.\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(gate, "ADR_DIR", adr_dir)
+    monkeypatch.setattr(gate, "INDEX", adr_dir / "README.md")
+
+    assert gate.main() == 1, branch
+    reported = capsys.readouterr().out
+    assert "is not that ADR's file" in reported, branch
+    # The destination too, and not as belt-and-braces. Asserting the suffix
+    # alone, this test passed **in isolation** against a `link_target_errors`
+    # whose message dropped `{number}` and `{dest}` for hardcoded text: it
+    # could not tell "the check ran and identified this cell's link" from "the
+    # check ran and printed a generic string". The full-suite run still caught
+    # that mutant, but only through a sibling test asserting a different
+    # property, which is the sibling's coverage and not this one's.
+    assert "0099-completely-wrong.md" in reported, branch
+
+
+def test_the_file_s_own_status_link_is_checked_and_named_as_the_file_s(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The side this repository's only real supersession actually uses.
+
+    `specs/adr/README.md`'s row for ADR-0001 spells its status as plain text
+    (`Accepted (partially superseded by ADR-0023)`) while
+    `0001-mcp-server-language.md`'s own `## Status` carries the link. Measured
+    over the corpus: that is the *only* `## Status` holding an
+    `[ADR-NNNN](dest)` at all, and no index cell holds one. So a destination
+    check reading the index alone is a check that cannot fire on the single
+    live instance of the shape it exists to catch — which is what `file_status`
+    returning `strip_links(...)` made unavoidable, by destroying the
+    destination before any caller could look at it.
+
+    The label is asserted, not just the error: with `source` defaulted rather
+    than required, a file-side defect would be reported against the index cell
+    and an operator would go and edit a document that was already right.
+    """
+    adr_dir = tmp_path / "specs" / "adr"
+    adr_dir.mkdir(parents=True)
+    (adr_dir / "0070-x.md").write_text(
+        "# ADR-0070\n\n## Status\nSuperseded by [ADR-0070](0099-completely-wrong.md)\n",
+        encoding="utf-8",
+    )
+    (adr_dir / "README.md").write_text(
+        "# ADRs\n\n## Index\n\n"
+        "| ADR | Title | Status |\n|---|---|---|\n"
+        "| [ADR-0070](0070-x.md) | X | Superseded by ADR-0070 |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "ADR_DIR", adr_dir)
+    monkeypatch.setattr(gate, "INDEX", adr_dir / "README.md")
+
+    # The status texts agree once stripped, so nothing but the destination
+    # check can fail this tree — the exit code is discriminating here.
+    assert gate.main() == 1
+    reported = capsys.readouterr().out
+    assert "0099-completely-wrong.md" in reported
+    assert "its '## Status'" in reported, reported
+    assert "index cell" not in reported, reported
+
+
+def test_two_files_sharing_a_number_do_not_hide_each_other(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The completeness guarantee, against the shape that silently broke it.
+
+    `main()` derived `on_disk` from `adr_files_by_number()` for one commit.
+    That dict is keyed by number, so two files sharing a four-digit prefix
+    collapse to one and whichever loses the collision is misreported. Both
+    faces were measured, and which one appears depends on glob order: the
+    orphan goes unreported, **or** the indexed file — correctly named — is
+    reported as violating the `NNNN-*.md` convention, a blocking gate failing
+    on correct input.
+
+    Asserted on stdout as well as the exit code, because the exit code cannot
+    tell the two faces apart: the collision produces *an* error either way, and
+    only the message says whether it is the right one. This is the same
+    discrimination a sibling test was missing when a reviewer caught two
+    surviving mutants earlier on this branch.
+
+    No test touched the orphan or convention branches at all before this one.
+    """
+    adr_dir = tmp_path / "specs" / "adr"
+    adr_dir.mkdir(parents=True)
+    for name in ("0023-indexed.md", "0023-orphan.md"):
+        (adr_dir / name).write_text("# x\n\n## Status\nProposed\n", encoding="utf-8")
+    (adr_dir / "README.md").write_text(
+        "# ADRs\n\n## Index\n\n"
+        "| ADR | Title | Status |\n|---|---|---|\n"
+        "| [ADR-0023](0023-indexed.md) | X | Proposed |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "ADR_DIR", adr_dir)
+    monkeypatch.setattr(gate, "INDEX", adr_dir / "README.md")
+
+    assert gate.main() == 1
+    reported = capsys.readouterr().out
+
+    # The orphan is named...
+    assert "0023-orphan.md exists but has no index row" in reported, reported
+    # ...and the indexed file, whose name is perfectly valid, is not accused.
+    assert "does not match the NNNN-*.md convention" not in reported, reported
+
+
+@pytest.mark.parametrize(
+    ("dest", "reported", "why"),
+    [
+        # Root-absolute. `_ANCHOR + dest` produced `adr//0023-new.md`, whose
+        # doubled slash `normpath` collapses, so this compared equal to the
+        # relative spelling and was silently accepted. It does not resolve to
+        # `specs/adr/0023-new.md` under any reading, and `check_spec_links`
+        # skips the shape as out of scope (ADR-0061 §3), so nothing else looks.
+        ("/0023-new.md", True, "root-absolute"),
+        ("//host/0023-new.md", True, "protocol-relative"),
+        # Every relative spelling of the same file must stay silent — the
+        # anchor exists precisely so these normalize together.
+        ("0023-new.md", False, "plain"),
+        ("./0023-new.md", False, "explicitly current-directory"),
+        ("../adr/0023-new.md", False, "up-and-back"),
+    ],
+)
+def test_the_anchor_gives_absolute_destinations_their_real_meaning(
+    dest: str, reported: bool, why: str
+) -> None:
+    """`posixpath.join` semantics, pinned at the boundary that motivated them.
+
+    The anchor's job is to make relative spellings of one file compare equal.
+    Concatenation did that and quietly did more: it turned a root-absolute
+    destination into a relative one. `join` lets an absolute path win, so it
+    mismatches — which is the right answer, not a special case.
+    """
+    errors = gate.link_target_errors(
+        "0022-old.md", f"Superseded by [ADR-0023]({dest})", "index cell", _OWNERS
+    )
+
+    assert bool(errors) is reported, (why, errors)
