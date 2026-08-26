@@ -74,9 +74,10 @@ and the PowerShell form it names writes UTF-8 without a BOM correctly.
   python scripts/run_gates.py
   ```
 
-  `scripts/run_gates.py` derives every command and every pinned version from
-  `.github/workflows/ci.yml`, so there is nothing to read out of the `env:` block by hand and
-  nothing here to keep in sync. It also carries the reasoning this block used to state — why
+  `scripts/run_gates.py` derives every pinned version from `.github/workflows/ci.yml` at each
+  invocation — the gate commands themselves are hand-written builders in the script, some of
+  them deliberately unlike CI's form — so there is nothing to read out of the `env:` block by
+  hand and nothing here to keep in sync. It also carries the reasoning this block used to state — why
   `--with "pytest==…"` on the **pyright** line is not redundant, and why `-n auto` is a deliberate
   divergence from CI's serial legs — in its module docstring, which is now the one copy.
 

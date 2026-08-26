@@ -10,6 +10,11 @@ Checks, per index row:
   - the index Status cell equals the file's `## Status` value
     (markdown links are stripped before comparison, so
     "Superseded by [ADR-0023](...)" matches "Superseded by ADR-0023")
+  - an `[ADR-NNNN](dest)` in *either* status value -- the index cell or
+    the file's own `## Status` -- points at ADR-NNNN's own file, which
+    stripping the links is precisely what stops the check above from
+    seeing. Not the `Superseded by:` / `Extended by:` links in an ADR's
+    `## Links` section; those are a different artifact and unchecked.
 
 And globally:
   - every NNNN-*.md file in specs/adr/ (except the 0000 template) has
@@ -47,6 +52,11 @@ ROW_RE = re.compile(r"^\| \[ADR-(\d{4})\]\(([^)]+)\) \| (.+?) \| (.+?) \|\s*$")
 # change buys agreement between the repository's two link readers, not a fix
 # to a live corpus failure.
 LINK_RE = re.compile(r"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^)]+\)")
+# An `[ADR-NNNN](dest)` navigation link, with the number and the destination
+# kept apart so the two can be compared. `strip_links` throws the destination
+# away by design -- it substitutes the link *text* -- which is right for the
+# status comparison and leaves the destination checked by nothing at all.
+ADR_LINK_RE = re.compile(r"\[ADR-(\d{4})\]\(([^)]+)\)")
 
 
 def strip_links(text: str) -> str:
@@ -58,13 +68,77 @@ def strip_links(text: str) -> str:
     return LINK_RE.sub(r"\1", text).strip()
 
 
+def link_target_errors(filename: str, cell: str, source: str) -> list[str]:
+    """Where an `[ADR-NNNN](dest)` in a status value points somewhere else.
+
+    `source` names which of the two status values this one is, and is required
+    rather than defaulted: both callers below pass a different label, and a
+    default would let the wrong one through silently -- an error line naming
+    the index cell for a defect in the file, which is the class of wrongness
+    this repository ranks worst because nothing about it looks wrong.
+
+    `check_spec_links` catches a destination that does not exist; nothing
+    caught one that exists and is **wrong**. Built a synthetic tree where
+    `0022-old.md` declares `Superseded by ADR-0023` and the index cell read
+    `Superseded by [ADR-0023](0099-completely-wrong.md)`: the gate printed
+    "ADR index consistent: 3 entries match" at exit 0, because `strip_links`
+    reduces both spellings to `Superseded by ADR-0023`.
+
+    Be precise about which rule this serves, because the obvious answer is
+    wrong. CLAUDE.md's ADR-governance rules 2 and 4 put their navigation link
+    in the ADR's own `## Links` section -- 60 `Extended by:` links across 29
+    files, measured -- and none of those is read from here. What this checks is
+    the link some status values carry, which rule 2 reaches only through
+    "correcting the `## Status` field", and which rule 6's "keep the index
+    current" reaches on the index side.
+
+    One such link exists today: ADR-0001's `## Status`. It is correct, and it
+    is why this now reads both status values rather than the index alone.
+
+    Honest about what was given up to get here: before the comparison was made
+    symmetric, the gate *did* reject that pair -- and rejected the correct
+    `[ADR-0023](0023-new.md)` identically, because it was rejecting every link
+    in the cell rather than validating any destination. Stripping both sides
+    removed a real false positive; this restores the coverage that went with
+    it, rather than leaving the trade unrecorded.
+
+    Scope: the number against the filename, which is the claim the link makes.
+    Whether the path resolves at all is `check_spec_links`' question and is
+    deliberately not re-asked here, so a destination naming the right file
+    under a wrong directory passes this check and fails that one. It is also
+    only the *status* values -- the `Superseded by:` / `Extended by:` links in
+    an ADR's own `## Links` section are a different artifact and are not read
+    from here.
+    """
+    errors: list[str] = []
+    for number, dest in ADR_LINK_RE.findall(cell):
+        stem = re.split(r"[\\/]", dest.split("#", 1)[0])[-1]
+        if stem and not stem.startswith(f"{number}-"):
+            errors.append(
+                f"{filename}: {source} links ADR-{number} to {dest!r}, "
+                f"which is not that ADR's file"
+            )
+    return errors
+
+
 def file_status(path: Path) -> str | None:
+    """The first non-blank line under `## Status`, **with its links intact**.
+
+    It used to return `strip_links(candidate)`, and that threw away the one
+    thing the destination check needs. Measured over this repository: exactly
+    one ADR carries an `[ADR-NNNN](dest)` in its `## Status` -- ADR-0001's
+    `Accepted (partially superseded by [ADR-0023](0023-distribution-mechanism.md))`
+    -- and its *index* row spells the same fact as plain text. So the file is
+    where this repository's only supersession to date actually writes the link,
+    and stripping here is what made that destination unreachable by any check.
+    `main()` strips for the comparison; nothing else calls this.
+    """
     lines = path.read_text(encoding="utf-8").splitlines()
     for i, line in enumerate(lines):
         if line.strip() == "## Status":
             for candidate in lines[i + 1 :]:
                 if candidate.strip():
-                    return strip_links(candidate)
+                    return candidate.strip()
             return None
     return None
 
@@ -95,7 +169,8 @@ def main() -> int:
             errors.append(f"index row ADR-{number} links to missing file {filename}")
             continue
 
-        actual = file_status(path)
+        raw_status = file_status(path)
+        actual = None if raw_status is None else strip_links(raw_status)
         # `strip_links` on **both** sides, which is what makes this an
         # agreement test rather than a comparison of two different
         # normalizations. The file's value was stripped and the index cell was
@@ -117,6 +192,27 @@ def main() -> int:
                 f"{filename}: index says status '{indexed}' "
                 f"but the file says '{actual}'"
             )
+        # Runs whether or not the status text matched, and outside the
+        # `actual is None` branch too: the destination is a separate claim
+        # from the status, and a cell can carry the right words and the wrong
+        # link. Stripping both sides is what makes that possible -- the two
+        # spellings agree on the text the comparison above sees.
+        #
+        # `test_the_destination_check_runs_on_every_status_branch` holds this,
+        # and holds it on **stdout** rather than on the exit code: two of the
+        # three status branches already fail for a reason of their own, so an
+        # exit-code assertion passes with this line moved back inside the
+        # agreeing branch -- which is the regression the comment disclaims.
+        #
+        # Both status values are asked, not just the index's. The index cell is
+        # the shape the check was ported for; the *file* is where the only
+        # supersession this repository has actually written puts its link
+        # (ADR-0001, see `file_status`), so checking the index alone would have
+        # been a check that could not fire on the one live instance of the
+        # thing it exists to catch.
+        errors.extend(link_target_errors(filename, index_status, "index cell"))
+        if raw_status is not None:
+            errors.extend(link_target_errors(filename, raw_status, "its '## Status'"))
 
     on_disk = {
         p.name for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md") if p.name != TEMPLATE
