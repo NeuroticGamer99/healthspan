@@ -66,6 +66,22 @@ ADR_LINK_RE = re.compile(r"\[ADR-(\d{4})\]\(([^)]+)\)")
 _ANCHOR = "adr/"
 
 
+def _under_anchor(path: str) -> str:
+    """A status-link destination normalized under `_ANCHOR`, for comparison.
+
+    `posixpath.join`, **not** string concatenation. Concatenating was the first
+    spelling and a reviewer measured what it cost: `_ANCHOR + "/0023-new.md"`
+    is `"adr//0023-new.md"`, whose doubled slash `normpath` collapses, so a
+    **root-absolute** destination compared equal to the relative one and was
+    silently accepted. `join` gives absolute paths their real meaning -- they
+    win, and therefore mismatch -- which is the correct answer here, because
+    `/0023-new.md` does not resolve to `specs/adr/0023-new.md` under any
+    reading. It is also the shape `check_spec_links` skips as out of scope
+    (ADR-0061 §3), so nothing else would ever have looked at it.
+    """
+    return posixpath.normpath(posixpath.join(_ANCHOR, path))
+
+
 def strip_links(text: str) -> str:
     """A status value with its markdown link markup removed.
 
@@ -82,6 +98,13 @@ def adr_files_by_number() -> dict[str, str]:
     inside it: the destination check needs the *exact* file a number owns, and
     a function that reads the filesystem itself is one whose tests either touch
     the real corpus or monkeypatch a global to avoid it.
+
+    **Never use this for a completeness question.** Being keyed by number, it
+    collapses any two files sharing a four-digit prefix to one, so it cannot
+    answer "which files exist". `main()` did exactly that for one commit and a
+    reviewer measured both faces of it: an orphan file going unreported, and a
+    correctly-named file reported as violating the naming convention. Anything
+    asking what is on disk asks the glob.
     """
     return {
         p.name[:4]: p.name
@@ -181,9 +204,7 @@ def link_target_errors(
                 f"{filename}: {source} links ADR-{number} to {dest!r}, "
                 f"but no {number}-*.md exists"
             )
-        elif posixpath.normpath(_ANCHOR + target) != posixpath.normpath(
-            _ANCHOR + owner
-        ):
+        elif _under_anchor(target) != _under_anchor(owner):
             errors.append(
                 f"{filename}: {source} links ADR-{number} to {dest!r}, "
                 f"which is not that ADR's file ({owner})"
@@ -289,7 +310,18 @@ def main() -> int:
                 link_target_errors(filename, raw_status, "its '## Status'", owners)
             )
 
-    on_disk = set(owners.values())
+    # From the filesystem, **not** from `owners.values()`. That refactor was a
+    # measured regression: `owners` is keyed by number, so two files sharing a
+    # four-digit prefix collapse to one and whichever loses the collision is
+    # misreported -- either its orphan status goes unseen, or, depending on
+    # glob order, a correctly-named file is reported as "does not match the
+    # NNNN-*.md convention". Both measured. The second is a blocking gate
+    # failing on correct input, which is the direction this gate cannot
+    # afford, and the completeness guarantee in this module's docstring is the
+    # thing being broken. Completeness questions ask the filesystem.
+    on_disk = {
+        p.name for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md") if p.name != TEMPLATE
+    }
     for missing in sorted(on_disk - set(indexed_files)):
         errors.append(f"{missing} exists but has no index row")
     for phantom in sorted(set(indexed_files) - on_disk):

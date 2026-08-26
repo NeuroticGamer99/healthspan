@@ -132,6 +132,15 @@ def test_the_gate_agrees_with_the_repository_it_ships_with() -> None:
     `strip_links` is reachable only through the whole check, and a pattern
     change that satisfied every unit above while breaking an actual row would
     show up here and nowhere else. Exit 0 is the gate's own contract.
+
+    **This also carries the coverage a deleted unit test used to hold.**
+    `test_a_status_link_in_the_file_still_compares_equal_to_the_plain_index`
+    asserted `strip_links` against ADR-0001's real phrasing and was removed as
+    decorative — a reviewer proved by mutation that it stayed green while its
+    siblings caught the regression its docstring claimed to guard. ADR-0001 is
+    in the real corpus, so that exact shape is still exercised here, as an
+    integration property rather than a unit one. Recorded because a deletion
+    with no stated replacement is indistinguishable from a coverage loss.
     """
     assert gate.main() == 0
 
@@ -432,3 +441,82 @@ def test_the_file_s_own_status_link_is_checked_and_named_as_the_file_s(
     assert "0099-completely-wrong.md" in reported
     assert "its '## Status'" in reported, reported
     assert "index cell" not in reported, reported
+
+
+def test_two_files_sharing_a_number_do_not_hide_each_other(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The completeness guarantee, against the shape that silently broke it.
+
+    `main()` derived `on_disk` from `adr_files_by_number()` for one commit.
+    That dict is keyed by number, so two files sharing a four-digit prefix
+    collapse to one and whichever loses the collision is misreported. Both
+    faces were measured, and which one appears depends on glob order: the
+    orphan goes unreported, **or** the indexed file — correctly named — is
+    reported as violating the `NNNN-*.md` convention, a blocking gate failing
+    on correct input.
+
+    Asserted on stdout as well as the exit code, because the exit code cannot
+    tell the two faces apart: the collision produces *an* error either way, and
+    only the message says whether it is the right one. This is the same
+    discrimination a sibling test was missing when a reviewer caught two
+    surviving mutants earlier on this branch.
+
+    No test touched the orphan or convention branches at all before this one.
+    """
+    adr_dir = tmp_path / "specs" / "adr"
+    adr_dir.mkdir(parents=True)
+    for name in ("0023-indexed.md", "0023-orphan.md"):
+        (adr_dir / name).write_text("# x\n\n## Status\nProposed\n", encoding="utf-8")
+    (adr_dir / "README.md").write_text(
+        "# ADRs\n\n## Index\n\n"
+        "| ADR | Title | Status |\n|---|---|---|\n"
+        "| [ADR-0023](0023-indexed.md) | X | Proposed |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "ADR_DIR", adr_dir)
+    monkeypatch.setattr(gate, "INDEX", adr_dir / "README.md")
+
+    assert gate.main() == 1
+    reported = capsys.readouterr().out
+
+    # The orphan is named...
+    assert "0023-orphan.md exists but has no index row" in reported, reported
+    # ...and the indexed file, whose name is perfectly valid, is not accused.
+    assert "does not match the NNNN-*.md convention" not in reported, reported
+
+
+@pytest.mark.parametrize(
+    ("dest", "reported", "why"),
+    [
+        # Root-absolute. `_ANCHOR + dest` produced `adr//0023-new.md`, whose
+        # doubled slash `normpath` collapses, so this compared equal to the
+        # relative spelling and was silently accepted. It does not resolve to
+        # `specs/adr/0023-new.md` under any reading, and `check_spec_links`
+        # skips the shape as out of scope (ADR-0061 §3), so nothing else looks.
+        ("/0023-new.md", True, "root-absolute"),
+        ("//host/0023-new.md", True, "protocol-relative"),
+        # Every relative spelling of the same file must stay silent — the
+        # anchor exists precisely so these normalize together.
+        ("0023-new.md", False, "plain"),
+        ("./0023-new.md", False, "explicitly current-directory"),
+        ("../adr/0023-new.md", False, "up-and-back"),
+    ],
+)
+def test_the_anchor_gives_absolute_destinations_their_real_meaning(
+    dest: str, reported: bool, why: str
+) -> None:
+    """`posixpath.join` semantics, pinned at the boundary that motivated them.
+
+    The anchor's job is to make relative spellings of one file compare equal.
+    Concatenation did that and quietly did more: it turned a root-absolute
+    destination into a relative one. `join` lets an absolute path win, so it
+    mismatches — which is the right answer, not a special case.
+    """
+    errors = gate.link_target_errors(
+        "0022-old.md", f"Superseded by [ADR-0023]({dest})", "index cell", _OWNERS
+    )
+
+    assert bool(errors) is reported, (why, errors)

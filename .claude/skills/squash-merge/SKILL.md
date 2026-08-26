@@ -187,11 +187,24 @@ jumbled together with "address review" fixups. Always replace it:
   nothing moved: do the reconciliation from the branch diff, as below.
 
   The filename is the exact `git rev-parse --abbrev-ref HEAD`, unsanitized, matching `/land`'s
-  `commit-msg/<branch>.txt` convention and colliding for the same reasons — a file at the expected
-  path can still be another branch's, so treat a stated branch or PR number inside it that does
-  not match this one as a stale file and ignore it. If the audit was written in an earlier session
-  it lives under *that* session's scratchpad; ask the user for the path rather than reconstructing
-  it, exactly as `/ship` step 1 does for the commit message.
+  `commit-msg/<branch>.txt` convention and inheriting its collision hazard — `/land` step 7
+  records three measured mechanisms by which a file at the expected path can be another branch's.
+  **The audit must therefore name its own branch and PR in its opening line**, and an audit that
+  names neither is not trusted: a file whose stated branch or PR does not match the one being
+  merged is stale, and so is one that states nothing. Without that requirement the guard is
+  unenforceable — nothing else obliges a writer to include an identifier to check.
+
+  **`/land` guards the same hazard with a checked value — a `.branch` sidecar — and this
+  deliberately does not, for a reason worth stating rather than leaving as an unexplained
+  divergence.** The sidecar protects the commit message, which *ships*: a wrong one reaches
+  `main` and cannot be recalled. This file never ships. It is an input to a reconciliation that
+  is performed from the branch diff regardless, so the worst a wrong or stale one costs is a
+  re-derivation you were going to be capable of anyway. A weaker guard is proportionate to a
+  smaller loss; it would not be proportionate on the message.
+
+  If the audit was written in an earlier session it lives under *that* session's scratchpad; ask
+  the user for the path rather than reconstructing it, exactly as `/ship` step 1 does for the
+  commit message.
 
   This is not hypothetical: on PR #65 the review findings were about the entry's *own* accuracy,
   so the fixes falsified three of the first commit's sentences — an unqualified quota rate, a
