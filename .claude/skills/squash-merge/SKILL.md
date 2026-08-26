@@ -178,6 +178,21 @@ jumbled together with "address review" fixups. Always replace it:
   message. Read the branch diff (`git diff origin/main...HEAD`), not just the first commit, and
   reconcile every claim against it before composing.
 
+  **Read `<scratchpad>/squash-reconciliation/<branch>.md` first if it exists.** A session that
+  triaged the bot rounds already had the evidence in hand and may have written the audit down:
+  which claims later commits falsified, which survived and why, and what the "Includes …" line
+  should say. Use it as the *input* to the reconciliation, never as a substitute for it — it was
+  written at some commit, and anything pushed since is outside it, so check `git log` for commits
+  later than the audit's stated anchor. Its absence means nothing has been audited, not that
+  nothing moved: do the reconciliation from the branch diff, as below.
+
+  The filename is the exact `git rev-parse --abbrev-ref HEAD`, unsanitized, matching `/land`'s
+  `commit-msg/<branch>.txt` convention and colliding for the same reasons — a file at the expected
+  path can still be another branch's, so treat a stated branch or PR number inside it that does
+  not match this one as a stale file and ignore it. If the audit was written in an earlier session
+  it lives under *that* session's scratchpad; ask the user for the path rather than reconstructing
+  it, exactly as `/ship` step 1 does for the commit message.
+
   This is not hypothetical: on PR #65 the review findings were about the entry's *own* accuracy,
   so the fixes falsified three of the first commit's sentences — an unqualified quota rate, a
   posture the branch had since softened, and a citation it had removed. Verbatim reuse would have
