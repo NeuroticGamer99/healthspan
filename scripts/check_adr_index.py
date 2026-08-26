@@ -26,6 +26,7 @@ Stdlib only; all files are read as UTF-8.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import sys
 from collections.abc import Mapping
@@ -58,6 +59,11 @@ LINK_RE = re.compile(r"\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\([^)]+\)")
 # away by design -- it substitutes the link *text* -- which is right for the
 # status comparison and leaves the destination checked by nothing at all.
 ADR_LINK_RE = re.compile(r"\[ADR-(\d{4})\]\(([^)]+)\)")
+# A fixed prefix the destination and the owning filename are both normalized
+# under, so `../adr/x.md` and `x.md` -- one file spelled two ways -- compare
+# equal while `../reviews/x.md` does not. Its value is arbitrary and cancels;
+# what it must be is non-empty, so a leading `..` has a segment to consume.
+_ANCHOR = "adr/"
 
 
 def strip_links(text: str) -> str:
@@ -138,18 +144,32 @@ def link_target_errors(
     skips pure anchors by design (ADR-0061 §3 records anchor validity as out
     of scope), so nothing else would ever look at it.
 
-    Scope, stated as what it is rather than as what a sibling covers: this
-    compares **basenames**, so a destination naming the right filename under a
-    wrong directory still passes here and is left to `check_spec_links`'
-    existence check. That residue is narrow -- the decoy must both exist and
-    carry the exact filename -- where the prefix's residue was any existing
-    file sharing four digits. It is also only the *status* values: the
+    **The whole destination is compared, not its basename**, and the
+    comparison is purely lexical. CodeRabbit found what basenames still let
+    through, on the same PR: `[ADR-0023](../reviews/0023-distribution-mechanism.md)`
+    carries the right filename in the wrong directory, so it passed here and
+    would pass `check_spec_links` too if such a file existed. That residue was
+    documented here and then *contradicted* by ADR-0078, which claimed green
+    certifies a status link "names its own ADR's file" without qualification --
+    a gate whose owning record claims more than it delivers, which is the
+    failure ADR-0078 exists to govern.
+
+    `posixpath.normpath` under a fixed anchor rather than `Path.resolve()`:
+    both status values live in `specs/adr/`, so a lexical comparison under a
+    shared prefix answers exactly this question, while `resolve()` would touch
+    the filesystem and reopen the `../../..`-escaping-`REPO_ROOT` question this
+    repository already has open. The anchor exists so `../adr/x.md` and `x.md`
+    normalize together; a `..` that escapes it simply yields a different string
+    and mismatches, which is the right answer.
+
+    Scope: this is only the *status* values -- the
     `Superseded by:` / `Extended by:` links in an ADR's own `## Links` section
     are a different artifact and are not read from here.
     """
     errors: list[str] = []
     for number, dest in ADR_LINK_RE.findall(cell):
-        stem = re.split(r"[\\/]", dest.split("#", 1)[0])[-1]
+        target = dest.split("#", 1)[0].replace("\\", "/")
+        stem = target.rsplit("/", 1)[-1]
         owner = owners.get(number)
         if not stem:
             errors.append(
@@ -161,7 +181,9 @@ def link_target_errors(
                 f"{filename}: {source} links ADR-{number} to {dest!r}, "
                 f"but no {number}-*.md exists"
             )
-        elif stem != owner:
+        elif posixpath.normpath(_ANCHOR + target) != posixpath.normpath(
+            _ANCHOR + owner
+        ):
             errors.append(
                 f"{filename}: {source} links ADR-{number} to {dest!r}, "
                 f"which is not that ADR's file ({owner})"

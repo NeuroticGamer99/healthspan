@@ -53,6 +53,8 @@ Stated because a rule that cannot classify its own history is not yet a rule.
 
 The rule therefore ratifies both existing precedents rather than overturning either, which is the test it had to pass: a rule invented to justify one decision would have had to call the other one wrong.
 
+**The third row was wrong when this ADR was first written, and the correction is worth keeping rather than quietly applying.** It claimed green certifies that a status link "names its own ADR's file" while `link_target_errors` compared only basenames, so `[ADR-0023](../reviews/0023-distribution-mechanism.md)` — the right filename in the wrong directory — passed the gate and would have passed `check_spec_links` too. A reviewer caught the mismatch on the PR that introduced this ADR. **That is this ADR's own subject, arriving from the inside:** an owning record claiming more than its gate delivers is exactly the drift §1 exists to make loud, and writing the rule did not stop its author producing an instance of it in the same commit. The remedy was to make the claim true — the comparison is now the whole destination, normalized lexically — rather than to narrow the row, because a rule about what green certifies is worth less if its own example is the weaker reading.
+
 ### 3. Where the record goes
 The extension ADR carries the addition. **The owning ADR's enumeration is still never edited** — rule 5 is untouched by this decision. What the owning ADR gets is the navigation link rule 4 already permits: an `Extended by: [ADR-XXXX](…)` line in its `## Links` section. A reader arriving at ADR-0045 §6 finds the enumeration as written and the extensions listed below it.
 

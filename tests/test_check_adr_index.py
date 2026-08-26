@@ -193,6 +193,19 @@ def test_a_supersession_link_must_point_at_the_adr_it_names() -> None:
             "a decoy sharing the four digits",
             "which is not that ADR's file (0023-new.md)",
         ),
+        # CodeRabbit's finding on the same PR, and the reason the comparison
+        # moved from basenames to the whole path: this carries ADR-0023's
+        # *exact* filename in another directory, so a basename comparison
+        # accepted it — and `check_spec_links` would too, if such a file were
+        # ever created, because its question is only whether a path resolves.
+        # ADR-0078 meanwhile claimed green certifies the link "names its own
+        # ADR's file", unqualified, so the gate's owning record was promising
+        # what the gate did not deliver.
+        (
+            "Superseded by [ADR-0023](../reviews/0023-new.md)",
+            "the exact filename in the wrong directory",
+            "which is not that ADR's file (0023-new.md)",
+        ),
         # Also Copilot's: a pure fragment names no file, so the prefix form
         # produced an empty stem and skipped it. Nothing else would ever look
         # — `check_spec_links` skips anchors by design (ADR-0061 §3).
