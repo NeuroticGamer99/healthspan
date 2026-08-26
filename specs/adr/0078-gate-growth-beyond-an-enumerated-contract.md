@@ -68,7 +68,7 @@ This rule is owned here and cited by whoever adds the next check. **Nothing enfo
 
 ### Negative Consequences / Tradeoffs
 - **"What a green run certifies" is a judgement, not a measurement.** It is sharper than "new script versus new function" but it is not mechanical, and a determined author can argue a real growth into the false-positive column. The `Decisions:` section is the only check.
-- **ADR-0045 §6 gets further from current with each extension.** This rule makes the drift *recorded* rather than *stopped*; a reader still has to follow six `Extended by:` links to learn what the docs-consistency job does today. Consolidating that is a separate question and is not answered here.
+- **ADR-0045 §6 gets further from current with each extension.** This rule makes the drift *recorded* rather than *stopped*; a reader still has to follow every `Extended by:` link to learn what the docs-consistency job does today. Consolidating that is a separate question and is not answered here. (No count of those links, and the omission is deliberate: the first draft of this sentence carried one, it was wrong on the day it was written — this ADR's own navigation link had already made it stale — and a bare number beside the thing it counts is a shelf-life mistake this repository has corrected repeatedly.)
 - **One more ADR per real growth**, which is a real cost on a gate that grows often. The false-positive carve-out in §1 is what keeps it from being one per change.
 
 ## Pros and Cons of the Options

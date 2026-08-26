@@ -136,6 +136,16 @@ def test_the_gate_agrees_with_the_repository_it_ships_with() -> None:
     assert gate.main() == 0
 
 
+_OWNERS = {"0023": "0023-new.md", "0070": "0070-x.md"}
+"""A number-to-filename map standing in for `adr_files_by_number()`'s read.
+
+Passed explicitly so these stay unit tests: the destination check needs to
+know which file a number owns, and taking that from the real `specs/adr/`
+would make every case below depend on the corpus it is meant to be
+independent of.
+"""
+
+
 def test_a_supersession_link_must_point_at_the_adr_it_names() -> None:
     """The coverage `strip_links` gives up, restored beside it.
 
@@ -160,47 +170,118 @@ def test_a_supersession_link_must_point_at_the_adr_it_names() -> None:
         "0022-old.md",
         "Superseded by [ADR-0023](0099-completely-wrong.md)",
         "index cell",
+        _OWNERS,
     )
     assert len(wrong) == 1, wrong
     assert "ADR-0023" in wrong[0], wrong
     assert "0099-completely-wrong.md" in wrong[0], wrong
+    # The owner is named in the message, so the report says what the link
+    # should have pointed at rather than only that it is wrong.
+    assert "0023-new.md" in wrong[0], wrong
 
-    # The hyphen in `f"{number}-"` is the whole boundary, and every wrong
-    # destination above differs in the leading digits themselves — so all of
-    # them survive a comparison that dropped the hyphen. `00230-other.md`
-    # belongs to ADR-0230 and starts with `0023`, which is the one shape that
-    # tells `startswith(f"{number}-")` and `startswith(number)` apart.
-    boundary = gate.link_target_errors(
-        "0022-old.md", "Superseded by [ADR-0023](00230-other.md)", "index cell"
-    )
-    assert len(boundary) == 1, boundary
-    assert "00230-other.md" in boundary[0], boundary
 
-    # The correct pair, an anchored spelling of it, a subdirectory spelling
-    # (scope: the number against the filename, not that the path resolves —
-    # `check_spec_links` owns that), and a status with no link at all must all
-    # stay silent. That is the false positive the symmetric comparison removed
-    # and this must not reintroduce.
+@pytest.mark.parametrize(
+    ("cell", "why", "says"),
+    [
+        # Copilot's finding on PR #103, and the reason the comparison is
+        # against the exact filename rather than the `NNNN-` prefix: this
+        # basename starts with `0023-` while ADR-0023 is `0023-new.md`, so the
+        # prefix form passed it — and `check_spec_links` passed it too, because
+        # a decoy has to exist to be a decoy. Two green gates, wrong document.
+        (
+            "Superseded by [ADR-0023](../reviews/0023-notes.md)",
+            "a decoy sharing the four digits",
+            "which is not that ADR's file (0023-new.md)",
+        ),
+        # Also Copilot's: a pure fragment names no file, so the prefix form
+        # produced an empty stem and skipped it. Nothing else would ever look
+        # — `check_spec_links` skips anchors by design (ADR-0061 §3).
+        (
+            "Superseded by [ADR-0023](#adr-0023)",
+            "a destination naming no file",
+            "which names no file",
+        ),
+        # The number itself is unowned. Distinct from the two above: there is
+        # no file to disagree with, and saying so beats reporting a mismatch
+        # against a filename that does not exist.
+        (
+            "Superseded by [ADR-0099](0099-nothing.md)",
+            "a number no file owns",
+            "but no 0099-*.md exists",
+        ),
+        # The digit-boundary case. It no longer discriminates a `startswith`
+        # variant — that code is gone — but it is still a wrong destination a
+        # reader could plausibly write, so it stays as a regression case.
+        (
+            "Superseded by [ADR-0023](00230-other.md)",
+            "a longer number sharing a prefix",
+            "which is not that ADR's file (0023-new.md)",
+        ),
+    ],
+)
+def test_a_destination_that_is_not_the_named_adr_s_file_is_reported(
+    cell: str, why: str, says: str
+) -> None:
+    """Each shape the exact-filename comparison catches that the prefix did not.
+
+    Parametrized rather than looped so a regression names which shape broke:
+    the four differ in *why* they are wrong, and a loop reporting "one of four"
+    is the report that sends someone reading all four.
+    """
+    errors = gate.link_target_errors("0022-old.md", cell, "index cell", _OWNERS)
+
+    assert len(errors) == 1, (why, errors)
+    assert "0022-old.md" in errors[0], (why, errors)
+    # The *message*, not merely that one fired. Measured: without this,
+    # deleting either the empty-stem branch or the unowned-number branch left
+    # the suite green -- both shapes fall through to the mismatch branch and
+    # still report an error, just the wrong one. An operator sent to fix "not
+    # that ADR's file" when the real defect is "that ADR has no file" is being
+    # pointed at the wrong document.
+    assert says in errors[0], (why, errors)
+
+
+def test_a_correct_destination_stays_silent_however_it_is_spelled() -> None:
+    """The false positive the symmetric comparison removed, held removed.
+
+    Every one of these names `0023-new.md`, which is what ADR-0023 owns. A
+    check that reported any of them would be the blocking-failure-on-correct-
+    markdown direction this gate cannot afford.
+    """
     for benign in (
         "Superseded by [ADR-0023](0023-new.md)",
+        # An anchored spelling: the `#`-split is what makes this pass, and
+        # without it the stem reads `0023-new.md#status` and mismatches.
         "Superseded by [ADR-0023](0023-new.md#status)",
+        # A subdirectory spelling. The comparison is on the basename, so the
+        # directory is not checked here — `check_spec_links` owns whether the
+        # path resolves, and the docstring records that residue.
         "Extended by [ADR-0023](../adr/0023-new.md)",
         # The backslash arm of the separator class, which nothing else reaches.
-        # Whether a destination spelled this way is a *good* link is
-        # `check_spec_links`' question and it reports one loudly; this check's
-        # only claim is that the final segment is the right ADR's file, and it
-        # has to find that segment under either separator to say so.
         r"Extended by [ADR-0023](..\adr\0023-new.md)",
-        # Names no file at all, so there is no filename to disagree with. This
-        # is the one case the `#`-split is load-bearing for: without it the
-        # stem reads `#status`, which starts with no ADR number, and a link
-        # into the index's own page is reported as pointing at the wrong file.
-        "Superseded by [ADR-0023](#adr-0023)",
+        # No link at all, which most statuses are.
         "Accepted",
     ):
-        assert gate.link_target_errors("0022-old.md", benign, "index cell") == [], (
-            benign
-        )
+        assert (
+            gate.link_target_errors("0022-old.md", benign, "index cell", _OWNERS) == []
+        ), benign
+
+
+def test_the_number_map_gives_each_adr_its_own_file() -> None:
+    """`adr_files_by_number` over the real corpus, since `main()` trusts it.
+
+    Two properties, and the second is why this is not just a smoke test: every
+    key is the filename's own four-digit prefix, and the template is excluded —
+    without that exclusion `0000` would own `0000-template.md` and a link to
+    ADR-0000 would validate against a file the index deliberately has no row
+    for.
+    """
+    owners = gate.adr_files_by_number()
+
+    assert owners, "the real corpus has ADRs"
+    assert all(name.startswith(f"{number}-") for number, name in owners.items())
+    assert "0000" not in owners
+    assert gate.TEMPLATE not in set(owners.values())
 
 
 def test_a_wrong_destination_fails_the_gate_even_when_the_status_text_agrees(
@@ -319,13 +400,13 @@ def test_the_file_s_own_status_link_is_checked_and_named_as_the_file_s(
     adr_dir = tmp_path / "specs" / "adr"
     adr_dir.mkdir(parents=True)
     (adr_dir / "0070-x.md").write_text(
-        "# ADR-0070\n\n## Status\nSuperseded by [ADR-0071](0099-completely-wrong.md)\n",
+        "# ADR-0070\n\n## Status\nSuperseded by [ADR-0070](0099-completely-wrong.md)\n",
         encoding="utf-8",
     )
     (adr_dir / "README.md").write_text(
         "# ADRs\n\n## Index\n\n"
         "| ADR | Title | Status |\n|---|---|---|\n"
-        "| [ADR-0070](0070-x.md) | X | Superseded by ADR-0071 |\n",
+        "| [ADR-0070](0070-x.md) | X | Superseded by ADR-0070 |\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(gate, "ADR_DIR", adr_dir)

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 ADR_DIR = Path(__file__).resolve().parent.parent / "specs" / "adr"
@@ -68,7 +69,24 @@ def strip_links(text: str) -> str:
     return LINK_RE.sub(r"\1", text).strip()
 
 
-def link_target_errors(filename: str, cell: str, source: str) -> list[str]:
+def adr_files_by_number() -> dict[str, str]:
+    """Every ADR number on disk mapped to the one filename that carries it.
+
+    Built once per run and handed to `link_target_errors`, rather than globbed
+    inside it: the destination check needs the *exact* file a number owns, and
+    a function that reads the filesystem itself is one whose tests either touch
+    the real corpus or monkeypatch a global to avoid it.
+    """
+    return {
+        p.name[:4]: p.name
+        for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md")
+        if p.name != TEMPLATE
+    }
+
+
+def link_target_errors(
+    filename: str, cell: str, source: str, owners: Mapping[str, str]
+) -> list[str]:
     """Where an `[ADR-NNNN](dest)` in a status value points somewhere else.
 
     `source` names which of the two status values this one is, and is required
@@ -86,8 +104,9 @@ def link_target_errors(filename: str, cell: str, source: str) -> list[str]:
 
     Be precise about which rule this serves, because the obvious answer is
     wrong. CLAUDE.md's ADR-governance rules 2 and 4 put their navigation link
-    in the ADR's own `## Links` section -- 60 `Extended by:` links across 29
-    files, measured -- and none of those is read from here. What this checks is
+    in the ADR's own `## Links` section, which this repository uses throughout,
+    and none of those is read from here. (No count, deliberately: this one grew
+    by one on the very branch that first wrote it down.) What this checks is
     the link some status values carry, which rule 2 reaches only through
     "correcting the `## Status` field", and which rule 6's "keep the index
     current" reaches on the index side.
@@ -102,21 +121,50 @@ def link_target_errors(filename: str, cell: str, source: str) -> list[str]:
     removed a real false positive; this restores the coverage that went with
     it, rather than leaving the trade unrecorded.
 
-    Scope: the number against the filename, which is the claim the link makes.
-    Whether the path resolves at all is `check_spec_links`' question and is
-    deliberately not re-asked here, so a destination naming the right file
-    under a wrong directory passes this check and fails that one. It is also
-    only the *status* values -- the `Superseded by:` / `Extended by:` links in
-    an ADR's own `## Links` section are a different artifact and are not read
-    from here.
+    **The comparison is against the exact filename that number owns**, and it
+    used to be against the `NNNN-` prefix. Copilot found what the prefix let
+    through, on PR #103: `[ADR-0023](../reviews/0023-notes.md)` names a file
+    whose basename starts with `0023-` while ADR-0023 is
+    `0023-distribution-mechanism.md`, so this check passed it and
+    `check_spec_links` passed it too because the decoy exists. Two green gates
+    on a link pointing at the wrong document. The prefix was chosen on the
+    stated grounds that "`check_spec_links` owns whether the path resolves" --
+    true, and it does not own *which* file, which is the half that matters
+    here. A boundary resting on a sibling's coverage is worth only as much as
+    that coverage, and this one was never checked against it.
+
+    A destination naming no file at all -- `[ADR-0023](#adr-0023)` -- is now
+    reported rather than skipped, for the same reason: `check_spec_links`
+    skips pure anchors by design (ADR-0061 §3 records anchor validity as out
+    of scope), so nothing else would ever look at it.
+
+    Scope, stated as what it is rather than as what a sibling covers: this
+    compares **basenames**, so a destination naming the right filename under a
+    wrong directory still passes here and is left to `check_spec_links`'
+    existence check. That residue is narrow -- the decoy must both exist and
+    carry the exact filename -- where the prefix's residue was any existing
+    file sharing four digits. It is also only the *status* values: the
+    `Superseded by:` / `Extended by:` links in an ADR's own `## Links` section
+    are a different artifact and are not read from here.
     """
     errors: list[str] = []
     for number, dest in ADR_LINK_RE.findall(cell):
         stem = re.split(r"[\\/]", dest.split("#", 1)[0])[-1]
-        if stem and not stem.startswith(f"{number}-"):
+        owner = owners.get(number)
+        if not stem:
             errors.append(
                 f"{filename}: {source} links ADR-{number} to {dest!r}, "
-                f"which is not that ADR's file"
+                f"which names no file"
+            )
+        elif owner is None:
+            errors.append(
+                f"{filename}: {source} links ADR-{number} to {dest!r}, "
+                f"but no {number}-*.md exists"
+            )
+        elif stem != owner:
+            errors.append(
+                f"{filename}: {source} links ADR-{number} to {dest!r}, "
+                f"which is not that ADR's file ({owner})"
             )
     return errors
 
@@ -146,6 +194,9 @@ def file_status(path: Path) -> str | None:
 def main() -> int:
     errors: list[str] = []
     indexed_files: dict[str, str] = {}
+    # Resolved once, before the loop: a link in row N's status may name any
+    # other ADR, so the check needs the whole mapping rather than this row's.
+    owners = adr_files_by_number()
 
     for line in INDEX.read_text(encoding="utf-8").splitlines():
         row = ROW_RE.match(line)
@@ -210,13 +261,13 @@ def main() -> int:
         # (ADR-0001, see `file_status`), so checking the index alone would have
         # been a check that could not fire on the one live instance of the
         # thing it exists to catch.
-        errors.extend(link_target_errors(filename, index_status, "index cell"))
+        errors.extend(link_target_errors(filename, index_status, "index cell", owners))
         if raw_status is not None:
-            errors.extend(link_target_errors(filename, raw_status, "its '## Status'"))
+            errors.extend(
+                link_target_errors(filename, raw_status, "its '## Status'", owners)
+            )
 
-    on_disk = {
-        p.name for p in ADR_DIR.glob("[0-9][0-9][0-9][0-9]-*.md") if p.name != TEMPLATE
-    }
+    on_disk = set(owners.values())
     for missing in sorted(on_disk - set(indexed_files)):
         errors.append(f"{missing} exists but has no index row")
     for phantom in sorted(set(indexed_files) - on_disk):
