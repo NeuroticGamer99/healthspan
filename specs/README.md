@@ -72,4 +72,4 @@ The documentation structure is informed by [arc42](https://arc42.org/), a widely
 
 ## Personal data
 
-The [`personal/`](personal/) directory is gitignored and is the only location where personal health data or personally identifying information may be written. See the project [CLAUDE.md](../CLAUDE.md) for the full containment policy.
+Personal health data and personally identifying information live outside the repository ([ADR-0079](adr/0079-personal-data-outside-the-repository.md)). No path under `specs/` — or anywhere else in this repository — may hold them, and `specs/personal/` must never exist. See the project [CLAUDE.md](../CLAUDE.md) for the full containment policy.

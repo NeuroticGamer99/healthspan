@@ -59,7 +59,9 @@ against the code before it is acted on.
 Containment: the diff is pre-computed here with the same sensitive-path
 exclusions as .coderabbit.yaml's ``path_filters``, and a pre-tool hook refuses
 any agent tool call whose arguments name an excluded path. The excluded files
-are all gitignored, so they normally never reach the checkout — this is the
+are all gitignored, so they normally never reach the checkout — and
+``specs/personal/`` must never exist at all (ADR-0079: personal data lives
+outside the repository), so its exclusion guards a recreation. This is the
 same defense-in-depth stance as the CodeRabbit config, not the primary guard.
 """
 
@@ -105,10 +107,13 @@ a line that appears in the diff. view_file reads the repository's DEFAULT BRANCH
 (main), NOT this pull request: for any file the diff touches, disk holds the
 version BEFORE these changes, so use it as before-and-after context only, and
 never report a finding that depends on a changed file's on-disk content — the
-diff is the sole authority on what this pull request does. If you encounter
-personal health values or identifying information, report only the path and data
-category — never quote or echo the values themselves; your findings are posted
-publicly. Finish by returning the structured result.
+diff is the sole authority on what this pull request does. Personal health data
+lives outside this repository and no path in it may hold such data; if you
+encounter personal health values or identifying information anywhere in the
+input you receive, report only the path and data category — never quote or echo
+the values themselves; your findings are posted publicly. Files under
+specs/personal/ never reach you: the harness excludes them and CI rejects any
+commit that adds one. Finish by returning the structured result.
 """
 
 

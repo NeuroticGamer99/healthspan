@@ -114,10 +114,13 @@ PR thread, because the question will be asked again.
 - **`ignorePatterns`** mirrors `.coderabbit.yaml`'s `path_filters` — the
   gitignored data, database, log and recovery-kit artifacts, plus
   `specs/personal/`. Greptile clones the repository, so it sees tracked files
-  only and `specs/personal/` has no tracked files; the exclusion is defence in
-  depth against a force-added artifact reaching a public review comment, exactly
-  as it is for CodeRabbit. Written in `.gitignore` syntax as a single
-  newline-separated string, which is the schema Greptile defines for this key.
+  only, and `specs/personal/` must never exist (ADR-0079: personal data lives
+  outside the repository); the exclusion is defence in depth against a
+  force-added recreation reaching a public review comment, exactly as it is for
+  CodeRabbit — CI's containment gate is what fails such a commit, while an
+  ignored, untracked recreation never reaches either. Written in `.gitignore`
+  syntax as a single newline-separated string, which is the schema Greptile
+  defines for this key.
 
   This is the **third** copy of that containment list — the other two are
   `.coderabbit.yaml` and `scripts/gemini_review_logic.py`'s `EXCLUDED_GLOBS` —

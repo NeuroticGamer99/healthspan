@@ -111,4 +111,5 @@ This decision is landed in two steps to separate the low-risk configuration from
 - Extends: [ADR-0061](0061-markdown-link-check-gate.md) — the link-check gate on the same docs-consistency job; this adds the style facet. ADR-0061 gains an `Extended by: ADR-0062` navigation link (Proposed, edited without ceremony)
 - Builds on: [ADR-0045](0045-repository-workflow-and-ci-enforcement.md) §6 (the docs-consistency gate) and §4 (the `ci-ok` aggregate that absorbs new gates without branch-protection change)
 - Related: [testing-strategy.md](../testing-strategy.md) — CI Gates; the "mechanize review vigilance" mandate this gate satisfies, and "Workflow provenance" (tool-version pinning)
+- Related: [ADR-0079](0079-personal-data-outside-the-repository.md) — personal data moves outside the repository; the `:(exclude)specs/personal/**` pathspec is retained so a recreated file is never named in a lint log
 - Related: [CLAUDE.md](../../CLAUDE.md) — ADR governance (rule 5, on why enforcing MD022/MD032 across Accepted ADRs is a cost) and decision-capture routing (config knobs recorded in the owning ADR)

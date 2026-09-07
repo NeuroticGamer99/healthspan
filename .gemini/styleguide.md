@@ -12,14 +12,17 @@ distilled review lens, kept lean on purpose.
 
 - **Correctness and design** of the changed code, at the scale and threat model
   this system actually has (local-first, single owner, loopback service).
-- **Personal-data containment.** `specs/personal/` is the ONLY location for
-  personal health values, lab results, diagnoses, medications, clinical
-  history, or the provenance/sequence of the owner's actual records. Flag any
-  such content anywhere else — including in test fixtures, comments, and docs —
+- **Personal-data containment.** Personal health values, lab results,
+  diagnoses, medications, clinical history, and the provenance/sequence of the
+  owner's actual records live OUTSIDE this repository; no path in it may hold
+  them, and `specs/personal/` must never exist. Flag any such content anywhere
+  in the diff you receive — including in test fixtures, comments, and docs —
   but report only the path and the data category; **never quote, copy, or echo
   the actual values, provenance, or identifying details into a review
-  comment** (reviews are public). Never suggest writing personal health values
-  or identifying information to any path outside `specs/personal/`.
+  comment** (reviews are public). Files under `specs/personal/` never reach
+  you: the review harness excludes them, and CI's containment gate rejects any
+  commit that adds one. Never suggest writing personal health values or
+  identifying information to any path in this repository.
 - **ADR governance.** Accepted ADRs are immutable: the only in-place edits are
   a Status flip to `Superseded by ADR-XXXX`, a Links navigation entry, and
   typo/broken-link fixes. A decision change is a NEW superseding ADR; an

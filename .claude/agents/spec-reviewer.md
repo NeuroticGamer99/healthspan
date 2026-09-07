@@ -45,7 +45,7 @@ Otherwise determine the diff yourself:
 
 **4. Decision capture.** Look for design decisions the change embodies that the specs left open — new dependencies, new endpoints or request/response shapes, new columns/constraints/indexes, new config knobs or defaults, newly deferred questions. Each must be routed per CLAUDE.md rules 1–6 *in this same change*, and the commit/PR `Decisions:` section must link the records (or state "none" truthfully). A decision that exists only in code is a spec bug — report it with the routing rule it should follow.
 
-**5. Personal-data containment.** `specs/personal/` is gitignored and must never appear in a diff destined for the repository. Scan every added or modified file outside `specs/personal/` for personal health values, lab results, diagnoses, medications, or anything identifying the database owner. Test fixtures must be synthetic (see `specs/testing-strategy.md` § Synthetic Test Data). Any hit is a critical finding.
+**5. Personal-data containment.** Personal data lives outside the repository (ADR-0079); no path in the repository may hold it, and a tracked path under `specs/personal/` in the diff is a critical finding. (Whether that directory exists on disk is the containment gate's question, not yours — your worktree omits ignored content by construction.) Scan every added or modified file for personal health values, lab results, diagnoses, medications, or anything identifying the database owner. Test fixtures must be synthetic (see `specs/testing-strategy.md` § Synthetic Test Data). Any hit is a critical finding.
 
 ## Read-only means read-only
 

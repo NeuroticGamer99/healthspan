@@ -82,3 +82,4 @@ These are recorded so a future widening is a conscious extension, not a silent r
 - Related: [testing-strategy.md](../testing-strategy.md) — CI Gates; the "mechanize review vigilance" mandate this gate satisfies
 - Related: [CLAUDE.md](../../CLAUDE.md) — ADR governance; rule 5 permits link fixes on Accepted ADRs, which this gate makes rarely necessary by catching dead links before merge
 - Resolves: the "Markdown link checker in CI" entry in [open-questions.md](../open-questions.md)
+- Related: [ADR-0079](0079-personal-data-outside-the-repository.md) — personal data moves outside the repository; the `specs/personal/` target skip and source filter are retained as the guard against a recreated filename reaching the CI log

@@ -394,8 +394,9 @@ The verification record lives in ADR-0068 §4; the operational summary:
   (without `-a`) would publish index state the review never saw, so setup **aborts** when any
   path's staged content diverges from its worktree content, giving a **count** and the
   reconcile commands — not the paths. It named them until pass 9 measured why it must not:
-  `git rm --cached specs/personal/<file>` is the standard remedy for the state the tracked-
-  personal guard catches, and it moves the path out of `ls-files` and into exactly this
+  `git rm --cached <file>` is the standard remedy for the state the tracked-personal guard
+  catches (a force-added file under the forbidden `specs/personal/` path, which must never
+  exist per ADR-0079), and it moves the path out of `ls-files` and into exactly this
   abort, so the one guard that listed its findings was the one reachable with a
   provider-named file. `git status --short` lists them locally. Warnings are advisory
   everywhere in this procedure, and that gap is the one no disclosure can make safe. A **staged deletion of a file still on disk** counts as

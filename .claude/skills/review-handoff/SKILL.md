@@ -132,9 +132,11 @@ costs nothing.
 Zero findings still gets a report — the metadata plus "Reviewed clean" sections are exactly
 what the next agent needs in order to not redo the work.
 
-**Personal-data containment:** quote repository code only. If a finding involves anything under
-`specs/personal/`, reference the path and describe the issue without quoting values — this file
-is designed to travel between sessions.
+**Personal-data containment:** quote repository code only. If a finding is personal data found at
+a repository path, name that path and the data category and never the value — the receiving
+session has to locate it. A file in the personal directory outside the repository is never named:
+it is not repository code, and its name is provenance. This file travels between sessions but is
+never committed; the committed ledger fragment carries the stricter never-the-path rule.
 
 The timestamped scratchpad file is the single canonical report — do not copy it anywhere else. Its
 path is long (project slug + session GUID), and that is fine rather than a reason to abbreviate:

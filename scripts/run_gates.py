@@ -835,7 +835,7 @@ GATES: tuple[Gate, ...] = (
     Gate(
         name="containment",
         job="secrets",
-        summary="no personal-data path escapes specs/personal/ (branch scope)",
+        summary="no path under specs/personal/ is tracked, staged, or in history",
         ci_steps=("Scan full git history for personal-data paths",),
         build=_docs_gate("check_personal_containment.py", "--scope", "branch"),
     ),
