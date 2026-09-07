@@ -3213,7 +3213,16 @@ def test_the_personal_guards_catch_a_bare_file_at_the_directory_path(
     _git(repo, "add", "-f", "specs/personal")
     assert review_worktree.personal_tracked(repo) == ["specs/personal"]
     assert _setup(scratch) == 1
-    assert "tracked file(s)" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "tracked file(s)" in err
+    # The remedy the message hands the operator must be the pathspec the guard
+    # itself ran. It drifted once: the message kept the trailing-slash form
+    # (`":(icase)specs/personal/"`) after the guard dropped it — and that form
+    # lists nothing for exactly this file (measured), so following the remedy
+    # would have answered "no tracked personal files" while one existed.
+    assert '":(icase)specs/personal"' in err
+    assert '":(icase)specs/personal/"' not in err
+    assert "at or under specs/personal/" in err
 
 
 def test_the_personal_pathspec_does_not_over_match_a_sibling(repo: Path) -> None:
