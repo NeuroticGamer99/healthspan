@@ -192,6 +192,7 @@ def test_a_quotepath_header_is_recognized_not_misco_counted() -> None:
     "path",
     [
         "specs/personal/manual-entry-notes.md",
+        "specs/personal",  # a plain file at the bare path: ignored by no rule
         "health.db",
         "nested/deep/health.db",
         "backups/owner-recovery-kit.txt",

@@ -134,7 +134,9 @@ belong there and nowhere in the repository;
 - the entry flow makes you re-type or fight it (manual-entry efficiency);
 - readback disagrees with what you typed (value fidelity).
 
-What may be reported back without values or provenance — in conversation, or as the
-trigger note an open question asks for: how many results were entered, the flag
-distribution, and which (if any) triggers fired. Which panels, and in what order, is
-provenance and stays in the notes.
+What may be reported back in conversation without values or provenance: how many results
+were entered, the flag distribution, and which (if any) triggers fired. A trigger note
+written into the repository carries less — only that the trigger fired and what shape of
+input fired it — because a flag distribution is a result pattern, and result patterns never
+enter the repository ([development-plan.md](development-plan.md) § Containment). Which
+panels, and in what order, is provenance and stays in the notes.

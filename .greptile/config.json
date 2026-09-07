@@ -4,7 +4,7 @@
   "skipReview": "AUTOMATIC",
   "triggerOnUpdates": false,
   "statusCheck": false,
-  "ignorePatterns": "*.db\n*.db-shm\n*.db-wal\n*.db.lock\n*.sqlite*\n*recovery-kit*\nexports/\nexport/\ndata/\n__pycache__/\n.venv/\npytest-output.log\nparallel-output.log\ncanary-logs/\nspecs/personal/\n",
+  "ignorePatterns": "*.db\n*.db-shm\n*.db-wal\n*.db.lock\n*.sqlite*\n*recovery-kit*\nexports/\nexport/\ndata/\n__pycache__/\n.venv/\npytest-output.log\nparallel-output.log\ncanary-logs/\nspecs/personal/\nspecs/personal\n",
   "instructions": "This is a local-first, single-owner health-data platform: one loopback service, one owner, no multi-tenancy. Judge correctness, concurrency and performance findings at that scale and threat model, and say which you are applying rather than assuming a hostile multi-user deployment. The authoritative sources are CLAUDE.md and specs/; .greptile/rules.md is the distilled review lens and the scoped entries in rules[] are its mechanized half. Reviews on this repository are PUBLIC: when a rule asks you to flag personal health data, report only the path and the data category and never quote, copy, or echo the value, its provenance, or any identifying detail into a review comment.",
   "rules": [
     {

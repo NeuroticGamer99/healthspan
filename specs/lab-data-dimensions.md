@@ -9,7 +9,7 @@ A generic domain model of the shapes real laboratory and health data takes, surv
 **Status key** on each item:
 
 - **[validated]** — a real report exercised this shape; high confidence in the model.
-- **[known-needed]** — enumerated from domain knowledge, but the owner's single corpus *cannot* exercise it (female / pediatric / pregnancy ranges, SI-default units, specialty result types). Design the slot; the fill is a separate, unblocked question. This is how one person's corpus drives a model that generalizes.
+- **[known-needed]** — enumerated from domain knowledge; no single person's corpus can exercise every cohort cell, unit default, or specialty result type, and which ones this one leaves unexercised is not recorded here. Design the slot; the fill is a separate, unblocked question. This is how one person's corpus drives a model that generalizes.
 - **[open]** — cardinality or handling still being surveyed.
 
 **Survey progress.** One source family surveyed so far — the comprehensive US blood-chemistry report family, as a format class rather than as any individual's report. Unsurveyed: continuous glucose (Levels, Dexcom), body composition (InBody), and wearable exports (Apple / Fitbit / Samsung). This document fills in as those are surveyed; see the source inventory in the personal directory outside the repository for the raw list.
@@ -58,7 +58,7 @@ What a reference range depends on *besides* the biomarker. `framework_ranges` is
 
 | Dimension | Example | Status |
 |---|---|---|
-| Sex | HDL cutoff differs male vs female; hormone ranges strongly sex-specific | validated (male only) / known-needed (female) |
+| Sex | HDL cutoff differs male vs female; hormone ranges strongly sex-specific | validated (one cell) / known-needed (the other, from published data) |
 | Fasting state | ADA glucose thresholds are *fasting* plasma glucose | validated |
 | Method | LDL-C by Friedewald vs Martin-Hopkins gives different values | validated |
 | Age band | pediatric lipid targets differ from adult | known-needed |

@@ -46,6 +46,10 @@ EXCLUDED_GLOBS = [
     "parallel-output.log",
     "canary-logs/*",
     "specs/personal/*",
+    # The bare path too: .gitignore's `specs/personal/` (trailing slash) ignores
+    # directories only, so a plain file at exactly `specs/personal` is a
+    # recreation shape the descendant glob above does not match (ADR-0079 §3).
+    "specs/personal",
 ]
 
 

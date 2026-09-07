@@ -59,7 +59,7 @@ The rule change (this ADR, CLAUDE.md, the skills, the reviewer configurations, t
 ### Positive Consequences
 - The enumeration-leak class is closed by construction rather than by a growing list of detectors, and the data-loss footgun is gone.
 - The personal directory gains version history and an off-machine backup, which the in-tree placement structurally denied.
-- Every retained guard now has a named threat and a named surface; the guard stack stops growing because there is no longer live data for a new tool to need a carve-out for.
+- Every retained guard now has a named threat and a named surface. The guard stack no longer grows for the live-data case — there is no in-tree data for a new tool to need a carve-out for — but a new tool still gets §4's question asked of it, because a tool that would replicate, name, or read an ignored recreation is a surface for R1 whether or not the data is present today.
 
 ### Negative Consequences / Tradeoffs
 - **A junction, symlink or hard link from the repository to the new directory is R2-class, not R1.** On Windows git walks through a junction and reports its files as ordinary untracked paths under whatever name the junction has, which the `.gitignore` line does not cover; `_escapes` stops the snapshot tool for junctions and symlinks, and nothing stops a `git add -A`. A hard link resolves nowhere, so no path predicate sees it at all. This is the same exposure as writing personal data into any other directory, and ADR-0070 already declined to build for it.

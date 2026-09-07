@@ -1181,7 +1181,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Check that no path at or under specs/personal/ is tracked, "
-            "staged, present, or in history. "
+            "staged, reported by the working-tree porcelain, or in history "
+            "(an ignored, untracked recreation is invisible here by design). "
             "Enumeration only -- whether a file's contents are synthetic stays "
             "a judgement for /land and /savepoint."
         )

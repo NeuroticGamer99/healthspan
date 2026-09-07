@@ -43,7 +43,11 @@ reviews:
   # the repository). The filter stays so a force-added recreation is never
   # quoted into a public comment; CI's containment gate is what fails such a
   # commit (an ignored, untracked recreation is invisible to both — that is
-  # .gitignore's job). The filter does not weaken the path_instructions rule
+  # .gitignore's job). Two entries because the recreation has two shapes: the
+  # directory's descendants, and a plain file at exactly specs/personal, which
+  # .gitignore's trailing-slash rule ignores by nothing and the descendant glob
+  # does not match (ADR-0068's documented defeat; the containment gate matches
+  # both). The filter does not weaken the path_instructions rule
   # to FLAG personal data anywhere in the input the reviewer receives, which
   # is the case a reviewer can act on; the instructions say so themselves,
   # because this comment is stripped before CodeRabbit reads the file.
@@ -63,6 +67,7 @@ reviews:
     - "!parallel-output.log"
     - "!canary-logs/**"
     - "!specs/personal/**"
+    - "!specs/personal"
 
   path_instructions:
     - path: "**/*"
