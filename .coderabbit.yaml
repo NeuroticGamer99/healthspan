@@ -81,9 +81,9 @@ reviews:
         scripts, and docs — but report only the path and the data category;
         never quote, copy, or echo the actual values, provenance, or
         identifying details into a review comment (reviews are public).
-        Files under specs/personal/ never reach you: path_filters excludes
-        them, and CI's containment gate rejects any commit that adds one.
-        This is the repo-wide containment lens that mirrors
+        Files at or under specs/personal/ never reach you: path_filters
+        excludes them, and CI's containment gate rejects any commit that adds
+        one. This is the repo-wide containment lens that mirrors
         .gemini/styleguide.md; keep the two in sync. Hidden dot-paths are
         covered by the sibling entry below.
 
@@ -102,7 +102,7 @@ reviews:
         a real example value could land — but report only the path and the
         data category; never quote, copy, or echo the actual values,
         provenance, or identifying details into a review comment (reviews
-        are public). Files under specs/personal/ never reach you:
+        are public). Files at or under specs/personal/ never reach you:
         path_filters excludes them, and CI's containment gate rejects any
         commit that adds one.
 

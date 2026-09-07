@@ -134,9 +134,9 @@ what the next agent needs in order to not redo the work.
 
 **Personal-data containment:** quote repository code only. If a finding is personal data found at
 a repository path, name that path and the data category and never the value — the receiving
-session has to locate it. One exception: a path under `specs/personal/` is named as the directory
-only, because the filename there is itself provenance (ADR-0079 §2) and `git ls-files` locates it
-for the receiving session. A file in the personal directory outside the repository is never named:
+session has to locate it. One exception: a path at or under `specs/personal/` (a plain file at the bare path
+included) is named as the directory only, because the filename there is itself provenance
+(ADR-0079 §2) and `git ls-files` locates it for the receiving session. A file in the personal directory outside the repository is never named:
 it is not repository code, and its name is provenance. This file travels between sessions but is
 never committed; the committed ledger fragment carries the stricter never-the-path rule.
 

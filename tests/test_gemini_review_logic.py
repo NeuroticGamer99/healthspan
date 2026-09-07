@@ -293,6 +293,29 @@ def test_pathspecs_exclude_nested_sensitive_paths_in_a_real_repo(
     assert out.split() == ["src/keep_me.py"]
 
 
+def test_pathspecs_exclude_a_plain_file_at_the_bare_containment_path(
+    tmp_path: Path,
+) -> None:
+    # The second recreation shape (ADR-0079 §3): `.gitignore`'s trailing-slash
+    # rule ignores directories only, so a plain FILE at exactly `specs/personal`
+    # is ignored by nothing and the descendant glob `specs/personal/*` never
+    # matched it. Its own fixture repo, because a file and a directory cannot
+    # share that path. Covers the git-pathspec dialect, not just fnmatch — the
+    # two have already disagreed once in this file's history.
+    repo = _init_repo(tmp_path)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    (repo / "specs").mkdir()
+    (repo / "specs" / "personal").write_text("x\n", encoding="utf-8")
+    (repo / "specs" / "personalized.md").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A", "-f", ".")
+    out = _git(
+        repo, "diff", "--cached", "--name-only", "--", ".", *exclusion_pathspecs()
+    )
+    assert out.split() == ["specs/personalized.md"]
+
+
 # --------------------------------------------------------------------------
 # diff_argv: the reviewed range names the PR head explicitly. The workflow
 # keeps the worktree on `main` so only trusted code runs beside the API key and
