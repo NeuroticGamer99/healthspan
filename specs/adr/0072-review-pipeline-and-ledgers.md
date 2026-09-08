@@ -75,8 +75,9 @@ it answers the numbered uncertainties, reports coverage, and disputes the orches
 premises. Both reports go to a single `/review-handoff`, and `/apply-review` consumes the merged
 set. **Neither skill does that today, and the merge rule is not specified here** — both capture
 and consume a single `/code-review` report, so this sentence is the requirement they are
-rewritten against rather than a description of them, and it is owed with those rewrites (the work
-items named under Consequences below). What that rule must settle is the case the adjudication
+rewritten against rather than a description of them, and it is owed with those rewrites — **BRIEF-4b
+for the capture side and BRIEF-5a for the consumption side**, named here rather than delegated to
+the Consequences row below, which says "the following work items" and lists none. What that rule must settle is the case the adjudication
 lens exists to produce: a finding raised by one lens and **refuted** by the other, where taking
 the union silently reinstates what the second lens disproved. The GitHub bot lenses are unaffected: they take repository configuration, not a per-round
 brief.

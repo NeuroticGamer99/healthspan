@@ -481,14 +481,16 @@ Then state, in prose:
 
 4. That an external round runs **both** lenses (ADR-0072 §1) — `/code-review`, at `max` unless the
    operator named a level, and `/codex:adversarial-review` pointed at **this brief's absolute
-   path**. Both reports go to one `/review-handoff`, and `/apply-review` consumes the merged set.
+   path**. Both reports **are to go** to one `/review-handoff`, which `/apply-review` then consumes
+   as a merged set — neither skill does that today (ADR-0072 §1), so say that too rather than
+   describing it as current behaviour.
    Give the path in full: the second command's whole value is that the reviewer reads the brief
    rather than a rendering of it, and a path it cannot resolve silently reduces that round to an
    unbriefed one.
 
    **Say plainly that the path is handed to a lens after `/review-prep` has run.** ADR-0072 §2
    bounds reads of the brief at absorption, and prep does not absorb it today (§1) — so this is
-   the interim shape, and it changes when BRIEF-4 gives prep the merge §2 specifies: the second
+   the interim shape, and it changes when BRIEF-4a gives prep the merge §2 specifies: the second
    lens is then pointed at the carrier instead. Until then, the brief file is what both a reader
    and that lens have.
 
