@@ -321,13 +321,14 @@ The fragment this skill writes:
 
 - **Date:** <YYYY-MM-DD>
 - **Loop:** external
-- **Effort:** <the argument>
+- **Effort:** <the resolved level, which is `max` when the invocation was bare>
 - **Surface:** _not yet filled — /review-handoff_
 - **Base (resolved):** <sha>
 - **HEAD:** <sha>
 - **HEAD tree:** <tree hash>
 - **Diff size:** <n> lines (<m> excluding the ledger)
-- **Lenses dispatched, and whether each reported:** _not yet filled — /review-handoff_
+- **Lenses dispatched, and each one's status** (`not-run` / `ran-no-report` / `reported`)**:**
+  _not yet filled — /review-handoff_
 - **Brief revision stamp:** _not yet filled — step 6, once the brief has been named_
 - **Angles briefed:** <the roster, assembled per step 6's rules and known by now>
 - **Angles executed:** _not yet filled — /review-handoff_
