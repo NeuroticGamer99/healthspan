@@ -488,6 +488,17 @@ Then state, in prose:
    rather than a rendering of it, and a path it cannot resolve silently reduces that round to an
    unbriefed one.
 
+   **Emit `--base <the fragment's resolved base SHA>` on that command, and never rely on its
+   default scope.** `/codex:adversarial-review` resolves scope `auto` by asking whether the tree is
+   dirty, and its dirty test counts **untracked** files — so step 5's ledger fragment, which this
+   skill creates and deliberately leaves for the next `/savepoint`, is by itself enough to flip the
+   lens to a working-tree diff. It would then review the fragment this round just wrote instead of
+   the range, and nothing would say so: the plugin marks that resolution non-explicit. `--base`
+   is tested before the dirty check and pins the range outright. **`--scope branch` is not a
+   substitute** — with no `--base` it detects the repository's default branch, which is not this
+   round's pinned base whenever the branch is behind or the base is a merge-base SHA. Both lenses
+   must be given the same range or the round compares two different diffs.
+
    **Say plainly that the path is handed to a lens after `/review-prep` has run.** ADR-0072 §2
    bounds reads of the brief at absorption, and prep does not absorb it today (§1) — so this is
    the interim shape, and it changes when BRIEF-4a gives prep the merge §2 specifies: the second

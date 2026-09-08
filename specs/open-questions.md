@@ -573,6 +573,15 @@ Surfaced by a local smoke on the change that introduced the two-lens dispatch, a
 
 **Trigger: BRIEF-4a, the `/review-prep` rewrite that lands §2's absorption.** After it, either §2's bound supplies the missing rationale and item 4 cites it, or the ordering stands with nothing behind it and is deleted. Deciding earlier means reasoning about a mechanism that does not exist yet, which is how the ordering came to be unexplained in the first place.
 
+**How is an incomplete external round resumed?**
+[ADR-0072](adr/0072-review-pipeline-and-ledgers.md) §1 makes a round complete only when both lenses have **reported**, so `not-run` and `ran-no-report` both leave a round incomplete — and nothing says what happens next. `/review-brief` step 2 reads the ledger for angles and examined scope but not for lens status, and step 5 calls `ledger.py next-round` unconditionally, so the round after an incomplete one is allocated `N+1` exactly as if it had finished. The states the branch introduced are recorded and never read.
+
+Three things a resolution must settle, none of them decided here: whether the incomplete round is *reused* (its number retained, its brief regenerated or recovered, only the missing lens re-dispatched) or *superseded* by a fresh round that cites it; what happens to its fragment either way; and whether allocation refuses or merely warns.
+
+**Why no guard is added now, since that is the obvious control.** The status field has no producer — `/review-handoff` is obliged by §5 to state it and does not yet, which is the same gap that keeps the merge rule unspecified. A step-5 guard would read a field nothing writes, so it would pass unconditionally and read as enforcement. A control that cannot fire is worse than a recorded question, because the next reader stops looking.
+
+**Trigger: BRIEF-4b, the `/review-handoff` rewrite that first populates lens status.** Resumption becomes answerable exactly when something writes the value it turns on, and not before.
+
 ---
 
 ## Testing
