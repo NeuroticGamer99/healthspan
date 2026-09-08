@@ -48,13 +48,64 @@ Four skills in the table, **five that must change**. The **pipeline** is the fir
 
 `/review-brief` serves **both** loops. The external `/code-review` pass is primary, but the local `spec-reviewer`/`test-reviewer` smokes are where the measured savings landed (one briefed round went 172k → 85k tokens and produced the first clean report in 24 rounds), and a brief skill that serves only the external pass leaves the more frequent case improvised.
 
+**An external round fans out to TWO lenses, and the brief reaches the second one by path.**
+`/code-review` forks without conversation context and its native mode takes no instructions, so
+every external round this repository has run was **unbriefed** — the brief was composed, handed
+over, and read by nobody but the operator. Observed on the `personal-relocation` round (PR #104,
+2026-09-07), on **one branch and one artifact class**, across six external legs: the unbriefed
+runs answered **two** of the brief's six numbered uncertainties, both incidentally, while the one
+briefed run answered **all six by number** and refuted a premise the brief itself asserted; the
+same model on the same range returned zero findings unbriefed. **Unlike this ADR's other PR
+citations, that one does not carry its own evidence** — PR #38 (Considered Options) *is* the
+relocation it cites and PR #95 (§5) *is* the comment it cites, whereas #104 names the round while
+the per-leg
+record lives outside the repository. Read the figures as one round's observation rather than a
+reproducible measurement; the decision below rests on the mechanism, not on the count. The
+briefable channel is `/codex:adversarial-review`.
+
+**So an external round dispatches both, and the round is not complete until both have run.**
+**"Lens" is overloaded in this document; only one sense is what §1 dispatches** — the two
+*per-round external commands* below. Elsewhere it names the *GitHub bot lenses*, which are
+configured rather than dispatched per round; §7's *cross-lens delta*, which contrasts an external
+round with a local smoke; and a loose aggregate spanning all of them (§7's "six lenses", §9's
+"every lens"). Read it from its sentence rather than from a fixed roster.
+
+`/code-review` is the **discovery** lens; the briefed second lens is the **adjudication** lens —
+it answers the numbered uncertainties, reports coverage, and disputes the orchestrator's own
+premises. Both reports go to a single `/review-handoff`, and `/apply-review` consumes the merged
+set. The GitHub bot lenses are unaffected: they take repository configuration, not a per-round
+brief.
+
+**The brief reaches the second lens BY PATH — it is never re-rendered into the command line.** A
+condensation was specified first and is rejected: it drops the do-not-re-run and settled lists,
+which are what stop a reviewer relitigating, and the transport forbids double quotes, backticks,
+`$` and newlines, which ordinary uncertainties routinely contain — so any rendering must break
+either fidelity or the command line, and for a question *about* shell syntax the two are the same
+break. Measured 2026-09-08: handed only a path and told to treat that file as its brief, the lens
+read it, honoured the exclusions, and answered all six uncertainties by number. Passing the path
+also costs nothing against §2, which already places the brief in the orchestrator's scratchpad and
+hands it over by path — this is the same relay, to a second reader.
+
+**Interim, and stated so it is not mistaken for the end state:** §2 has `/review-prep` absorb the
+brief into the carrier, and prep does not do that yet — BRIEF-4 owns it. Until then the second
+lens is pointed at the brief file. **When prep absorbs it, the lens is pointed at the carrier
+instead**, and §2's "nothing may reference the brief after absorption" needs no exception.
+
+**`/code-review` runs at `max` unless the operator names a level** (superseding the required-
+argument rule below for exactly one value). That rule refused a default because a skill supplying
+its own level "hides the value most likely to be wrong, and the operator gets no signal that the
+round ran *shallower* than the last." The reasoning forbids every default except the ceiling —
+`max` cannot run shallower than intended — so it is the one value the argument's own logic
+permits. A cheaper round is still available by naming the level, and the level is still printed in
+full in the emitted command, which is what neutralises its stickiness.
+
 ### 2. One carrier per review
 `/review-prep` **reads the brief and merges it into the carrier**. From prep onward there is exactly one artifact per review. The brief lives in the **orchestrator session's scratchpad** and is handed over **by path**, by the human, the way every other cross-session value in this chain moves. That is settled here because it is the one artifact crossing a session boundary whose location §8 and §9 do not otherwise fix, and BRIEF-3 would have had to choose silently. The alternative — the brief as tracked markdown in the repository — is rejected on the same argument §8 spends a whole section making about fragments: it would pay every O(tracked-files) gate on every push, and it would put brief prose, which quotes findings and the orchestrator's own unchecked assumptions, permanently on `main`. The accepted cost is the one §9 already catalogues for the other carriers: a reviewer session cannot find a path under the orchestrator's scratchpad without being told it, so a human relays it. The two run in different sessions (§1), so there is no other carrier, which is exactly why the revision stamp in §4 is mandatory. What is prohibited is what happens *after* absorption: from prep onward nothing may reference the brief file, and no downstream step may read it. Referencing it past that point is what leaves a second artifact able to go stale alone, and re-reading it is what exposes the mutable-underneath-its-reader failure a second time.
 
 ### 3. The generate-vs-structure line
 Two claims are easy to merge by accident — *where* `/review-brief` runs and *how much of the brief it may generate*. The line:
 
-- **Encode** — the section structure (angles / already-verified / settled-with-reasons / reporting bar), the standing heuristics (brief each round at a different angle; the previous round's fixes are the next round's highest-yield surface; check the cheap things yourself first), and a different-angle-each-round nudge.
+- **Encode** — the section structure (angles / already-verified / settled-with-reasons / reporting bar / the commands), the standing heuristics (brief each round at a different angle; the previous round's fixes are the next round's highest-yield surface; check the cheap things yourself first), a different-angle-each-round nudge, and the two-lens dispatch of §1 — both commands in the brief's final section, the second carrying the brief's own path rather than a rendering of it. The section list here is illustrative of the *kinds* the skill encodes, not a closed enumeration of the brief's sections — the skill owns that order.
 - **Mechanically fill** — round number, gate results, what changed since the last pass, prior findings applied, diff size, the angle roster read from the ledger.
 - **Prompt for, and never substitute** — the priority angle and its rationale, what the orchestrator has already checked itself, and the settled list **with reasons**.
 
@@ -76,6 +127,7 @@ The discriminator: the *heuristic* is recordable and stable, so encode it; the *
 |---|---|
 | `Round: N` header field, and the resolved base SHA | Retires the file-counting heuristic, wrong in three measured ways; a ref-only base moves underneath the record |
 | Brief revision stamp echo | A brief edited under its reader |
+| **Which lenses ran**, named, and for each whether it reported | §1 makes an external round complete only when **both** lenses have run, and without this row a round that dispatched one is indistinguishable from one that dispatched both and got silence from the second — the same shape as the founding failure in Context, reintroduced by the two-lens dispatch. The uncertainty-mapping row below is not a substitute: an empty answers section reads identically whether the adjudication lens ran and found nothing or never ran |
 | **Executed-angle roster**, reconciled against the briefed roster | Four consecutive passes silently skipping one angle |
 | **"Not covered"** section, for scope | Three rounds of silence read as three rounds of coverage |
 | Uncertainty mapping — the brief's numbered uncertainties, answered | The highest-yield brief section, previously ad hoc |
@@ -125,7 +177,7 @@ Four consequences follow, each a case the earlier design got wrong:
 
 The last row is a **cross-check rather than a carrier**, and it is worth saying why the distinction changed. Under the retired write-time grammar the path was genuinely uncomputable by the far side — the fragment's name came from the reviewer session's clock, so `/apply-review`, in the orchestrator session, would have had to glob a shard and guess. §8's identity-derived naming removes that: the path is a function of the branch and `Round: N`, both of which the report already carries. So the field stays, but as a redundancy — a recorded value that disagrees with the computed one is a signal that something upstream went wrong, which is worth more than the value itself.
 
-**The effort level is named by the operator at `/review-brief`, and for an external round the argument is required** — a bare invocation is refused rather than defaulted (settled 2026-08-17, with the skill). Defaulting is what the stickiness makes dangerous: a skill supplying its own level hides the value most likely to be wrong, and the operator gets no signal that the round ran shallower than the last. This is a deliberate divergence from `/review-prep`'s current `Default high`, which predates the brief and is reconciled when prep is rewritten; until then the two agree in practice, since the level the brief prints is the one typed into `/code-review`. A local round has no effort control to set, so the argument is **accepted and ignored** rather than refused — `/review-brief local high` is a harmless spelling of `/review-brief local`, not an error. Stated to the letter because the skill's own grammar says the same and the two are read against each other.
+**The effort level is chosen by the operator at `/review-brief`, and a bare external invocation takes `max`** (revised 2026-09-08; as first settled on 2026-08-17 the argument was *required* and a bare invocation refused, which §1 now supersedes for that one value). Defaulting is what the stickiness makes dangerous: a skill supplying its own level hides the value most likely to be wrong, and the operator gets no signal that the round ran shallower than the last. That reasoning is why the default is the **ceiling and nothing else** — `max` cannot run shallower than intended, so it is the one level the argument permits; naming a level is how a cheaper round is asked for. This is a deliberate divergence from `/review-prep`'s current `Default high`, which predates the brief and is reconciled when prep is rewritten; until then the two agree in practice, since the level the brief prints is the one typed into `/code-review`. A local round has no effort control to set, so the argument is **accepted and ignored** rather than refused — `/review-brief local high` is a harmless spelling of `/review-brief local`, not an error. Stated to the letter because the skill's own grammar says the same and the two are read against each other.
 
 `/review-prep` is to emit the command in full — `/code-review <effort> <base>...<head>` — with the effort level printed explicitly and the reason stated, because the level is sticky across sessions. Its "cannot be handed a range" paragraph is deleted in the same change, and the pin becomes enforced rather than recommended. Present tense throughout this ADR describes the **specified** design; that paragraph still stands in the skill today and is removed by BRIEF-4.
 
@@ -151,7 +203,7 @@ One **fragment per external round**, created by `/review-brief` at allocation, t
 
 Two sections, three blocks, and the list above names all three — including their headings and their order. It is authoritative: where it and the bold-lead paragraphs below disagree, the list wins. An earlier draft made the list authoritative while omitting the third block from it entirely, so a generator author following the stated priority found nothing specifying the analysis block at all — a tie-break rule that could not resolve the ambiguity it was written for.
 
-**Angle record** — the durable half, and the input to every future brief: round number and date, loop, surface, pinned scope (`<base>...<head>` with `<base>` **resolved to a SHA**, `HEAD`, `HEAD^{tree}` — the three anchors of §4), effort level, brief revision stamp, **angles briefed**, **angles executed**, **angles briefed but not executed**, **`Examined`** (the surface the round actually reached — see the coverage paragraph below, which is where the field and its reasoning are stated), the do-not-re-run list carried with its evidence and with the paths and commit each entry is scoped to, and the diff size stated against the ~1,000-line detection cliff with the split recommendation if it exceeds it.
+**Angle record** — the durable half, and the input to every future brief: round number and date, loop, surface, pinned scope (`<base>...<head>` with `<base>` **resolved to a SHA**, `HEAD`, `HEAD^{tree}` — the three anchors of §4), effort level, **lenses dispatched and, for each, whether it reported** (§5 obliges the *report* to state this, but the report has no committed home and §1 makes "both lenses ran" a completion criterion — so unless the fragment carries it, a future round briefing from the ledger cannot tell a round that dispatched one lens from a round whose second lens went silent, which is this ADR's founding failure one layer down; unlike `Fragment path` it is derivable from nothing, so it is knowable only if recorded), brief revision stamp, **angles briefed**, **angles executed**, **angles briefed but not executed**, **`Examined`** (the surface the round actually reached — see the coverage paragraph below, which is where the field and its reasoning are stated), the do-not-re-run list carried with its evidence and with the paths and commit each entry is scoped to, and the diff size stated against the ~1,000-line detection cliff with the split recommendation if it exceeds it.
 
 **Coverage is a second axis, and it is the one that failed.** Added 2026-08-17, from a measurement taken after this ADR was first written and folded in here rather than left in the skill, because it changes what the fragment must hold. On RUNG-3, five local rounds over one four-clause paragraph: rounds 2 and 3 were briefed on the remedy with a do-not-re-run list, and round 4 — told to assume nothing was settled — found **two clauses that had been false since the first version and had survived three rewrites**. The mechanism, stated exactly: *the union of "what this round's angle covers" and "what the do-not-re-run list excludes" was smaller than the artifact, and nothing tracked the remainder.* An angle-only ledger would have recorded rounds 2 and 3 as two distinct angles and **looked healthy while the blind spot grew** — which is why angle and scope are recorded separately rather than one standing in for the other. Three consequences, all of them schema:
 

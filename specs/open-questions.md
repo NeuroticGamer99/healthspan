@@ -566,6 +566,13 @@ The `spec-reviewer`/`test-reviewer` loop inside `/apply-review` step 5 is govern
 
 **Trigger: the BRIEF-series work item that rewrites `/apply-review`.** That rewrite restates this boundary whether or not anyone decides to, and a conduct rule living only in the file being rewritten is the one most at risk of being lost in it. The series' current slicing is held outside this repository, so treat that as a pointer to ask about rather than a reference to check against the tree.
 
+**Why must the brief's path reach the adjudication lens only after `/review-prep` has run?**
+`/review-brief` step 7 item 4 sequences the handover that way, and in the interim state the same step documents — where `/review-prep` does not absorb the brief at all — nothing says why the order matters. [ADR-0072](adr/0072-review-pipeline-and-ledgers.md) §2's bound governs references to a brief *after* prep absorbs it, so it cannot be what the ordering rests on today. Two readings, and nothing in the tree separates them: either the order is load-bearing for a reason nobody wrote down, or it is a habit carried over from the one-lens round, in which case the path can be handed over any time after the brief is composed and item 4 should say so.
+
+Surfaced by a local smoke on the change that introduced the two-lens dispatch, and deliberately not settled there. The reviewer could not establish it from the snapshot either way, and supplying a rationale on the strength of the ordering's existence would be the same "prose claiming more than the mechanism delivers" defect that round was convened to find — the branch had already produced two blocking findings of exactly that class.
+
+**Trigger: BRIEF-4a, the `/review-prep` rewrite that lands §2's absorption.** After it, either §2's bound supplies the missing rationale and item 4 cites it, or the ordering stands with nothing behind it and is deleted. Deciding earlier means reasoning about a mechanism that does not exist yet, which is how the ordering came to be unexplained in the first place.
+
 ---
 
 ## Testing
