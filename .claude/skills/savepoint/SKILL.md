@@ -70,7 +70,7 @@ scope is this chunk: a savepoint that paid for a full history walk on every chec
 operator stops running. The two scopes are one implementation with one test suite, so the split is
 now a flag rather than two prose copies that can drift apart.
 
-Then the half no gate decides: for every added or modified file outside `specs/personal/`, confirm
+Then the half no gate decides: for every added or modified file anywhere in the repository, confirm
 it contains no personal health values, lab results, diagnoses, medications, or owner-identifying
 information. Test fixtures must be synthetic.
 

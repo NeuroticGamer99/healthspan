@@ -136,7 +136,7 @@ For each finding, in order:
 
 **Honor the repo's rules while editing.** The project `CLAUDE.md` governs: never edit an Accepted
 ADR's decision content (link/typo fixes only); keep `specs/adr/README.md`'s index current after
-any ADR change; write files as UTF-8; and never move anything out of `specs/personal/`. If a
+any ADR change; write files as UTF-8; and never write personal data anywhere in the repository. If a
 finding's fix would cross one of these lines, treat it as a scope decision and surface it.
 
 ## 4. Verify what you changed

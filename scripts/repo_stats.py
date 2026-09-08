@@ -35,10 +35,10 @@ Category membership:
   - ADRs: ``specs/adr/*.md`` (every file, incl. the README index and template)
   ``__pycache__`` is excluded everywhere.
 
-  ``specs/personal/`` is deliberately EXCLUDED and never counted: it is
-  gitignored personal-data-only (CLAUDE.md) and absent in CI, so it is not part
-  of the shippable surface. A footnote records the exclusion; no counts, no
-  content.
+  ``specs/personal/`` is deliberately EXCLUDED and never counted: it must never
+  exist (ADR-0079 — personal data lives outside the repository), so a
+  recreation there is neither counted nor read. A footnote records the
+  exclusion; no counts, no content.
 
 The ADR-status breakdown reads each numbered ``NNNN-*.md`` (excluding the
 ``0000-template.md``) ``## Status`` field, matching the convention that
@@ -403,8 +403,8 @@ def render_markdown(report: Report) -> str:
 
     lines_out.append("")
     lines_out.append(
-        "_`specs/personal/` is excluded (gitignored personal data, absent in CI) — "
-        "not part of the shippable surface and not counted here._"
+        "_`specs/personal/` is excluded (it must never exist — ADR-0079) — "
+        "a recreation there is neither counted nor read here._"
     )
 
     if report.warnings:

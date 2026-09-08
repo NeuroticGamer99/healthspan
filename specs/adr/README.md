@@ -131,3 +131,4 @@ File naming convention: `NNNN-short-hyphenated-title.md` where `NNNN` is the nex
 | [ADR-0076](0076-mutation-acceptance-criterion.md) | Each test-reviewer Finding States the Mutation Its Remedy Must Survive (extends ADR-0068) | Proposed |
 | [ADR-0077](0077-local-invocation-hooks.md) | A PreToolUse Hook May Refuse a Local Invocation That Cannot Work (extends ADR-0045) | Proposed |
 | [ADR-0078](0078-gate-growth-beyond-an-enumerated-contract.md) | When a Gate Grows a Check Its Owning ADR Did Not Enumerate (extends ADR-0045) | Proposed |
+| [ADR-0079](0079-personal-data-outside-the-repository.md) | Personal Data Lives Outside the Repository Tree (extends ADR-0070 and ADR-0068) | Proposed |

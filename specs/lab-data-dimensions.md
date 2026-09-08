@@ -4,15 +4,15 @@ A generic domain model of the shapes real laboratory and health data takes, surv
 
 **This is a design input, not a spec of record.** It enumerates *what real data looks like*; the *decisions* about how the platform handles each dimension live in their owning ADR, [data-model.md](data-model.md), or [open-questions.md](open-questions.md) per the [CLAUDE.md](../CLAUDE.md) decision-capture rules. Where an item here drives a decision, that decision is recorded there and the entry links to it. This document never becomes a second home for a decision.
 
-**Containment.** Everything here is generic and publishable — value shapes, dimensions, biomarker names and units, source-format quirks. No personal values, result patterns, or identifiers appear: those stay in `specs/personal/` (raw corpus under `specs/personal/ingestion/`, working inventory in `specs/personal/`). The survey is a domain model — "what lab data in general looks like" — never "what any individual's reports contain."
+**Containment.** Everything here is generic and publishable — value shapes, dimensions, biomarker names and units, source-format quirks. No personal values, result patterns, or identifiers appear: those stay in the personal directory outside the repository (raw corpus under its `ingestion/`, working inventory beside it; [ADR-0079](adr/0079-personal-data-outside-the-repository.md)). The survey is a domain model — "what lab data in general looks like" — never "what any individual's reports contain."
 
 **Status key** on each item:
 
 - **[validated]** — a real report exercised this shape; high confidence in the model.
-- **[known-needed]** — enumerated from domain knowledge, but the owner's single corpus *cannot* exercise it (female / pediatric / pregnancy ranges, SI-default units, specialty result types). Design the slot; the fill is a separate, unblocked question. This is how one person's corpus drives a model that generalizes.
+- **[known-needed]** — enumerated from domain knowledge; no single person's corpus can exercise every cohort cell, unit default, or specialty result type, and which ones this one leaves unexercised is not recorded here. Design the slot; the fill is a separate, unblocked question. This is how one person's corpus drives a model that generalizes.
 - **[open]** — cardinality or handling still being surveyed.
 
-**Survey progress.** One source family reviewed so far — a comprehensive US blood-chemistry + urinalysis + CBC panel (metabolic, lipid, CBC-with-differential, urinalysis, A1c, plus preliminary fatty-acid/inflammation/insulin panels). Unsurveyed: continuous glucose (Levels, Dexcom), body composition (InBody), and wearable exports (Apple / Fitbit / Samsung). This document fills in as those are surveyed; see the gitignored `specs/personal/` source inventory for the raw list.
+**Survey progress.** One source family surveyed so far — the comprehensive US blood-chemistry report family, as a format class rather than as any individual's report. Unsurveyed: continuous glucose (Levels, Dexcom), body composition (InBody), and wearable exports (Apple / Fitbit / Samsung). This document fills in as those are surveyed; see the source inventory in the personal directory outside the repository for the raw list.
 
 ---
 
@@ -58,7 +58,7 @@ What a reference range depends on *besides* the biomarker. `framework_ranges` is
 
 | Dimension | Example | Status |
 |---|---|---|
-| Sex | HDL cutoff differs male vs female; hormone ranges strongly sex-specific | validated (male only) / known-needed (female) |
+| Sex | HDL cutoff differs male vs female; hormone ranges strongly sex-specific | validated (one cell) / known-needed (the other, from published data) |
 | Fasting state | ADA glucose thresholds are *fasting* plasma glucose | validated |
 | Method | LDL-C by Friedewald vs Martin-Hopkins gives different values | validated |
 | Age band | pediatric lipid targets differ from adult | known-needed |
@@ -66,7 +66,7 @@ What a reference range depends on *besides* the biomarker. `framework_ranges` is
 | Specimen type | a urine analyte is not its serum namesake | validated |
 | Bound closure | "< 200" (exclusive) vs `[L, H]` (inclusive) | validated — see exclusive-bounds entry |
 
-The owner's corpus validates the **male / adult / fasting** cells with real data and confirms the *method* and *bound-closure* axes; **female / pediatric / pregnancy** are known-needed — enumerable from domain knowledge, filled from published reference data, never from this corpus. The schema should admit the full cohort key even though only some cells are seeded. All of this is the same **range-model-expressiveness** theme as the cohort-dimension, exclusive-bounds, and `physical_min` entries in [open-questions.md](open-questions.md), and should land in one range-model PR.
+Real data validates only a subset of the cohort cells and confirms the *method* and *bound-closure* axes; the remaining cells are known-needed — enumerable from domain knowledge (sex, age band, fasting state, pregnancy), filled from published reference data, never from any individual's corpus. The schema should admit the full cohort key even though only some cells are seeded. All of this is the same **range-model-expressiveness** theme as the cohort-dimension, exclusive-bounds, and `physical_min` entries in [open-questions.md](open-questions.md), and should land in one range-model PR.
 
 ---
 

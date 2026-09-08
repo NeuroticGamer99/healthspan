@@ -121,8 +121,9 @@ do development testing through the suite, never through ad-hoc `init`/`service s
 
 Real entry sessions are the design input several deliberately deferred decisions are
 waiting on ([open-questions.md](open-questions.md)). Keep session notes in
-`specs/personal/manual-entry-notes.md` (gitignored — personal values belong there and
-nowhere else in the repository). Worth a line whenever:
+`manual-entry-notes.md` in the personal directory outside the repository (personal values
+belong there and nowhere in the repository;
+[ADR-0079](adr/0079-personal-data-outside-the-repository.md)). Worth a line whenever:
 
 - a command errors (exact command + full output);
 - a range flag surprises you — especially: a below-detection `<x` flagged `indeterminate`,
@@ -133,5 +134,9 @@ nowhere else in the repository). Worth a line whenever:
 - the entry flow makes you re-type or fight it (manual-entry efficiency);
 - readback disagrees with what you typed (value fidelity).
 
-A session summary safe to share outside `specs/personal/`: number of draws and results,
-flag distribution, categories touched, and which (if any) triggers fired — no values.
+What may be reported back in conversation without values or provenance: how many results
+were entered, the flag distribution, and which (if any) triggers fired. A trigger note
+written into the repository carries less — only that the trigger fired and what shape of
+input fired it — because a flag distribution is a result pattern, and result patterns never
+enter the repository ([development-plan.md](development-plan.md) § Containment). Which
+panels, and in what order, is provenance and stays in the notes.

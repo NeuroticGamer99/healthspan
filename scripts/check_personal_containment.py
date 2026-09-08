@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Mechanize the enumeration half of CLAUDE.md's personal-data containment rule.
 
-The rule confines personal health data to ``specs/personal/``. It has two
-halves with opposite mechanizability:
+The rule forbids personal health data at any path in the repository;
+``specs/personal/``, its former location, must never exist (ADR-0079), and
+this gate is the backstop against that path being force-added, tracked, staged
+or committed. The rule has two halves with opposite mechanizability:
 
 * **enumeration** — which paths does this change touch;
 * **content** — does this file hold health values, provenance, or identifying
@@ -1178,7 +1180,9 @@ def check(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Check that no personal-data path escapes specs/personal/. "
+            "Check that no path at or under specs/personal/ is tracked, "
+            "staged, reported by the working-tree porcelain, or in history "
+            "(an ignored, untracked recreation is invisible here by design). "
             "Enumeration only -- whether a file's contents are synthetic stays "
             "a judgement for /land and /savepoint."
         )

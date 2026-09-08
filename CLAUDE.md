@@ -2,23 +2,23 @@
 
 ## Personal data containment
 
-`specs/personal/` is the only location where personal health data or personally identifying information may be written. This folder is gitignored and must never be committed.
+Personal health data and personally identifying information live **outside the repository**, in a sibling directory with its own private version control (ADR-0079). **No path in this repository may hold personal data, and `specs/personal/` must never exist** — its `.gitignore` line is a backstop against accidental recreation, not a permitted location. The directory's location is never written into the repository: it is in `.claude/settings.local.json` (an `additionalDirectories` grant) and in agent memory.
 
-**What belongs in `specs/personal/`:**
+**What is personal and belongs in that directory:**
 - Any document containing the database owner's actual health values, lab results, diagnoses, medications, or clinical history
 - The provenance or sequence of the owner's actual records — which lab, which panel, in what order — is personal even with no values attached
 - Session-orientation files (e.g. `project-context-personal.md`)
 - Any notes that would identify the database owner as an individual
 
-**What belongs outside `specs/personal/` (e.g. directly in `specs/`):**
+**What belongs in the repository (e.g. directly in `specs/`):**
 - Architectural decisions and design rationale
 - Schema documentation
 - Generic how-to and onboarding guides
 - Anything safe to publish in a public repository
 
-When creating or editing any file, verify it contains no personal health data before placing it outside `specs/personal/`.
+When creating or editing any file in the repository, verify it contains no personal health data.
 
-**Working with real data:** analyze the owner's actual reports and exports in conversation or under `specs/personal/`; publish only the generic structure they reveal — value shapes, units, range dimensions, source-format quirks — never the values or their provenance (attributing a quirk or format to one of the owner's actual sources is provenance, even with no values attached).
+**Working with real data:** analyze the owner's actual reports and exports in conversation or in the personal directory; publish only the generic structure they reveal — value shapes, units, range dimensions, source-format quirks — never the values or their provenance (attributing a quirk or format to one of the owner's actual sources is provenance, even with no values attached).
 
 ## PowerShell file encoding
 

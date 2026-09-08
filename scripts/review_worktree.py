@@ -2018,9 +2018,9 @@ def setup(scratch: Path, agents: list[str], base: str) -> int:
         # locally; the command is in the remedy.
         raise AbortError(
             f"refusing to snapshot: {len(tracked_personal)} tracked file(s) "
-            "exist under specs/personal/ — containment-by-construction holds "
-            "only while nothing there is tracked; run `git ls-files -- "
-            '":(icase)specs/personal/"` to see which, then fix that first'
+            "exist at or under specs/personal/ — containment-by-construction "
+            "holds only while nothing there is tracked; run `git ls-files -- "
+            '":(icase)specs/personal"` to see which, then fix that first'
         )
 
     has_diff = branch_has_diff(root, base)

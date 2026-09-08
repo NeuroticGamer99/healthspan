@@ -39,9 +39,24 @@ reviews:
   # gates are the primary leak guard; this is defense in depth). Globs are
   # any-depth to match how .gitignore ignores these names.
   #
-  # specs/personal/ excludes the personal dir *itself*; it does not weaken the
-  # path_instructions rule to FLAG personal data that appears ANYWHERE ELSE
-  # (outside specs/personal/), which is the case a reviewer can act on.
+  # specs/personal/ must never exist (ADR-0079: personal data lives outside
+  # the repository). The filter stays so a force-added recreation is never
+  # quoted into a public comment; CI's containment gate is what fails such a
+  # commit (an ignored, untracked recreation is invisible to both — that is
+  # .gitignore's job). Two entries because the recreation has two shapes: the
+  # directory's descendants, and a plain file at exactly specs/personal, which
+  # .gitignore's trailing-slash rule ignores by nothing and the descendant glob
+  # does not match (ADR-0068's documented defeat; the containment gate matches
+  # both). The character classes spell "specs/personal" case-insensitively:
+  # neither this glob dialect, Greptile's gitignore syntax, nor Python's
+  # fnmatch on POSIX has a case-insensitive switch, while the containment
+  # gate and the snapshot tool already match with :(icase) / casefold — a
+  # force-added Specs/Personal/x.md must not reach a bot the gate rejects.
+  # The three copies carry the identical spelling so the parity tests in
+  # tests/test_gemini_review_logic.py hold them in step unchanged. The filter does not weaken the path_instructions rule
+  # to FLAG personal data anywhere in the input the reviewer receives, which
+  # is the case a reviewer can act on; the instructions say so themselves,
+  # because this comment is stripped before CodeRabbit reads the file.
   path_filters:
     - "!**/*.db"
     - "!**/*.db-shm"
@@ -57,21 +72,26 @@ reviews:
     - "!pytest-output.log"
     - "!parallel-output.log"
     - "!canary-logs/**"
-    - "!specs/personal/**"
+    - "![Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]/**"
+    - "![Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]"
 
   path_instructions:
     - path: "**/*"
       instructions: >-
-        Personal-data containment (CLAUDE.md), repo-wide: specs/personal/ is
-        the ONLY location for personal health values, lab results, diagnoses,
-        medications, clinical history, or the provenance/sequence of the
-        owner's actual records. Flag any such content appearing ANYWHERE else
-        — not just under specs/, but in test fixtures, code comments, scripts,
-        and docs — but report only the path and the data category; never quote,
-        copy, or echo the actual values, provenance, or identifying details
-        into a review comment (reviews are public). This is the repo-wide
-        containment lens that mirrors .gemini/styleguide.md; keep the two in
-        sync. Hidden dot-paths are covered by the sibling entry below.
+        Personal-data containment (CLAUDE.md), repo-wide: personal health
+        values, lab results, diagnoses, medications, clinical history, and
+        the provenance/sequence of the owner's actual records live OUTSIDE
+        this repository; NO path in it may hold them, and specs/personal/
+        must never exist. Flag any such content appearing ANYWHERE in the
+        input you receive — under specs/, in test fixtures, code comments,
+        scripts, and docs — but report only the path and the data category;
+        never quote, copy, or echo the actual values, provenance, or
+        identifying details into a review comment (reviews are public).
+        Files at or under specs/personal/ never reach you: path_filters
+        excludes them, and CI's containment gate rejects any commit that adds
+        one. This is the repo-wide containment lens that mirrors
+        .gemini/styleguide.md; keep the two in sync. Hidden dot-paths are
+        covered by the sibling entry below.
 
     - path: "{.github/**,.gemini/**,.greptile/**,.claude/**,.coderabbit.yaml,.markdownlint.yaml}"
       instructions: >-
@@ -79,14 +99,18 @@ reviews:
         above cannot reach these — CodeRabbit globs use dot:false semantics, so
         `**` does not descend into dot-directories. This is a separate entry
         for exactly that reason; do not "simplify" the pair back into one glob,
-        which silently reopens the gap. Same rule: specs/personal/ is the ONLY
-        location for personal health values, lab results, diagnoses,
-        medications, clinical history, or the provenance/sequence of the
-        owner's actual records. Flag any such content appearing here —
-        .claude/ skill and triage prose especially, where a real example value
-        could land — but report only the path and the data category; never
-        quote, copy, or echo the actual values, provenance, or identifying
-        details into a review comment (reviews are public).
+        which silently reopens the gap. Same rule as the entry above: personal
+        health values, lab results, diagnoses, medications, clinical history,
+        and the provenance/sequence of the owner's actual records live OUTSIDE
+        this repository; NO path in it may hold them, and specs/personal/
+        must never exist. Flag any such content appearing ANYWHERE in the
+        input you receive — .claude/ skill and triage prose especially, where
+        a real example value could land — but report only the path and the
+        data category; never quote, copy, or echo the actual values,
+        provenance, or identifying details into a review comment (reviews
+        are public). Files at or under specs/personal/ never reach you:
+        path_filters excludes them, and CI's containment gate rejects any
+        commit that adds one.
 
     - path: "specs/adr/**"
       instructions: >-
@@ -149,7 +173,7 @@ reviews:
         INV-6 source-data purity, INV-7 append-only audit surfaces, INV-8
         hash-only credential storage — without a
         corresponding ADR or spec note. Never suggest writing personal health
-        values to any path outside specs/personal/. Do NOT write PEP 758
+        values to any path in this repository. Do NOT write PEP 758
         bare-comma "except A, B:" — always parenthesize exception tuples. A
         one-line catch-only clause additionally needs "# fmt: skip" or ruff
         format strips the parens back out; a clause binding "as exc", and one

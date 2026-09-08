@@ -13,6 +13,7 @@ directory to be the repository (pytest's rootdir here).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -20,6 +21,34 @@ import diff_check_spec_links as harness
 import diff_harness
 import pytest
 from diff_harness import HarnessError, Side, load_side
+
+_SUMMARY_RE = re.compile(
+    r"^(?P<inputs>\d+) inputs, (?P<identical>\d+) identical, "
+    r"(?P<diverged>-?\d+) diverged \([^)]*\)(?:; (?P<unreadable>\d+) unreadable)?$",
+    re.MULTILINE,
+)
+
+
+def _summary_counts(printed: str) -> dict[str, int]:
+    """Parse the harness's one summary line into its counts.
+
+    Anchored to the whole line, so a per-file note that happens to end in
+    `<n> diverged`, or an `<n> unreadable` echoed from an OSError, can never
+    be the match; and the sign is captured, so an inverted subtraction
+    printing `-151 diverged` fails instead of passing as 151. The substring
+    checks this replaces rotted on the corpus size: `"0 diverged" not in
+    printed` fails on any count ending in 0 (measured 150, 151 and 152 inputs
+    on full runs at three consecutive commits, one fewer inside the test that
+    skips a file — which is where it first rotted), and `"1 unreadable" in
+    printed` is satisfied by 11. `unreadable` is 0 when the line carries no such clause.
+    """
+    matches = list(_SUMMARY_RE.finditer(printed))
+    assert len(matches) == 1, printed
+    groups = matches[0].groupdict()
+    return {
+        key: int(value) if value is not None else 0 for key, value in groups.items()
+    }
+
 
 # `clean_import_state` lives in tests/conftest.py, shared with
 # tests/test_diff_harness.py. This module had no copy of it, and its own loads
@@ -408,8 +437,9 @@ def test_fixtures_only_mode_skips_the_corpus(
     out = capsys.readouterr().out
 
     assert exit_code in (0, 1), exit_code  # 2 would mean the harness could not run
-    assert f"{len(harness.FIXTURES)} inputs" in out
-    assert "identical" in out
+    counts = _summary_counts(out)
+    assert counts["inputs"] == len(harness.FIXTURES), out
+    assert counts["identical"] + counts["diverged"] == counts["inputs"], out
 
 
 # --- external review round 4 ----------------------------------------------
@@ -571,11 +601,13 @@ def test_a_skipped_input_alongside_a_real_divergence_exits_1(
     # makes exit 1 honest here rather than a fact being dropped.
     assert "skipped (unreadable):" in printed, printed
     assert skipped_one[0] in printed, printed
-    assert "1 unreadable" in printed, printed
+    counts = _summary_counts(printed)
+    assert counts["unreadable"] == len(skipped_one) == 1, printed
     # Stated as "not zero" rather than as a number: the corpus size is not this
     # test's subject and a literal count here would rot on the next new file.
-    assert " diverged" in printed, printed
-    assert "0 diverged" not in printed, printed
+    # Parsed from the anchored summary line, not substring-matched — see
+    # `_summary_counts` for the two ways the substring form rotted.
+    assert counts["diverged"] > 0, printed
 
 
 def test_a_skipped_input_with_nothing_diverging_still_refuses(

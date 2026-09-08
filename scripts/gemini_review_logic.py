@@ -45,7 +45,18 @@ EXCLUDED_GLOBS = [
     "pytest-output.log",
     "parallel-output.log",
     "canary-logs/*",
-    "specs/personal/*",
+    # Both recreation shapes of the forbidden path, spelled case-insensitively.
+    # Two entries: .gitignore's `specs/personal/` (trailing slash) ignores
+    # directories only, so a plain file at exactly `specs/personal` is a shape
+    # the descendant glob does not match (ADR-0079 §3). Character classes:
+    # `fnmatch.fnmatch` folds case only where `os.path.normcase` does — on the
+    # POSIX CI runner it is case-sensitive, so a lowercase glob misses
+    # `Specs/Personal/x.md` there while the containment gate rejects it with
+    # `:(icase)`. Neither CodeRabbit's nor Greptile's dialect has a
+    # case-insensitive switch either, and the three copies must stay
+    # textually identical for the parity tests, so the spelling is shared.
+    "[Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]/*",
+    "[Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]",
 ]
 
 

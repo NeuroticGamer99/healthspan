@@ -36,7 +36,7 @@ Do not editorialize a metric that did not move.
 
 ## 3. Scope reminders (only if asked)
 
-- `specs/personal/` is **excluded** by design — gitignored personal data, absent in CI, not part of the shippable surface. The script prints this as a footnote; it counts no files and reads no content there.
+- `specs/personal/` is **excluded** by design — it must never exist (ADR-0079: personal data lives outside the repository), and a recreation must be neither counted nor read. The script prints this as a footnote; it counts no files and reads no content there.
 - The code/comment/blank split treats a Python **docstring** as comment (found via the AST, so an assigned multi-line string stays code) and a trailing comment on a code line as code. Markdown has no comment column — every non-blank line is content.
 - Category membership and every accepted limitation are documented in the `scripts/repo_stats.py` module docstring; point there rather than re-explaining.
 
