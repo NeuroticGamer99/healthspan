@@ -53,23 +53,27 @@ The grammar, stated in full because a partial one leaves `/review-brief local hi
 ```text
 /review-brief <effort>            an external round at that effort
 /review-brief local [<effort>]    a local smoke; any effort given is accepted and ignored
-/review-brief                     ambiguous — resolve it at step 1 before refusing anything
+/review-brief                     an external round at max — the default
 ```
+
+**A bare invocation defaults to `max`, and only `max`** (ADR-0072 §1). The settled rule was that a
+bare call is refused rather than defaulted, because a skill supplying its own level "hides the
+value most likely to be wrong, and the operator gets no signal that the round ran **shallower**
+than the last." That reasoning forbids every default except the ceiling: `max` cannot run
+shallower than intended, so it is the one value the argument's own logic permits. Name a level
+explicitly to run a **cheaper** round; the level is still printed in full in the emitted command,
+which is what neutralises its stickiness across sessions.
 
 The level is embedded in the exact command the brief emits
 (`/code-review <effort> <base>...<head>`).
 
-**Determine the loop before applying any refusal.** A bare invocation is *ambiguous*, not invalid:
-it is exactly what an operator types for a local smoke, which needs no effort at all. So ask step
-1's question first, and only then apply the rule — **for an external round the effort argument is
-required, and a bare invocation is refused**: say the level is missing, name the usual values, and
-stop. Refusing before the loop is known turns the most ordinary local invocation into an error;
-deciding the loop first and then refusing costs one question.
+**The grammar settles the loop, so there is nothing to ask.** `local` marks a local smoke and its
+absence marks an external round, so all three forms above resolve on their own. The effort then
+follows from the loop: a local round ignores any level given, and an external round takes the
+level named or, bare, `max`.
 
-That refusal is not a defaulting decision left undecided. `/code-review`'s effort is **sticky
-across sessions**, so a skill that quietly supplies its own default hides the one value most likely
-to be wrong, and the operator would have no signal that the round ran shallower than the last.
-Naming it per round is the whole point of the argument.
+Until 2026-09-08 this skill refused a bare external invocation outright; ADR-0072 §1 supersedes
+that for `max` alone, on the reasoning already given above.
 
 Note the deliberate divergence: `/review-prep` today documents `Default high`. That default
 predates this skill and is reconciled when `/review-prep` is rewritten; until then, a brief that
@@ -83,10 +87,11 @@ so an effort given after `local` is accepted and ignored rather than silently ap
 
 | Loop | Reviewers | Round number | Ledger fragment | Brief form |
 |---|---|---|---|---|
-| **External** | `/code-review`, run by the operator in a second session | allocated here | created here | a file, handed over by path |
+| **External** | **both** (ADR-0072 §1): `/code-review` at `max` unless the operator named a level, and `/codex:adversarial-review` pointed at the brief's path — the round is not complete until both have **reported**, and a lens that ran but left no retrievable artifact does not satisfy that | allocated here | created here | a file, handed over by path |
 | **Local** | `spec-reviewer` / `test-reviewer`, launched in this session | none consumed | none | emitted inline in this session |
 
-Ask which loop this round is, or take it from the invocation if the operator said. The rest of
+Read the loop from the invocation: `local` marks a local smoke, its absence an external round.
+The grammar above resolves every form, so there is nothing to ask. The rest of
 this skill is written for the external loop; the local variant's differences are collected in one
 section at the end rather than qualified inline at every step.
 
@@ -316,12 +321,14 @@ The fragment this skill writes:
 
 - **Date:** <YYYY-MM-DD>
 - **Loop:** external
-- **Effort:** <the argument>
+- **Effort:** <the resolved level, which is `max` when the invocation was bare>
 - **Surface:** _not yet filled — /review-handoff_
 - **Base (resolved):** <sha>
 - **HEAD:** <sha>
 - **HEAD tree:** <tree hash>
 - **Diff size:** <n> lines (<m> excluding the ledger)
+- **Lenses dispatched, and each one's status** (`not-run` / `ran-no-report` / `reported`)**:**
+  _not yet filled — /review-handoff_
 - **Brief revision stamp:** _not yet filled — step 6, once the brief has been named_
 - **Angles briefed:** <the roster, assembled per step 6's rules and known by now>
 - **Angles executed:** _not yet filled — /review-handoff_
@@ -368,7 +375,7 @@ keys on the path, and a fragment's path is under `specs/reviews/`.
 Sections, in this order: **the round and its scope** (the three anchors, the effort, the diff size
 and what it excludes); **angles for this round**; **already verified, with evidence**;
 **do-not-re-run, with evidence** (step 3's survivors); **settled, with reasons**; **the
-orchestrator's own uncertainties, numbered**; **the reporting bar**; and **the exact command to
+orchestrator's own uncertainties, numbered**; **the reporting bar**; and **the exact commands to
 run**.
 
 **Gate results are mechanically filled.** Run the gates through `python3 scripts/run_gates.py` —
@@ -412,6 +419,16 @@ hand, not as an unconditional cadence.
 because `/review-handoff` is obliged to answer them by number. This is prompted and never
 substituted: an invented uncertainty is worse than none, since it directs real attention at a
 question nobody had.
+
+**Two commands, not one** (ADR-0072 §1). An external round fans out to two lenses, so the
+section holds both: `/code-review` for discovery, and `/codex:adversarial-review` — the one
+external command that accepts instructions — for adjudication, coverage and the numbered
+uncertainties. **The second reaches the brief by path, not by a rendering of it**: hand it the
+brief's absolute path and tell it to treat that file as its brief. Do not condense, summarise or
+re-render the brief into the command line. A condensed copy loses the do-not-re-run and settled
+lists, which are what stop a reviewer relitigating; and the transport forbids characters the
+uncertainties routinely contain, so any rendering must break either fidelity or the command line.
+The path costs neither.
 
 **Write it, hash it, then name it.** The brief's revision stamp **is its filename** — a stamp
 stored inside the file proves the wrong thing, because editing the brief updates its self-described
@@ -462,6 +479,38 @@ Then state, in prose:
    that plainly — the same way the effort-default divergence is flagged above. A promised check
    that does not run is worse than an absent one, because the operator stops looking.
 
+4. That an external round runs **both** lenses (ADR-0072 §1) — `/code-review`, at `max` unless the
+   operator named a level, and `/codex:adversarial-review` pointed at **this brief's absolute
+   path**. Both reports **are to go** to one `/review-handoff`, which `/apply-review` then consumes
+   as a merged set — neither skill does that today (ADR-0072 §1), so say that too rather than
+   describing it as current behaviour.
+   Give the path in full: the second command's whole value is that the reviewer reads the brief
+   rather than a rendering of it, and a path it cannot resolve silently reduces that round to an
+   unbriefed one.
+
+   **Emit `--base <the fragment's resolved base SHA>` on that command, and never rely on its
+   default scope.** `/codex:adversarial-review` resolves scope `auto` by asking whether the tree is
+   dirty, and its dirty test counts **untracked** files — so step 5's ledger fragment, which this
+   skill creates and deliberately leaves for the next `/savepoint`, is by itself enough to flip the
+   lens to a working-tree diff. It would then review the fragment this round just wrote instead of
+   the range, and nothing would say so: the plugin marks that resolution non-explicit. `--base`
+   is tested before the dirty check and pins the range outright. **`--scope branch` is not a
+   substitute** — with no `--base` it detects the repository's default branch, which is not this
+   round's pinned base whenever the branch is behind or the base is a merge-base SHA. Both lenses
+   must be given the same range or the round compares two different diffs.
+
+   **Say plainly that the path is handed to a lens after `/review-prep` has run.** ADR-0072 §2
+   bounds reads of the brief at absorption, and prep does not absorb it today (§1) — so this is
+   the interim shape, and it changes when BRIEF-4a gives prep the merge §2 specifies: the second
+   lens is then pointed at the carrier instead. Until then, the brief file is what both a reader
+   and that lens have.
+
+   **And extend item 3's disclosure to that lens rather than leaving it implied.** Nothing checks
+   the stamp for the second reader either — it is handed a path and reads whatever is at it. §4
+   built the stamp to catch a brief mutated under its reader, and the adjudication lens is now a
+   second such reader with the same gap. Say so for the same reason item 3 says it: a check the
+   operator believes is running, and is not, is worse than an absent one.
+
 Do **not** run `/code-review`, and do not simulate a review from your own reading of the diff.
 
 ## The local-round variant
@@ -479,8 +528,9 @@ step 1 lists. Concretely:
   this round will not write to it.
 - **One angle per agent.** Two reviewers briefed at one angle is a redundant round; two agents at
   two angles is a wider one. The standing entries of step 6's roster still apply to each.
-- **Step 6's "exact command to run" section is empty for a local round**, and says so rather than
-  being omitted: there is no command, because this session launches the agents itself. Everything
+- **Step 6's "exact commands to run" section is empty for a local round**, and says so rather than
+  being omitted: there are no commands, because this session launches the agents itself and briefs
+  them with the brief's full text rather than a path — a smoke has no file to point at. Everything
   else step 6 composes is written as normal.
 - **The last smoke before `/land` is where the whole-artifact angle is dispatched** — its own
   round, no exclusion list at all. This is step 6's precedence rule applied to the local loop
