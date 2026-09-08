@@ -113,7 +113,11 @@ PR thread, because the question will be asked again.
   mechanical form of a rule the other two reviewers only receive as prose.
 - **`ignorePatterns`** mirrors `.coderabbit.yaml`'s `path_filters` — the
   gitignored data, database, log and recovery-kit artifacts, plus
-  `specs/personal/`. Greptile clones the repository, so it sees tracked files
+  `specs/personal/` in both of its recreation shapes — the directory's
+  descendants and a plain file at the bare path — spelled with character
+  classes so the match is case-insensitive, since gitignore syntax has no
+  switch for that and the containment gate already matches with `:(icase)`.
+  Greptile clones the repository, so it sees tracked files
   only, and `specs/personal/` must never exist (ADR-0079: personal data lives
   outside the repository); the exclusion is defence in depth against a
   force-added recreation reaching a public review comment, exactly as it is for

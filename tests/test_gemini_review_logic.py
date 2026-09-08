@@ -193,6 +193,10 @@ def test_a_quotepath_header_is_recognized_not_misco_counted() -> None:
     [
         "specs/personal/manual-entry-notes.md",
         "specs/personal",  # a plain file at the bare path: ignored by no rule
+        # Mixed case: fnmatch folds case only on Windows, and the CI runner for
+        # this reviewer is POSIX — the glob's character classes carry it there.
+        "Specs/Personal/manual-entry-notes.md",
+        "SPECS/PERSONAL",
         "health.db",
         "nested/deep/health.db",
         "backups/owner-recovery-kit.txt",
@@ -314,6 +318,37 @@ def test_pathspecs_exclude_a_plain_file_at_the_bare_containment_path(
         repo, "diff", "--cached", "--name-only", "--", ".", *exclusion_pathspecs()
     )
     assert out.split() == ["specs/personalized.md"]
+
+
+@pytest.mark.parametrize(
+    ("personal", "decoy"),
+    [
+        ("Specs/Personal/notes.md", "Specs/Personalized.md"),
+        ("SPECS/PERSONAL", "SPECS/PERSONALIZED.md"),
+    ],
+)
+def test_pathspecs_exclude_a_mixed_case_recreation_in_a_real_repo(
+    tmp_path: Path, personal: str, decoy: str
+) -> None:
+    # git pathspec globs are case-sensitive, as is fnmatch on POSIX, while the
+    # containment gate matches with `:(icase)` — so a force-added
+    # `Specs/Personal/x.md` that CI rejects must not reach the reviewer either.
+    # The character classes in EXCLUDED_GLOBS carry that; this is the
+    # git-dialect half of the proof. One shape per fixture repo: a case-
+    # insensitive filesystem cannot hold `specs/personal` beside `SPECS/PERSONAL`.
+    repo = _init_repo(tmp_path)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "base")
+    for rel in (personal, decoy):
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A", "-f", ".")
+    out = _git(
+        repo, "diff", "--cached", "--name-only", "--", ".", *exclusion_pathspecs()
+    )
+    assert out.split() == [decoy]
 
 
 # --------------------------------------------------------------------------

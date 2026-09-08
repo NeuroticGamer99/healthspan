@@ -47,7 +47,13 @@ reviews:
   # directory's descendants, and a plain file at exactly specs/personal, which
   # .gitignore's trailing-slash rule ignores by nothing and the descendant glob
   # does not match (ADR-0068's documented defeat; the containment gate matches
-  # both). The filter does not weaken the path_instructions rule
+  # both). The character classes spell "specs/personal" case-insensitively:
+  # neither this glob dialect, Greptile's gitignore syntax, nor Python's
+  # fnmatch on POSIX has a case-insensitive switch, while the containment
+  # gate and the snapshot tool already match with :(icase) / casefold — a
+  # force-added Specs/Personal/x.md must not reach a bot the gate rejects.
+  # The three copies carry the identical spelling so the parity tests in
+  # tests/test_gemini_review_logic.py hold them in step unchanged. The filter does not weaken the path_instructions rule
   # to FLAG personal data anywhere in the input the reviewer receives, which
   # is the case a reviewer can act on; the instructions say so themselves,
   # because this comment is stripped before CodeRabbit reads the file.
@@ -66,8 +72,8 @@ reviews:
     - "!pytest-output.log"
     - "!parallel-output.log"
     - "!canary-logs/**"
-    - "!specs/personal/**"
-    - "!specs/personal"
+    - "![Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]/**"
+    - "![Ss][Pp][Ee][Cc][Ss]/[Pp][Ee][Rr][Ss][Oo][Nn][Aa][Ll]"
 
   path_instructions:
     - path: "**/*"
