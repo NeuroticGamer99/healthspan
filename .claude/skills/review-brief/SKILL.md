@@ -87,7 +87,7 @@ so an effort given after `local` is accepted and ignored rather than silently ap
 
 | Loop | Reviewers | Round number | Ledger fragment | Brief form |
 |---|---|---|---|---|
-| **External** | **both** (ADR-0072 §1): `/code-review` at `max` unless the operator named a level, and `/codex:adversarial-review` pointed at the brief's path — the round is not complete until both have run | allocated here | created here | a file, handed over by path |
+| **External** | **both** (ADR-0072 §1): `/code-review` at `max` unless the operator named a level, and `/codex:adversarial-review` pointed at the brief's path — the round is not complete until both have **reported**, and a lens that ran but left no retrievable artifact does not satisfy that | allocated here | created here | a file, handed over by path |
 | **Local** | `spec-reviewer` / `test-reviewer`, launched in this session | none consumed | none | emitted inline in this session |
 
 Read the loop from the invocation: `local` marks a local smoke, its absence an external round.
