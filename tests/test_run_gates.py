@@ -2384,12 +2384,20 @@ def test_containment_precedes_the_gates_that_lint_the_tree() -> None:
 
 
 def test_the_gate_runner_is_not_reached_from_ci() -> None:
-    """ADR-0080 §4 leans on CI never spooling; that is a fact about `ci.yml`.
+    """ADR-0080 §4 leans on CI never spooling; this pins the common spelling.
 
     Nothing is retained where this script does not run, and §4 uses that to
     bound where a lint log naming a mixed-case recreation can exist at all.
     CI invoking the runner would be a deliberate change and a reasonable one --
     it would simply also invalidate that bound, which is what this catches.
+
+    **It reads `ci.yml`'s own text and nothing further, which is narrower than
+    the sentence it defends.** Measured in review: a step running a wrapper
+    script that itself invokes the runner leaves this green, because the string
+    never appears in the workflow. Closing that means resolving every `run:`
+    step's script and reading it, which is a lot of machinery for one conjunct
+    of a defence-in-depth bound -- so the gap is stated in §4 rather than
+    covered here, and this stays a tripwire on the spelling anyone would write.
     """
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
