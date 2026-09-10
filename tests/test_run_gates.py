@@ -2353,6 +2353,54 @@ def test_the_policy_defaults_are_pinned_here_and_stated_in_their_owning_adr() ->
     assert not missing, f"ADR-0080 names tests that no longer exist here: {missing}"
 
 
+def test_containment_precedes_the_gates_that_lint_the_tree() -> None:
+    """ADR-0080 §4 reasons from where `containment` sits; pin it, don't assert it.
+
+    §4 bounds a residual by saying a full run reaches `containment` before a
+    gate that could name a path under the containment directory, so the run
+    stops first. That is true of `markdown-lint` and **false of `spec-links`**,
+    which is ordered ahead of `containment` and runs on every full run before
+    anything could halt it. The ADR said "both" for one commit, written from a
+    truncated gate log rather than from the registry -- so the relationship is
+    asserted here, where it is read from `GATES` and cannot be misremembered.
+
+    This deliberately pins the order as it *is*, including the part §4 has to
+    concede. Reordering `containment` ahead of `spec-links` would be a real
+    improvement and would redden this test; that is the intended signal, and
+    §4's bound is what should be rewritten when it fires.
+    """
+    order = [gate.name for gate in run_gates.GATES]
+    for name in ("containment", "spec-links", "markdown-lint"):
+        assert name in order, f"{name} left the registry; ADR-0080 §4 cites it"
+
+    assert order.index("markdown-lint") > order.index("containment"), (
+        "markdown-lint now runs before containment, so ADR-0080 §4's "
+        "'a full run stops first' no longer holds for it either"
+    )
+    assert order.index("spec-links") < order.index("containment"), (
+        "spec-links now runs after containment — an improvement ADR-0080 §4 "
+        "does not yet claim; rewrite its bound rather than relaxing this"
+    )
+
+
+def test_the_gate_runner_is_not_reached_from_ci() -> None:
+    """ADR-0080 §4 leans on CI never spooling; that is a fact about `ci.yml`.
+
+    Nothing is retained where this script does not run, and §4 uses that to
+    bound where a lint log naming a mixed-case recreation can exist at all.
+    CI invoking the runner would be a deliberate change and a reasonable one --
+    it would simply also invalidate that bound, which is what this catches.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "run_gates" not in workflow, (
+        "ci.yml now invokes the gate runner, so ADR-0080 §4 can no longer say "
+        "retention is local-only — update the ADR with this change"
+    )
+
+
 def test_containment_is_the_only_gate_exempt_from_spooling() -> None:
     """ADR-0080 §3 says "exactly one gate sets it", so assert the whole set.
 
