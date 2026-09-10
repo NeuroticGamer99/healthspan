@@ -2803,12 +2803,18 @@ def test_the_guard_dereferences_a_link_into_the_repository(
     link = tmp_path / "into-the-repository"
     try:
         os.symlink(run_gates.REPO_ROOT, link, target_is_directory=True)
-    except (OSError, NotImplementedError):
+    except OSError:
+        # Only `OSError`: a host that refuses the privilege raises it, and one
+        # without symlinks at all would not have `os.symlink` to call. A second
+        # exception here would also meet the formatter's paren-stripping rule
+        # that CLAUDE.md documents, for a branch that cannot be reached.
         pytest.skip("this host does not grant the privilege to create a symlink")
 
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(link))
 
-    assert not link.is_relative_to(run_gates.REPO_ROOT), "the premise: raw, it is outside"
+    assert not link.is_relative_to(run_gates.REPO_ROOT), (
+        "the premise: raw, the link is outside the repository"
+    )
     assert Path(os.path.abspath(link)) == link, (
         "the premise: abspath does not dereference, so only resolve can catch this"
     )
