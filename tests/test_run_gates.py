@@ -1557,6 +1557,31 @@ def test_an_unmarked_directory_ages_out_once_it_is_past_the_grace_period(
     assert fresh.is_dir(), "an unmarked run inside the grace period was collected"
 
 
+def test_the_mode_bit_probe_leaves_the_directory_as_it_found_it(
+    tmp_path: Path,
+) -> None:
+    """The probe writes inside a caller's directory, so it must clean up.
+
+    Both branches of its `finally` are load-bearing and neither was observable:
+    dropping the `rmtree` leaves `probe` behind, and dropping the `chmod` that
+    precedes it leaves a directory `rmtree` cannot empty, so the same residue
+    survives by a second route. Measured, the residue is mode `0o500` and
+    non-empty, which pytest's own `tmp_path` teardown cannot remove either --
+    it is `rmtree(ignore_errors=True)` too, and swallows the refusal.
+
+    Asserting the directory's whole listing rather than `probe`'s absence keeps
+    this honest about a probe that leaves something under another name.
+    """
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "keep.log").write_text("the caller's own file", encoding="utf-8")
+    before = sorted(entry.name for entry in parent.iterdir())
+
+    _mode_bits_refuse_deletion(parent)
+
+    assert sorted(entry.name for entry in parent.iterdir()) == before
+
+
 def test_a_live_run_past_the_grace_period_is_collected_like_an_orphan(
     temp_root: Path,
 ) -> None:
@@ -1590,22 +1615,18 @@ def test_a_live_run_past_the_grace_period_is_collected_like_an_orphan(
 
         removed = run_gates.prune_scratch_dirs(temp_root)
 
-        # Premise first, then the behaviour — the order
-        # `test_prune_reports_only_what_it_actually_removed` sets and says why.
-        # Both premise assertions are about the *fixture*: that something still
-        # refused deletion, so this is the partial shape and not the whole one.
+        # The premise, first: something refused deletion, so what follows is
+        # the partial shape rather than the whole one. Only this assertion is
+        # about the fixture — the other two are behaviour, the order and the
+        # split `test_prune_reports_only_what_it_actually_removed` sets.
         assert live.is_dir(), (
             "the premise failed: nothing refused deletion, so this run was "
             "removed entire and the partial shape was never reached"
         )
         assert removed == [], (
-            "the premise failed: the prune removed the whole directory, so its "
-            "report is right and there is no partial deletion to observe"
+            "the run survived, so a prune reporting it removed is the "
+            "verified-against-the-filesystem contract breaking"
         )
-        # The behaviour under test. A remedy that proves the owning invocation
-        # is alive stops collecting this run at all, `sibling` survives, and
-        # this is the assertion that reddens — deliberately. It is the signal
-        # to close the open-questions entry, not a regression to repair here.
         assert not sibling.exists(), (
             "a live run past the cutoff was not collected — if that is now by "
             "design, this characterization test has done its job and the "
