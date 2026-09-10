@@ -31,9 +31,16 @@ same drift the runner is built to remove.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import os
 import re
 import shutil
 import sys
+import tempfile
+import time
+from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,6 +48,7 @@ import pytest
 import run_gates
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+ADR_DIR = REPO_ROOT / "specs" / "adr"
 CI_TEXT = run_gates.CI_WORKFLOW.read_text(encoding="utf-8")
 
 LOCAL_GATES = [gate for gate in run_gates.GATES if gate.local]
@@ -68,6 +76,137 @@ def _ci_canary_dir_name() -> str:
     if match is None:
         raise AssertionError("ci.yml no longer sets CANARY_CAPTURE_DIR")
     return match.group(1)
+
+
+@pytest.fixture(autouse=True)
+def temp_root(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Path:
+    """Point every run directory this module can create at the test's own tmp.
+
+    Autouse rather than requested, because the tests that needed it most were
+    the ones that did not know they touched the temp directory at all. Measured
+    before this existed: four tests that faked ``run_gate`` out entirely still
+    reached the real ``%TEMP%`` through ``main``'s capture notice, created an
+    empty directory each and ran the real prune over it — one ``pytest``
+    invocation evicted all five retained runs and left four of its own leaks in
+    their place, so the feature's stated retention was one run, not five.
+    Making it a property of the module means a new test cannot reintroduce that
+    by omission.
+
+    It redirects ``run_gates._temp_root``, the module's single named reader,
+    rather than ``tempfile.gettempdir``: the latter is the stdlib module object
+    and patching it redirects the whole process, pytest's own machinery
+    included.
+
+    **One test opts out**, via the ``unpatched_temp_root`` marker. Patching a
+    function in every test in the file leaves its real body covered by nothing
+    anywhere — measured: replacing it with a path that does not exist left all
+    2,466 tests green. An autouse fixture with no way out is how a seam added
+    for testability ends up being the one line the suite cannot see.
+    """
+    if "unpatched_temp_root" in request.keywords:
+        return Path(tempfile.gettempdir())
+    root = tmp_path / "temp-root"
+    root.mkdir()
+    monkeypatch.setattr(run_gates, "_temp_root", lambda: root)
+    return root
+
+
+@contextlib.contextmanager
+def undeletable(run: Path) -> Generator[None]:
+    """Make ``run`` survive an ``rmtree(ignore_errors=True)``, on either platform.
+
+    The two refuse deletion for different reasons and neither mechanism works on
+    the other. Windows will not unlink a file that is open, so holding one open
+    is enough. POSIX unlinks an open file happily and refuses instead when the
+    *containing directory* is not writable.
+
+    Written per platform because the Windows-only spelling did not fail on Linux
+    — it passed its own premise assertion straight into a green suite until the
+    POSIX leg ran it. That is the whole argument for the second leg, and it is
+    why this helper asserts nothing itself: the caller checks the premise held.
+    """
+    sub = run / "sub"
+    sub.mkdir(exist_ok=True)
+    log = sub / "pytest-01.log"
+    log.write_text("still being written", encoding="utf-8")
+    if sys.platform == "win32":
+        with log.open("a", encoding="utf-8"):
+            yield
+        return
+    if os.geteuid() == 0:
+        pytest.skip("running as root: directory permissions do not refuse anything")
+    mode = sub.stat().st_mode
+    os.chmod(sub, 0o500)
+    try:
+        yield
+    finally:
+        # Restored so pytest can clear its own tmp_path afterwards.
+        os.chmod(sub, mode)
+
+
+def completed(run: Path, stamp: float | None = None) -> Path:
+    """Mark ``run`` finished at ``stamp``, the way a run reaching `cleanup` would.
+
+    A prune only considers marked directories, so a fixture that seeds a "past
+    run" without this is seeding an *in-progress* one — which is a different
+    test, and one that would pass while the retention it means to check does
+    nothing. The stamp goes on the mark rather than on the directory for the
+    same reason the code reads it there: the directory's mtime is not when the
+    run finished.
+    """
+    run.mkdir(parents=True, exist_ok=True)
+    marker = run / run_gates.COMPLETE_MARKER
+    marker.touch()
+    if stamp is not None:
+        os.utime(marker, (stamp, stamp))
+    return run
+
+
+@dataclass
+class StepRecorder:
+    """What `run_step` was handed, for a test driving `run_gate` without children."""
+
+    steps: list[run_gates.Step]
+    envs: list[dict[str, str] | None]
+    # Every argument `run_gate` forwards, not only the ones a test happened to
+    # want: a stand-in that drops one makes the call site that supplies it
+    # untestable, which is how `echo=ctx.verbose` came to survive being
+    # replaced by a literal with all 2,466 tests still green.
+    echoes: list[bool]
+
+    def shown(self) -> list[str]:
+        return [step.shown() for step in self.steps]
+
+
+def record_steps(
+    monkeypatch: pytest.MonkeyPatch, *, exit_code: int = 0
+) -> StepRecorder:
+    """Stand in for `run_step`, recording every call and returning ``exit_code``.
+
+    Eight copies of this stub differed only in what they appended and what they
+    returned, and each restated `run_step`'s signature in full — so making
+    ``echo`` a required argument meant either editing eight stubs or leaving
+    eight encodings of a contract the function no longer has. Recording the
+    whole `Step` and the workflow env covers what all eight wanted: the argv,
+    the step's own env, and the sink are all reachable from what is kept here.
+    """
+    recorder = StepRecorder(steps=[], envs=[], echoes=[])
+
+    def fake_run_step(
+        step: run_gates.Step,
+        env: dict[str, str] | None = None,
+        *,
+        echo: bool,
+    ) -> int:
+        recorder.steps.append(step)
+        recorder.envs.append(env)
+        recorder.echoes.append(echo)
+        return exit_code
+
+    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    return recorder
 
 
 def gate_named(name: str) -> run_gates.Gate:
@@ -674,19 +813,44 @@ def test_run_gate_hands_the_workflow_env_to_every_step(
     that discards it — so dropping `ctx.workflow_env` at the single production
     call site left 105/105 green. This captures what `run_gate` actually passes.
     """
-    seen: list[dict[str, str] | None] = []
-
-    def fake_run_step(_step: run_gates.Step, env: dict[str, str] | None = None) -> int:
-        seen.append(env)
-        return 0
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    recorder = record_steps(monkeypatch)
     ctx = _context(tmp_path)
     assert (
         run_gates.run_gate(gate_named("adr-index"), ctx) is run_gates.GateResult.PASSED
     )
-    assert seen == [ctx.workflow_env], (
+    assert recorder.envs == [ctx.workflow_env], (
         "run_gate did not forward the derived workflow env to its steps"
+    )
+
+
+@pytest.mark.parametrize("verbose", [False, True], ids=["quiet", "verbose"])
+def test_run_gate_hands_the_verbose_flag_to_every_step(
+    verbose: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The sibling of the env test above, and it was missing for the same reason.
+
+    `echo` is only *observable* for a step that already carries its own sink —
+    under `--verbose` `run_gate` assigns none, so an ordinary step takes
+    `run_step`'s uncaptured branch where `echo` is never read. That leaves one
+    behaviour-changing combination, `--verbose` with the pytest gate, which no
+    test drove: measured, replacing `echo=ctx.verbose` with `echo=False` left
+    the whole 2,466-test suite green.
+
+    Parametrized over both values because a single value is satisfiable by a
+    literal. Asserted on what `run_gate` forwards rather than on console output,
+    which is what makes it independent of which gate happens to bring a sink.
+    """
+    recorder = record_steps(monkeypatch)
+    ctx = _context(tmp_path)
+    ctx.verbose = verbose
+
+    assert (
+        run_gates.run_gate(gate_named("adr-index"), ctx) is run_gates.GateResult.PASSED
+    )
+
+    assert recorder.echoes == [verbose], (
+        "run_gate did not forward --verbose to its steps, so a gate carrying "
+        "its own sink would be silently captured or silently replayed twice"
     )
 
 
@@ -744,7 +908,7 @@ def test_run_step_sets_nothing_the_workflow_no_longer_sets(
 
     monkeypatch.setenv("PYTHONUTF8", "0")
     monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
-    run_gates.run_step(run_gates.Step(["x"]), {})
+    run_gates.run_step(run_gates.Step(["x"]), {}, echo=True)
     assert seen["PYTHONUTF8"] == "0", (
         "run_step forced a value the workflow does not set — the literal is "
         "back, and it will outlive ci.yml's own setting"
@@ -813,20 +977,14 @@ def test_the_runner_stops_at_the_first_failure(
     Ordering is the whole reason the registry is a sequence, and a regression
     here is silent — everything still passes, just slower and later.
     """
-    attempted: list[str] = []
-
-    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
-        attempted.append(step.shown())
-        return 1
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    recorder = record_steps(monkeypatch, exit_code=1)
     # A gate with more than one step, deliberately: against a single-step gate
     # the count assertion below holds whether or not the loop stops early, so it
     # could never fail. `pip-audit` has two ordinary steps and no `always_run`.
     gate = gate_named("pip-audit")
     assert len(gate.steps(_context(tmp_path))) > 1
     assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
-    assert len(attempted) == 1, "a failed step must not be followed by the next"
+    assert len(recorder.steps) == 1, "a failed step must not be followed by the next"
 
 
 def test_the_run_stops_at_the_first_failing_gate(
@@ -959,17 +1117,11 @@ def test_an_always_run_step_runs_after_an_earlier_step_failed(
     traceback is the likeliest place for a leaked value. Short-circuiting on the
     pytest step drops exactly the case the scan exists for.
     """
-    ran: list[str] = []
-
-    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
-        ran.append(step.shown())
-        return 1
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    recorder = record_steps(monkeypatch, exit_code=1)
     gate = gate_named("pytest")
     assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
-    assert len(ran) == 2, "the canary step did not run after pytest failed"
-    assert "scan_log_canary.py" in ran[1]
+    assert len(recorder.steps) == 2, "the canary step did not run after pytest failed"
+    assert "scan_log_canary.py" in recorder.shown()[1]
 
 
 def test_the_pytest_gate_marks_its_canary_step_always_run(tmp_path: Path) -> None:
@@ -1045,13 +1197,7 @@ def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
     whether the pytest gate uses `rebuild` at all. That is a separate claim and
     has its own test below.
     """
-    seen: list[run_gates.Step] = []
-
-    def fake_run_step(step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
-        seen.append(step)
-        return 0
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    recorder = record_steps(monkeypatch)
     step = run_gates.Step(
         ["original"],
         "display",
@@ -1068,21 +1214,26 @@ def test_run_gate_rebuilds_a_step_and_keeps_its_env_and_capture(
     )
 
     assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.PASSED
-    assert list(seen[0].argv) == ["rebuilt"], "run_gate did not call rebuild()"
-    assert seen[0].env == {"KEEP": "1"}, "rebuild dropped the step's env"
-    assert seen[0].capture_to == tmp_path / "log", "rebuild dropped the tee"
+    rebuilt = recorder.steps[0]
+    assert list(rebuilt.argv) == ["rebuilt"], "run_gate did not call rebuild()"
+    assert rebuilt.env == {"KEEP": "1"}, "rebuild dropped the step's env"
+    assert rebuilt.capture_to == tmp_path / "log", "rebuild dropped the tee"
 
 
-def test_main_removes_the_scratch_directory_after_a_run(
-    monkeypatch: pytest.MonkeyPatch,
+def test_main_prunes_older_runs_after_a_run(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path
 ) -> None:
     """The cleanup is wired into `main`, not merely available on Context.
 
     `Context.cleanup` having its own unit test proves the method works; it does
     not prove anything calls it. Removing `main`'s `finally` left the suite
     green, which for a leak the module docstring calls a containment surface is
-    the wrong thing to be silent about.
+    the wrong thing to be silent about. The assertion moved from "the directory
+    is gone" to "the run before it is gone" when retention replaced removal; the
+    wiring it covers is the same `finally`.
     """
+    stale = completed(temp_root / f"{run_gates.SCRATCH_PREFIX}stale", stamp=1)
+
     created: list[Path] = []
 
     def fake_run_gate(
@@ -1092,9 +1243,11 @@ def test_main_removes_the_scratch_directory_after_a_run(
         return run_gates.GateResult.PASSED
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+    monkeypatch.setattr(run_gates, "RUNS_RETAINED", 1)
     assert run_gates.main(["adr-index"]) == 0
     assert created, "the fake gate never asked for a scratch directory"
-    assert not created[0].exists(), "main left the scratch directory behind"
+    assert created[0].is_dir(), "main deleted the output it had just pointed at"
+    assert not stale.exists(), "main left an aged-out run behind"
 
 
 def test_main_does_not_fold_an_empty_gate_into_the_passed_count(
@@ -1163,7 +1316,7 @@ def test_run_step_forces_utf8_in_the_child(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setenv("PYTHONUTF8", "0")
     monkeypatch.setattr(run_gates.subprocess, "run", fake_run)
-    run_gates.run_step(run_gates.Step(["x"]), {"PYTHONUTF8": "1"})
+    run_gates.run_step(run_gates.Step(["x"]), {"PYTHONUTF8": "1"}, echo=True)
     assert seen["PYTHONUTF8"] == "1"
 
 
@@ -1204,7 +1357,7 @@ def test_the_captured_branch_forces_utf8_in_a_real_child(
 
     # The env comes from the same derivation main() uses, not a literal — the
     # point of this test is that the value CI sets reaches a real child.
-    assert run_gates.run_step(step, _context().workflow_env) == 0
+    assert run_gates.run_step(step, _context().workflow_env, echo=True) == 0
     lines = log.read_text(encoding="utf-8").split()
     assert lines[0] == "1", "the ambient PYTHONUTF8=0 reached the child"
     assert lines[1] == "utf-8", "the child encoded its pipe as something else"
@@ -1239,14 +1392,314 @@ def test_listing_and_printing_create_no_scratch_directory(
     assert made == []
 
 
-def test_cleanup_removes_the_scratch_directory() -> None:
-    """It holds captured test output outside the repo, where the containment
-    gate does not look — so it is removed rather than left to accumulate."""
+def test_cleanup_keeps_this_runs_directory(temp_root: Path) -> None:
+    """The directory is the run's product now, so cleanup does not remove it.
+
+    It once did, because it holds captured test output outside the repo where
+    the containment gate does not look. What changed is that the console no
+    longer carries a step's output: a failure prints this path, and deleting the
+    directory on the way out would make that path a lie. The leak is bounded by
+    the prune below instead of eliminated.
+
+    The temp root is redirected by the module's autouse fixture, so both
+    `mkdtemp` and the prune that cleanup runs stay inside tmp — the real prune
+    therefore executes here, over a directory holding only this run, and must
+    leave it alone. An earlier version stubbed the prune out and credited a
+    tmp-rooting it did not do.
+    """
     ctx = run_gates.Context(pins={}, gitleaks_version=None)
     scratch = ctx.scratch_dir()
+
     assert scratch.is_dir()
+    assert scratch.parent == temp_root
     ctx.cleanup()
-    assert not scratch.exists()
+
+    assert scratch.is_dir(), "cleanup removed the run's own captured output"
+
+
+def test_cleanup_marks_this_run_complete_so_a_later_run_may_age_it_out(
+    temp_root: Path,
+) -> None:
+    """Retention's eligibility rule is a written mark, not an inference.
+
+    Without the mark a finished run is indistinguishable from a running one and
+    would be retained forever — the unbounded accumulation the original
+    unconditional removal existed to prevent, reached from the other side.
+    """
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+    scratch = ctx.scratch_dir()
+
+    assert not (scratch / run_gates.COMPLETE_MARKER).exists(), (
+        "the directory was marked complete before the run finished"
+    )
+    ctx.cleanup()
+
+    assert (scratch / run_gates.COMPLETE_MARKER).is_file(), (
+        "cleanup left the run unmarked, so no later prune can ever age it out"
+    )
+
+
+def test_cleanup_prunes_older_runs_but_not_this_one(temp_root: Path) -> None:
+    """Retention is bounded: cleanup ages out the runs before this one.
+
+    Paired with the test above, which alone would be satisfied by never
+    deleting anything.
+
+    Seven seeded runs against a retained five, with the expected survivor count
+    written as a literal rather than derived from `RUNS_RETAINED`: deriving it
+    is what let the constant be changed to 500 with the suite still green.
+    """
+    older = [
+        completed(temp_root / f"{run_gates.SCRATCH_PREFIX}{index:02d}", stamp=index)
+        for index in range(7)
+    ]
+
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+    scratch = ctx.scratch_dir()
+    ctx.cleanup()
+
+    assert scratch.is_dir(), "the prune removed the run that ran it"
+    survivors = sorted(p.name for p in temp_root.glob(f"{run_gates.SCRATCH_PREFIX}*"))
+    # This run is marked complete by its own cleanup, so it is inside the count.
+    assert len(survivors) == 5
+    assert scratch.name in survivors
+    assert older[0].name not in survivors, "the oldest run was kept"
+    assert older[-1].name in survivors, "the newest of the older runs was pruned"
+
+
+def test_a_run_still_in_progress_is_never_pruned(temp_root: Path) -> None:
+    """The defect that made retention unsafe: mtime is not an activity guard.
+
+    Measured — a directory's mtime does not advance while a log inside it is
+    appended — so a long pytest run's directory looks as old as when it was
+    created, and five short runs finishing after it evict it mid-run. The canary
+    worker sink goes with it and `scan_log_canary.py` then either fails with no
+    failing test or, worse on Windows where the open controller log survives its
+    closed worker siblings, scans a surviving subset and passes.
+
+    Seeded with *more* completed runs than are retained, so the live directory
+    is protected by being unmarked rather than by there being room for it.
+    """
+    live = temp_root / f"{run_gates.SCRATCH_PREFIX}live"
+    live.mkdir()
+    sink = live / "canary-logs"
+    sink.mkdir()
+    (sink / "canary-gw0.log").write_text("worker output", encoding="utf-8")
+    for index in range(run_gates.RUNS_RETAINED + 2):
+        # Every one of them finished *after* the live run started.
+        completed(temp_root / f"{run_gates.SCRATCH_PREFIX}{index:02d}", stamp=1_000)
+
+    removed = run_gates.prune_scratch_dirs(temp_root)
+
+    assert live not in removed
+    assert (sink / "canary-gw0.log").is_file(), (
+        "the prune deleted a running invocation's canary evidence"
+    )
+
+
+def test_an_unmarked_directory_ages_out_once_it_is_past_the_grace_period(
+    temp_root: Path,
+) -> None:
+    """A run killed before it could mark itself must not hold disk forever.
+
+    The counterweight to the test above: "unmarked means leave it alone" is
+    safe only while something eventually collects the ones that will never be
+    marked.
+    """
+    orphan = temp_root / f"{run_gates.SCRATCH_PREFIX}orphan"
+    orphan.mkdir()
+    stamp = time.time() - run_gates.ORPHAN_GRACE_SECONDS - 60
+    os.utime(orphan, (stamp, stamp))
+    fresh = temp_root / f"{run_gates.SCRATCH_PREFIX}fresh"
+    fresh.mkdir()
+
+    removed = run_gates.prune_scratch_dirs(temp_root)
+
+    assert removed == [orphan]
+    assert fresh.is_dir(), "an unmarked run inside the grace period was collected"
+
+
+def test_cleanup_drops_the_canary_sink_and_keeps_the_step_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Retention covers output someone will read, not working material.
+
+    The worker sink is the whole reason the distinction is drawn rather than
+    assumed: measured at ~104 MB for one run against ~530 KB of step logs, and
+    it was never on the console, so keeping it would be half a gigabyte of
+    captured test output per five runs bought for nobody. The registration is
+    asserted against the *real* pytest gate — a `cleanup` that honours the list
+    proves nothing if nothing ever puts the sink on it.
+    """
+    monkeypatch.setattr(run_gates, "prune_scratch_dirs", lambda: None)
+    ctx = _context(tmp_path)
+    test_step, _ = gate_named("pytest").steps(ctx)
+
+    sink = Path(test_step.env["CANARY_CAPTURE_DIR"])
+    sink.mkdir(parents=True)
+    (sink / "canary-gw0.log").write_text("worker output", encoding="utf-8")
+    assert sink in ctx.ephemeral, "the pytest gate did not register its sink"
+    assert test_step.capture_to is not None
+    test_step.capture_to.write_text("controller output", encoding="utf-8")
+
+    ctx.cleanup()
+
+    assert not sink.exists(), "the worker sink survived the run that consumed it"
+    assert test_step.capture_to.read_text(encoding="utf-8") == "controller output", (
+        "the pytest step's own log was swept with the working material"
+    )
+
+
+def test_a_failed_run_keeps_the_working_material_its_report_pointed_at(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The green path's sweep is wrong on the red path, where the evidence is.
+
+    A canary hit prints the worker log and the line its match came from, and
+    that report is the last thing on the console before `cleanup` runs. Sweeping
+    the sink there deletes the file between naming it and the operator opening
+    it — the same "path printed beside a failure has to still resolve" rule that
+    stopped `cleanup` deleting the run directory, one level in.
+    """
+    monkeypatch.setattr(run_gates, "prune_scratch_dirs", lambda: None)
+    ctx = _context(tmp_path)
+    test_step, _ = gate_named("pytest").steps(ctx)
+
+    sink = Path(test_step.env["CANARY_CAPTURE_DIR"])
+    sink.mkdir(parents=True)
+    evidence = sink / "canary-gw3.log"
+    evidence.write_text("the line the scan matched", encoding="utf-8")
+    assert sink in ctx.ephemeral, "the pytest gate did not register its sink"
+
+    ctx.failed = True
+    ctx.cleanup()
+
+    assert evidence.read_text(encoding="utf-8") == "the line the scan matched", (
+        "the failure report's own evidence was deleted on the way out"
+    )
+    assert sink in ctx.ephemeral, (
+        "the sink was dropped from the list, so a later sweep can never reach it"
+    )
+
+
+def test_prune_orders_by_completion_time_not_by_name(tmp_path: Path) -> None:
+    """`mkdtemp` names are random, so a lexical sort evicts an arbitrary run.
+
+    The directory named last alphabetically is made the *oldest*: a name-ordered
+    prune keeps it, a completion-ordered prune removes it.
+    """
+    newest = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}aaa", stamp=200)
+    oldest = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}zzz", stamp=100)
+
+    removed = run_gates.prune_scratch_dirs(tmp_path, keep=1)
+
+    assert removed == [oldest]
+    assert newest.is_dir()
+    assert not oldest.exists()
+
+
+def test_prune_orders_by_the_mark_not_by_the_directorys_mtime(tmp_path: Path) -> None:
+    """The two disagree, and the mark is the one that means "finished".
+
+    A directory's mtime moves when its entries change — a partial `rmtree` bumps
+    it, measured — so the directory the runner could least afford to keep can
+    look like the newest thing in the root. Here the older *run* is given the
+    newer directory stamp; ordering by the directory would keep it and evict the
+    run that finished later.
+    """
+    early = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}early", stamp=100)
+    late = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}late", stamp=200)
+    os.utime(early, (900, 900))
+    os.utime(late, (300, 300))
+
+    assert run_gates.prune_scratch_dirs(tmp_path, keep=1) == [early]
+    assert late.is_dir()
+
+
+def test_prune_survives_a_temp_root_it_cannot_read(tmp_path: Path) -> None:
+    """Pruning is housekeeping; it must not turn a green run red.
+
+    There is no `except OSError` around the glob because there is nothing for it
+    to catch: measured three ways on the pinned 3.14 — a missing root, a file
+    used as a root, and an ACL-denied root — `Path.glob` swallows its own errors
+    and yields nothing. `Path.iterdir` on that same denied directory *does*
+    raise `PermissionError`, which is what shows the swallowing to be a property
+    of `glob` rather than an accident of the cases tried. The guard that used to
+    sit here was verified by a test that raised the exception itself, which
+    proved only that `except OSError` catches `OSError`.
+
+    The two portable cases are asserted; the denied one is not, because making a
+    directory genuinely unreadable is platform-specific and a test that fakes it
+    would be the same self-verifying shape this guard's removal was about.
+    """
+    missing = tmp_path / "not-a-directory"
+    a_file = tmp_path / "a-file"
+    a_file.write_text("x", encoding="utf-8")
+
+    assert run_gates.prune_scratch_dirs(missing) == []
+    assert run_gates.prune_scratch_dirs(a_file) == []
+
+
+def test_prune_treats_an_unmarked_directory_it_cannot_stat_as_abandoned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Neither call can show it to be live, so both readings agree on that.
+
+    An unmarked directory is normally protected as a run in progress. One whose
+    age cannot be read has no evidence of being live at all, and the opposite
+    fallback would let a single unreadable directory sit in the root forever.
+    """
+    opaque = tmp_path / f"{run_gates.SCRATCH_PREFIX}opaque"
+    opaque.mkdir()
+    real_stat = Path.stat
+
+    def refuse_one(self: Path, **kwargs: object) -> os.stat_result:
+        if self.name == opaque.name:
+            raise OSError("stat failed")
+        return real_stat(self, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(Path, "stat", refuse_one)
+
+    assert run_gates.prune_scratch_dirs(tmp_path, keep=1) == [opaque]
+
+
+def test_prune_reports_only_what_it_actually_removed(tmp_path: Path) -> None:
+    """`Returns what it removed` has to survive the failure it tolerates.
+
+    Verified against the filesystem: made undeletable by the means its platform
+    actually respects, `rmtree(ignore_errors=True)` leaves the directory in
+    place and returns normally. An unconditional append made the return value a
+    list of what was *attempted*, so every caller that reported it was reporting
+    a deletion that had not happened — and the concurrent-invocation case the
+    function is built to tolerate is exactly when that is wrong.
+
+    The premise is asserted before the behaviour, because `undeletable` cannot
+    guarantee the filesystem cooperates and a prune over a directory that *was*
+    removed would satisfy the second assertion for the wrong reason.
+    """
+    held = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}held", stamp=100)
+    gone = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}gone", stamp=100)
+
+    with undeletable(held):
+        removed = run_gates.prune_scratch_dirs(tmp_path, keep=0)
+
+    assert held.is_dir(), "the premise failed: the directory was removed after all"
+    assert removed == [gone], "the prune claimed a directory that is still on disk"
+
+
+def test_prune_leaves_directories_it_did_not_create(tmp_path: Path) -> None:
+    """The glob is anchored to the runner's own prefix.
+
+    It runs against the shared system temp directory, where everything else on
+    the machine also keeps its working files.
+    """
+    stranger = tmp_path / "someone-elses-work"
+    stranger.mkdir()
+    os.utime(stranger, (1, 1))
+    mine = completed(tmp_path / f"{run_gates.SCRATCH_PREFIX}old", stamp=2)
+
+    assert run_gates.prune_scratch_dirs(tmp_path, keep=0) == [mine]
+    assert stranger.is_dir()
 
 
 def test_a_gate_with_nothing_to_run_is_not_counted_as_passed(
@@ -1399,10 +1852,7 @@ def test_a_failing_step_prints_its_failure_note(
     would find.
     """
 
-    def fake_run_step(_step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
-        return 1
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    record_steps(monkeypatch, exit_code=1)
     gate = next(g for g in run_gates.GATES if g.name == "spec-links")
 
     assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
@@ -1425,10 +1875,7 @@ def test_a_failing_step_without_a_note_prints_none(
     every failing gate in the registry.
     """
 
-    def fake_run_step(_step: run_gates.Step, _env: dict[str, str] | None = None) -> int:
-        return 1
-
-    monkeypatch.setattr(run_gates, "run_step", fake_run_step)
+    record_steps(monkeypatch, exit_code=1)
     gate = next(g for g in run_gates.GATES if g.name == "adr-index")
 
     assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.FAILED
@@ -1457,3 +1904,714 @@ def test_the_docs_gate_runs_before_the_lockfile_gate() -> None:
     order = [gate.name for gate in run_gates.GATES]
 
     assert order.index("spec-links") < order.index("lockfile"), order
+
+
+# --------------------------------------------------------------------------
+# Spooled output
+#
+# The console stops carrying a step's output; the file starts holding all of
+# it. What must not change is anything a gate *proves* — its exit code above
+# all. The pairs below are what make each half meaningful: "absent from the
+# console" is only interesting beside "present in the log", and the quiet
+# default is only safe beside a failure that is still legible.
+#
+# Where a test here asserts on console output it reads `capfd`, never `capsys`.
+# An uncaptured step inherits this process's file descriptor 1, which a
+# Python-level capture does not see, so `capsys` reports the `--verbose`
+# streaming case as silent — measured. For the quiet-path assertions either
+# fixture would work, because there the parent does the writing; `capfd` is used
+# throughout so the choice is not one to re-derive per test.
+#
+# Not every test here does that, and the sentence this replaced said they all
+# did. Several assert on a file or on a `Step` field and read no capture at all,
+# and two drive `run_gate` through a fake `run_step` rather than a child.
+# --------------------------------------------------------------------------
+
+# The oracle for both halves. Distinctive enough that finding it anywhere is
+# unambiguous, and short enough not to wrap.
+CHILD_LINE = "run-gates-spool-probe-line"
+
+
+def _probe_gate(name: str, exit_code: int) -> run_gates.Gate:
+    """A synthetic gate whose one step is a real child printing `CHILD_LINE`.
+
+    A real subprocess rather than a stub: what is under test is the tee loop's
+    two destinations and an exit code arriving back through a pipe, and a stub
+    exercises neither.
+    """
+    return run_gates.Gate(
+        name=name,
+        job="synthetic",
+        summary="prints a known line and exits with a chosen code",
+        ci_steps=(),
+        build=lambda _ctx: [
+            run_gates.Step(
+                [
+                    sys.executable,
+                    "-c",
+                    f"print({CHILD_LINE!r}); raise SystemExit({exit_code})",
+                ],
+                display=f"probe {name}",
+            )
+        ],
+    )
+
+
+def test_the_quiet_path_returns_the_childs_own_exit_code(tmp_path: Path) -> None:
+    """The load-bearing one: capturing must not swallow the failure.
+
+    A `| tail` in a skill's prose would have answered the same context problem
+    and would have returned the *pipe's* status instead of the command's —
+    measured on this repository, as a confident false green. That is the whole
+    reason the capture lives inside the runner rather than around it, so the
+    property is asserted directly rather than inferred from the gate verdict.
+    """
+    log = tmp_path / "probe.log"
+    step = run_gates.Step(
+        [sys.executable, "-c", f"print({CHILD_LINE!r}); raise SystemExit(3)"],
+        capture_to=log,
+    )
+
+    assert run_gates.run_step(step, echo=False) == 3
+
+
+def test_a_failing_gate_still_exits_non_zero_through_main(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The same property end to end, where `/land` actually reads it.
+
+    The unit test above proves `run_step` returns the code; this proves nothing
+    between it and the process exit status drops it — and that the run does not
+    go silent about why it failed.
+    """
+    monkeypatch.setattr(run_gates, "GATES", (_probe_gate("probe-fail", 5),))
+
+    assert run_gates.main(["probe-fail"]) == 1
+    assert CHILD_LINE in capfd.readouterr().out
+
+
+def test_a_failing_steps_output_is_replayed_with_a_path_to_the_rest(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """A red gate must be legible without going looking.
+
+    Asserted on the distinctive line rather than on how many lines arrived: a
+    count passes whenever *something* was printed, including the banner this
+    replay is supposed to be adding output beneath.
+    """
+    ctx = _context(tmp_path)
+
+    result = run_gates.run_gate(_probe_gate("probe-fail", 1), ctx)
+
+    assert result is run_gates.GateResult.FAILED
+    out = capfd.readouterr().out
+    assert CHILD_LINE in out, "a failing step's output never reached the console"
+    assert str(ctx.step_log("probe-fail", 1)) in out, (
+        "the failure named no file to read the rest of the output from"
+    )
+
+
+def test_a_passing_steps_output_does_not_reach_the_console(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The saving half — and the assertion is an absence of a *known* line.
+
+    Not a length threshold: a threshold passes whenever the run happened to be
+    small, which is the wrong reason and would keep passing after the quiet
+    path stopped working. The second assertion is what stops the first passing
+    because nothing ran at all.
+    """
+    ctx = _context(tmp_path)
+
+    result = run_gates.run_gate(_probe_gate("probe-pass", 0), ctx)
+
+    assert result is run_gates.GateResult.PASSED
+    out = capfd.readouterr().out
+    assert CHILD_LINE not in out, "the child's output is still on the console"
+    assert "probe probe-pass" in out, "the command line itself stopped being printed"
+
+
+def test_the_log_holds_what_the_console_no_longer_carries(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of the pair above: suppressed is not discarded."""
+    ctx = _context(tmp_path)
+
+    assert run_gates.run_gate(_probe_gate("probe-pass", 0), ctx) is (
+        run_gates.GateResult.PASSED
+    )
+
+    assert CHILD_LINE not in capfd.readouterr().out
+    log = ctx.step_log("probe-pass", 1)
+    assert CHILD_LINE in log.read_text(encoding="utf-8"), (
+        "the output left the console without arriving anywhere"
+    )
+
+
+def test_the_captured_log_lives_outside_the_repository() -> None:
+    """Captured test output is the material the canary gate polices.
+
+    Inside the tree it would also be staged by any `git add -A`, and this
+    repository's checkpoint discipline exists because that has happened.
+    Resolved as well as raw: the symlinked temp directory on some platforms
+    makes the two different questions.
+    """
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+    try:
+        log = ctx.step_log("probe", 1)
+
+        assert REPO_ROOT not in log.parents
+        assert REPO_ROOT not in log.resolve().parents
+    finally:
+        shutil.rmtree(ctx.scratch_dir(), ignore_errors=True)
+
+
+def test_universal_capture_leaves_the_pytest_gates_own_sink_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The canary contract is a separate, fail-closed consumer.
+
+    `scan_log_canary.py` reads the controller log the pytest gate names and
+    globs the worker directory `CANARY_CAPTURE_DIR` names; an empty glob is
+    exit 2 by design. Assigning a sink to a step that already has one would
+    point the scan at a file nothing writes and turn that fail-closed guard
+    into a broken capture reported as clean.
+    """
+    recorder = record_steps(monkeypatch)
+    ctx = _context(tmp_path)
+    # Built from the same context, so the two agree on paths by construction
+    # and any difference below is the runner's doing.
+    built, _ = gate_named("pytest").steps(ctx)
+
+    assert run_gates.run_gate(gate_named("pytest"), ctx) is run_gates.GateResult.PASSED
+
+    test_step, canary = recorder.steps
+    assert test_step.capture_to == built.capture_to, (
+        "universal capture moved the log the canary scan is built from"
+    )
+    assert str(test_step.capture_to) in list(canary.argv), (
+        "the canary scans a different log than the test step writes"
+    )
+    canary_dir = Path(test_step.env["CANARY_CAPTURE_DIR"])
+    assert canary_dir.name == _ci_canary_dir_name()
+    # The canary *scan* step has no sink of its own, so the runner assigns it
+    # one. It must not land inside the directory the scan globs: an extra file
+    # there is read as a worker log. Asserted on the assigned path rather than
+    # on the directory's contents — `fake_run_step` writes nothing, so a
+    # glob over `canary_dir` is empty whatever the paths say, which is an
+    # oracle that cannot fail. It was here, and it was dead.
+    assert canary.capture_to is not None
+    assert canary_dir not in canary.capture_to.parents, (
+        "the canary scan's own log was written into the directory it globs"
+    )
+
+
+def test_the_containment_gates_output_is_never_written_to_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one gate whose failure output names a path that is personal data.
+
+    `check_personal_containment.py` prints the offending repository path on a
+    violation, and ADR-0079 §R2 makes a filename under the personal directory
+    provenance. Spooling it would leave a copy of the one thing the gate exists
+    to find in a file that outlives the run. Console-only is the pre-change
+    behaviour and costs one line.
+
+    Asserted through `run_gate` against the **live registry entry**, not a
+    synthetic gate: the flag being respected proves nothing if the gate that
+    needs it stops setting it.
+    """
+    recorder = record_steps(monkeypatch)
+    gate = gate_named("containment")
+    assert gate.spool_output is False, "the gate stopped declaring its exemption"
+
+    assert run_gates.run_gate(gate, _context(tmp_path)) is run_gates.GateResult.PASSED
+
+    handed = recorder.steps
+    assert handed, "the gate ran no steps, so the assertion below proves nothing"
+    assert [step.capture_to for step in handed] == [None] * len(handed), (
+        "the containment gate's output was given a file to be written to"
+    )
+
+
+def test_verbose_does_not_replay_a_step_it_already_streamed(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """`--verbose` on a gate that brings its own sink is where `not echo` bites.
+
+    Measured before this existed: dropping `and not echo` from the replay guard
+    left the suite green. The uncaptured branch returns before reaching the
+    clause, so it only discriminates when `capture_to` is set *and* `echo` is
+    True — exactly one case, `--verbose` running the pytest gate, and the test
+    covering `--verbose` drove a step with no sink at all. Under the mutation a
+    failing verbose run streams its whole output and then prints the last lines
+    of it again, and nothing notices.
+    """
+    log = tmp_path / "streamed.log"
+    step = run_gates.Step(
+        [sys.executable, "-c", f"print({CHILD_LINE!r}); raise SystemExit(1)"],
+        capture_to=log,
+    )
+
+    assert run_gates.run_step(step, echo=True) == 1
+
+    out = capfd.readouterr().out
+    # Whole lines: the echoed `$ <argv>` line contains the probe string too, so
+    # a substring count answers 2 whether or not anything was replayed.
+    printed = [line for line in out.splitlines() if line.strip() == CHILD_LINE]
+    assert len(printed) == 1, "the streamed output was replayed on top of itself"
+    assert "line(s) of output" not in out, "a streamed step was replayed as if hidden"
+    assert log.read_text(encoding="utf-8").strip() == CHILD_LINE, (
+        "the gate's own sink stopped being written under --verbose"
+    )
+
+
+def test_no_gate_both_declines_the_runners_sink_and_brings_its_own(
+    tmp_path: Path,
+) -> None:
+    """The exemption cannot take away a sink a builder already assigned.
+
+    `spool_output=False` stops `run_gate` *assigning* a sink; it does not clear
+    one a gate chose for itself. A gate declaring both — plausible for a future
+    gate that needs a tee'd log for a downstream scan, the pattern the pytest
+    gate already establishes, and can also print a personal path — would have
+    its violation output written to a retained file and kept off the console,
+    inverting the exemption exactly where it matters. Neither the set-membership
+    test above nor the handed-steps test below can see it, because both hold one
+    half of the pair fixed.
+    """
+    offenders = {
+        gate.name
+        for gate in run_gates.GATES
+        if not gate.spool_output
+        and any(step.capture_to is not None for step in gate.steps(_context(tmp_path)))
+    }
+
+    assert offenders == set()
+
+
+def test_the_policy_defaults_are_pinned_here_and_stated_in_their_owning_adr() -> None:
+    """Both halves of CLAUDE.md's routing rule 4, and both were open.
+
+    **Unpinned:** `RUNS_RETAINED` 5 -> 500 and `FAILURE_TAIL_LINES` 40 -> 3 each
+    left the suite green — measured — because every test derived its fixture
+    size from the constant it was meant to be checking. Literals here are the
+    point: an oracle that moves with the value under test cannot fail.
+
+    **Unrecorded:** grepping ADR-0080 for these numbers matched exactly one
+    line, the `### 5. Ownership` heading, while the ADR claimed to own the
+    defaults and the code attributed both upward to it. The ADR's numbers are
+    matched against the constants rather than against literals, so changing a
+    constant reddens this until the document that owns it is changed too.
+
+    **All three defaults, not the two the finding named.** The orphan grace
+    period was added by the same change that pinned the other two and was left
+    out of the pin — the same rule with a third site, which is how a rule gets
+    written down as covering less than it does.
+    """
+    assert run_gates.RUNS_RETAINED == 5
+    assert run_gates.FAILURE_TAIL_LINES == 40
+    assert run_gates.ORPHAN_GRACE_SECONDS == 24 * 60 * 60
+
+    adr = next(ADR_DIR.glob("0080-*.md")).read_text(encoding="utf-8")
+
+    assert f"{run_gates.RUNS_RETAINED} most recently completed runs" in adr, (
+        "ADR-0080 does not state the retention count it says it owns"
+    )
+    assert f"last {run_gates.FAILURE_TAIL_LINES} lines" in adr, (
+        "ADR-0080 does not state the replay length it says it owns"
+    )
+    hours = run_gates.ORPHAN_GRACE_SECONDS // 3600
+    assert f"{hours}-hour grace period" in adr, (
+        "ADR-0080 does not state the orphan grace period it says it owns"
+    )
+
+
+def test_containment_is_the_only_gate_exempt_from_spooling() -> None:
+    """ADR-0080 §3 says "exactly one gate sets it", so assert the whole set.
+
+    Asserting only that `containment` is exempt leaves a *second* gate quietly
+    declaring itself exempt undetected — measured: adding `spool_output=False`
+    to the lockfile gate left the suite green. An equality over the registry is
+    what makes the ADR's word "exactly" load-bearing, and it fails loudly on a
+    new exemption, which is the point: a new one needs the ADR updated with it.
+    """
+    exempt = {gate.name for gate in run_gates.GATES if not gate.spool_output}
+
+    assert exempt == {"containment"}
+
+
+def test_a_gate_without_the_exemption_is_still_spooled(tmp_path: Path) -> None:
+    """The exemption's other half: `spool_output` defaults to on.
+
+    Without this, `spool_output=False` everywhere would satisfy the test above
+    and silently turn the whole change off.
+    """
+    ctx = _context(tmp_path)
+    gate = _probe_gate("probe-pass", 0)
+    assert gate.spool_output is True
+
+    assert run_gates.run_gate(gate, ctx) is run_gates.GateResult.PASSED
+
+    assert ctx.step_log("probe-pass", 1).is_file()
+
+
+def test_verbose_streams_the_output_and_captures_nothing_extra(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The escape hatch restores what the script did before, not a variant.
+
+    Including the absence of a *runner-assigned* capture: a tee'd child sees a
+    pipe rather than a console, so it drops colour and changes its buffering,
+    and capturing here would leave no way back to the original behaviour.
+
+    The scope of that claim is the point. `--verbose` cannot restore the absence
+    of a capture for a gate that brings its own sink — the pytest gate does, so
+    the canary scan has something to read — and the unscoped version of this
+    sentence was copied into ADR-0080 §1, where it was false. The sibling test
+    for a gate carrying its own sink is what covers that case; this probe gate
+    deliberately has none.
+    """
+    ctx = _context(tmp_path)
+    ctx.verbose = True
+
+    assert run_gates.run_gate(_probe_gate("probe-pass", 0), ctx) is (
+        run_gates.GateResult.PASSED
+    )
+
+    assert CHILD_LINE in capfd.readouterr().out
+    assert not ctx.step_log("probe-pass", 1).exists(), (
+        "--verbose captured as well as streamed, which is not what it restores"
+    )
+
+
+def test_verbose_reaches_the_context_and_silences_the_capture_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The flag has to be wired, not merely accepted by the parser."""
+    seen: list[bool] = []
+
+    def fake_run_gate(
+        _gate: run_gates.Gate, ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        seen.append(ctx.verbose)
+        return run_gates.GateResult.PASSED
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+
+    assert run_gates.main(["--verbose", "adr-index"]) == 0
+
+    assert seen == [True]
+    assert "Step output is captured to" not in capfd.readouterr().out
+
+
+def test_the_replay_is_bounded_and_says_how_much_it_withheld(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """A tail that silently starts mid-traceback reads as the whole failure."""
+    log = tmp_path / "long.log"
+    lines = run_gates.FAILURE_TAIL_LINES * 5
+    step = run_gates.Step(
+        [
+            sys.executable,
+            "-c",
+            f"for i in range({lines}): print(f'line-{{i}}')\nraise SystemExit(1)",
+        ],
+        capture_to=log,
+    )
+
+    assert run_gates.run_step(step, echo=False) == 1
+
+    out = capfd.readouterr().out
+    kept = lines - run_gates.FAILURE_TAIL_LINES
+    assert f"line-{lines - 1}" in out, "the end of the output was not replayed"
+    assert f"line-{kept}" in out, "the replay was shorter than the tail it promises"
+    assert f"line-{kept - 1}" not in out, "the replay was not bounded"
+    assert f"{kept} earlier line(s) in the file" in out
+    assert str(log) in out
+
+
+def test_a_captured_child_is_given_no_stdin_to_block_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A captured child has no console to ask a question on, so it must not try.
+
+    `uv`'s keyring prompt, a git credential helper: the question goes down the
+    pipe into the log, nothing is on screen, and the child blocks on fd 0. Gate
+    steps are deliberately unbounded, so that is an indefinite hang behind a
+    `$ uv run ...` line indistinguishable from the normal two-minute test run —
+    the one failure mode this runner cannot report, because it never returns.
+
+    **Asserted on the call rather than on a prompting child, deliberately.**
+    Measured: a child running `input()` fails under pytest whether or not this
+    argument is passed, because pytest has already replaced the session's own
+    stdin — so the behavioural spelling of this test passes with the fix
+    removed. There is no black-box oracle for "would have hung forever" that a
+    test suite can wait for, which leaves the argument itself as the thing to
+    pin.
+    """
+    seen: list[object] = []
+    real_popen = run_gates.subprocess.Popen
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("stdin", "not passed"))
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(run_gates.subprocess, "Popen", spy)
+    step = run_gates.Step(
+        [sys.executable, "-c", "pass"], capture_to=tmp_path / "quiet.log"
+    )
+
+    assert run_gates.run_step(step, echo=False) == 0
+
+    assert seen == [run_gates.subprocess.DEVNULL], (
+        "the captured child was left with a stdin it could block on"
+    )
+
+
+def test_a_sink_that_cannot_be_opened_is_reported_as_a_gate_that_could_not_start(
+    tmp_path: Path,
+) -> None:
+    """`main` catches `GateError`, so anything else here is a raw traceback.
+
+    Reachable in ordinary use — a full temp volume, a denied ACL, a concurrent
+    run that removed the directory between the notice and the step. The comment
+    on the sibling `Popen` guard states the promise this keeps: both paths
+    report a step that could not start rather than one naming it and one
+    crashing.
+    """
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("in the way", encoding="utf-8")
+    step = run_gates.Step([sys.executable, "-c", "pass"], capture_to=blocked / "x.log")
+
+    with pytest.raises(run_gates.GateError, match="could not capture the output"):
+        run_gates.run_step(step, echo=False)
+
+
+def test_the_replay_length_follows_the_constant_at_call_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The tail length is a default of this script, so something must pin it.
+
+    Measured before this existed: `FAILURE_TAIL_LINES` 40 -> 3 left the suite
+    green, because every assertion about the replay derived its own expectation
+    from the constant — an oracle that moves with the thing it is checking.
+    Written as literals here for that reason.
+
+    It also pins the resolution site. Bound as a default argument the value is
+    read once at import, so this monkeypatch would set the constant, change
+    nothing, and the test would still pass by replaying all six lines.
+    """
+    monkeypatch.setattr(run_gates, "FAILURE_TAIL_LINES", 2)
+    log = tmp_path / "short.log"
+    step = run_gates.Step(
+        [
+            sys.executable,
+            "-c",
+            "for i in range(6): print(f'line-{i}')\nraise SystemExit(1)",
+        ],
+        capture_to=log,
+    )
+
+    assert run_gates.run_step(step, echo=False) == 1
+
+    out = capfd.readouterr().out
+    assert "--- last 2 line(s) of output, 4 earlier line(s) in the file ---" in out
+    assert "line-5" in out
+    assert "line-4" in out
+    assert "line-3" not in out, "the replay ignored the constant it was given"
+
+
+class _LegacyConsole(io.StringIO):
+    """A console that refuses what its code page cannot represent.
+
+    Which is what an un-reconfigured Windows stdout does. Faked rather than
+    driven for real because the encoding of the console a test runs under is
+    not the test's to choose.
+    """
+
+    encoding = "cp1252"
+
+    def write(self, s: str) -> int:
+        s.encode(self.encoding)
+        return super().write(s)
+
+
+def test_the_replay_prints_a_line_the_console_cannot_encode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The failure reporter must not become the failure.
+
+    `__main__` reconfigures stdout to UTF-8 with `errors="replace"`, so captured
+    output is safe when this module is run as a script and unsafe when it is
+    imported — which is what the HELM work items propose doing. The crash lands
+    inside the code whose whole job is to make a failure legible, and it is the
+    same outcome the `OSError` guard beside it exists to prevent.
+
+    The fixture character is a **box-drawing** one, not an em dash. Measured:
+    cp1252 encodes the em dash — it is 0x97 there — so a dash makes this test
+    pass with the guard removed. Box drawing and arrows are what this
+    repository's output actually carries and what cp1252 actually refuses.
+    """
+    console = _LegacyConsole()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+    log = tmp_path / "wide.log"
+    log.write_text("├─ a value of 5 → out of range\n", encoding="utf-8")
+
+    run_gates.replay_tail(log)
+
+    assert "out of range" in console.getvalue()
+
+
+@pytest.mark.parametrize("locked", [False, True], ids=["missing", "unreadable"])
+def test_the_replay_survives_a_log_it_cannot_read(
+    locked: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Losing the replay must not turn a legible failure into a traceback.
+
+    The step's exit code is already decided by the time this runs, so a read
+    failure here can only make the failure *harder* to read — never change the
+    verdict. Reachable in ordinary use: the log sits in a shared temp directory
+    another process can sweep.
+
+    **Two failures, because the guard catches `OSError` and a missing file is
+    only one kind.** With the `missing` case alone, narrowing the guard to
+    `except FileNotFoundError` left the whole suite green — measured. On Windows
+    a concurrent sweep surfaces at least as often as a *locked* file, which is
+    `PermissionError`, so the case the single test omitted is the likelier one.
+    The parametrization is what makes the guard's breadth the thing under test
+    rather than one instance of it.
+    """
+    log = tmp_path / "swept-away.log"
+    if locked:
+        # Forced rather than arranged: making a file genuinely unreadable is not
+        # portable, and what is under test is the handler, not the filesystem.
+        log.write_text("captured output", encoding="utf-8")
+
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            raise PermissionError("used by another process")
+
+        # Pointed at the call the replay actually makes. It read the whole file
+        # through `read_text` until the tail was bounded with a `deque`, and a
+        # forcing mechanism aimed at a call the code no longer makes is a test
+        # that exercises nothing while still reporting green.
+        monkeypatch.setattr(Path, "open", refuse)
+
+    run_gates.replay_tail(log)
+
+    out = capfd.readouterr().out
+    assert "could not read" in out
+    assert str(log) in out, "the message named no path to go looking at"
+
+
+def test_list_and_print_neither_announce_nor_create_anything(
+    temp_root: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The read-only branches run nothing, so they capture nothing.
+
+    They return before the runner reaches a gate, which is why this is an
+    assertion rather than an assumption — the notice and the directory are both
+    reachable from `main` before that return if either is put in the wrong
+    place.
+    """
+    assert run_gates.main(["--list"]) == 0
+    assert run_gates.main(["--print", "pytest"]) == 0
+
+    assert "Step output is captured to" not in capfd.readouterr().out
+    assert list(temp_root.iterdir()) == []
+
+
+@pytest.mark.unpatched_temp_root
+def test_the_temp_root_resolves_to_the_system_temp_directory(temp_root: Path) -> None:
+    """The one test that lets the real resolution run.
+
+    Every other test in this module redirects `_temp_root`, which left its
+    actual body — the line deciding where every run directory is created and
+    pruned — exercised by nothing in the tree. Measured: pointing it at a
+    subdirectory that does not exist left the whole suite green.
+    """
+    assert run_gates._temp_root() == Path(tempfile.gettempdir())  # pyright: ignore[reportPrivateUsage]
+    assert temp_root == Path(tempfile.gettempdir()), (
+        "the opt-out marker did not reach the fixture, so this test proved nothing"
+    )
+
+
+def test_the_dry_path_is_built_from_the_prefix_the_prune_globs_for(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path
+) -> None:
+    """The two spellings agree today, which is exactly why nothing caught it.
+
+    `SCRATCH_PREFIX` exists because a disagreement between what `scratch_dir`
+    creates and what `prune_scratch_dirs` globs for would not fail — it would
+    silently prune nothing forever. A literal dry path is a third writer of
+    `run_gates-` paths that the constant cannot move, so the only oracle that
+    can see the difference is one that changes the constant.
+    """
+    monkeypatch.setattr(run_gates, "SCRATCH_PREFIX", "moved-prefix-")
+    ctx = run_gates.Context(pins={}, gitleaks_version=None, dry=True)
+
+    assert ctx.scratch_dir().name.startswith("moved-prefix-"), (
+        "the dry path did not follow the prefix the prune globs for"
+    )
+
+
+def test_a_run_whose_gates_all_decline_spooling_creates_no_directory(
+    temp_root: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The notice is what creates the directory, so it has to be earned.
+
+    `python3 scripts/run_gates.py containment` — the standalone command `/land`
+    documents — selects the one gate that opts out of spooling. Announced
+    unconditionally, the notice built an empty directory, told the reader output
+    had been captured into it, and spent a retention slot evicting a real run to
+    say so.
+    """
+    assert run_gates.main(["containment"]) == 0
+
+    assert "Step output is captured to" not in capfd.readouterr().out
+    assert list(temp_root.iterdir()) == [], (
+        "a run that spools nothing still created a directory"
+    )
+
+
+def test_a_read_only_run_prunes_nothing(temp_root: Path) -> None:
+    """`--list` and `--print` must not delete another run's captured output.
+
+    The sibling above asserts the read-only branches leave an *empty* temp
+    directory empty, which cannot tell "cleanup did nothing" from "cleanup
+    pruned and found nothing to prune". Seeding it first is what separates
+    them — and the second is a real outcome: `cleanup` reaches the prune
+    unless its dry-mode guard stops it, and a read-only command evicting the
+    logs of a failure someone is in the middle of reading is the worst version
+    of that.
+    """
+    seeded = [
+        completed(temp_root / f"{run_gates.SCRATCH_PREFIX}{index:02d}", stamp=index)
+        for index in range(run_gates.RUNS_RETAINED + 2)
+    ]
+
+    assert run_gates.main(["--list"]) == 0
+    assert run_gates.main(["--print", "pytest"]) == 0
+
+    assert [path for path in seeded if not path.is_dir()] == [], (
+        "a read-only command pruned another run's logs"
+    )
+
+
+def test_fast_selects_gates_without_changing_how_output_is_handled(
+    temp_root: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """`--fast` filters the selection before any of this, and still does.
+
+    Run against a real gate rather than a probe: the interaction worth pinning
+    is that a `--fast` run is an ordinary run, spooling included.
+    """
+    assert run_gates.main(["--fast", "adr-index"]) == 0
+
+    assert "Step output is captured to" in capfd.readouterr().out
+    assert [path.name for path in temp_root.rglob("adr-index-*.log")] == [
+        "adr-index-01.log"
+    ]

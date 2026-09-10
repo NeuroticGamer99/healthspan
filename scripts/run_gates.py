@@ -83,6 +83,16 @@ missing pin is an error naming the variable, never a silent fallback to a stale
 default. A gate that fails on a cosmetic edit costs one commit; a gate that
 passes against a stale pin is the defect being prevented.
 
+**Output is spooled, not streamed.** Every step's combined output goes to a file
+in a scratch directory outside the repository; the console gets the command line
+and, when a step fails, the last lines of what it printed plus the path to the
+whole of it. The gate output itself is read once and then costs nothing, which
+is the point: an agent session re-sends everything already in its window on
+every later request, so a full pytest transcript is paid for hundreds of times
+over. ``--verbose`` restores the streaming, and nothing about what a gate
+asserts, what it exits, or what the summary says changes either way. ADR-0080
+owns the policy, its defaults, and the one gate exempt from it.
+
 Exit 0 when every selected gate passes; 1 on the first failure, having echoed
 the exact command that failed. Stdlib only; files are read as UTF-8.
 """
@@ -90,6 +100,7 @@ the exact command that failed. Stdlib only; files are read as UTF-8.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import os
 import re
@@ -97,6 +108,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -127,6 +140,43 @@ _MAX_COMMAND_CHARS = 28_000
 _GIT = shutil.which("git") or "git"
 _UV = shutil.which("uv") or "uv"
 _UVX = shutil.which("uvx") or "uvx"
+
+# Every step's output is written here and, by default, nowhere else. The prefix
+# is a constant rather than two literals because `prune_scratch_dirs` globs for
+# what `scratch_dir` created: a disagreement between them would not fail, it
+# would silently prune nothing and let the directories accumulate forever.
+SCRATCH_PREFIX = "run_gates-"
+
+# Written into a run's directory once that run has finished. A prune considers
+# only marked directories, because *recency cannot tell a finished run from a
+# running one*: measured, a directory's mtime does not advance while a log
+# inside it is appended, so five short runs would evict the live directory of a
+# long one -- taking the canary worker sink with it and turning the canary scan
+# into a failure with no failing test. ADR-0080 §2 records the ordering.
+COMPLETE_MARKER = "run-complete"
+
+# How long an *unmarked* directory is left alone before it is treated as
+# abandoned rather than as a run still in progress. Longer than any run this
+# script can produce -- the full suite is ~2 minutes -- by a margin wide enough
+# to cover a machine suspended mid-run, and short enough that a run killed
+# before it could mark itself does not hold disk forever.
+ORPHAN_GRACE_SECONDS = 24 * 60 * 60
+
+# How many *completed* runs' directories survive a prune (ADR-0080 §2). Enough
+# to hold both legs of a Windows/WSL verification plus the green run a failure
+# is being compared against; small enough that captured test output does not
+# accumulate without bound. Retention is what makes the path printed on failure
+# real -- see `Context.cleanup`, which used to remove this directory outright.
+# In-progress runs are outside this count, so a bump here does not change how
+# many concurrent invocations are safe.
+RUNS_RETAINED = 5
+
+# How much of a suppressed step's output is put back on the console when it
+# fails (ADR-0080 §1). Chosen against the longest gate: pytest's
+# `short test summary info` block -- the part naming which tests failed -- is
+# the last thing it prints, so it survives a tail of this size even when the
+# traceback above it does not.
+FAILURE_TAIL_LINES = 40
 
 # A hung git fails the runner rather than hanging it. The gate *steps* below are
 # deliberately unbounded -- a full pytest run legitimately takes minutes -- but
@@ -175,8 +225,8 @@ def _uv_run(*args: str) -> list[str]:
 _UV_RUN_NOTE = (
     "`uv run --locked` syncs the project environment before running anything, "
     "so this can fail on a stale `uv.lock` or a failed install rather than on "
-    "whatever this gate is named for. If the output above is uv's rather than "
-    "the command's, run `run_gates.py lockfile`."
+    "whatever this gate is named for. If the replayed output is uv's rather "
+    "than the command's, run `run_gates.py lockfile`."
 )
 
 
@@ -330,8 +380,11 @@ class Step:
     # `dict[str, str]` rather than `dict` as the factory: under pyright --strict
     # the bare builtin resolves to dict[Unknown, Unknown].
     env: dict[str, str] = field(default_factory=dict[str, str])
-    # When set, the step's combined output is streamed to the console *and*
-    # written here, reproducing CI's `| tee`. The canary scan reads it back.
+    # When set, the step's combined output is written here. It reaches the
+    # console as well only under `--verbose`, which is where this stopped being
+    # CI's `| tee` and became the sink for the quiet default. Set by a builder
+    # for a step whose log something else reads back — only the pytest gate,
+    # for the canary scan — and otherwise assigned by `run_gate`.
     capture_to: Path | None = None
     # Recomputes argv immediately before the step runs, for a command whose
     # arguments depend on files an earlier step created. Carried on the step
@@ -363,6 +416,18 @@ class Step:
 Builder = Callable[["Context"], list[Step]]
 
 
+def _temp_root() -> Path:
+    """Where run directories are created and pruned.
+
+    One named reader, so a test redirects one name. Redirecting
+    `tempfile.gettempdir` instead reaches every user of the stdlib module in the
+    process -- under `-n auto` that includes pytest's own machinery, while
+    `capfd` holds the streams -- which is process-wide surgery for a
+    module-local concern.
+    """
+    return Path(tempfile.gettempdir())
+
+
 @dataclass
 class Context:
     pins: dict[str, str]
@@ -383,7 +448,26 @@ class Context:
     # as not reaching here at all, which was measured false — one `--list` left a
     # `mkdtemp` directory behind, and nothing ever removed any of them.
     scratch: Path | None = None
+    # Paths a gate created as working material rather than as output for someone
+    # to read afterwards. `cleanup` removes these and keeps the rest, which is
+    # the whole distinction retention turns on: a step log survives because the
+    # console no longer carries it, while the pytest canary's worker sink was
+    # never on the console and is consumed by the scan within the same run.
+    # Measured, and the reason this list exists: one full run's sink is ~104 MB
+    # of DEBUG-level per-worker capture against ~530 KB of step logs, so
+    # retaining it would keep half a gigabyte of captured test output per five
+    # runs to no one's benefit.
+    ephemeral: list[Path] = field(default_factory=list[Path])
     dry: bool = False
+    # False spools every step's output to `scratch_dir` and keeps the console to
+    # one line per command; True restores the streaming this script did before,
+    # which also means no step but pytest's is captured at all.
+    verbose: bool = False
+    # Set when any gate fails, so `cleanup` can keep the working material a
+    # failure report has just pointed at. The canary scan names the worker log
+    # and line its hit came from; sweeping that file on the way out would delete
+    # the evidence between printing the path and the operator opening it.
+    failed: bool = False
 
     def scratch_dir(self) -> Path:
         if self.dry:
@@ -395,22 +479,180 @@ class Context:
             # Windows when `_pytest` joined the canary directory name onto it.
             # Nothing is
             # opened here, so this never touches the shared temp directory.
-            return Path(tempfile.gettempdir()) / "run_gates-scratch"
+            # Built from the prefix rather than spelled out: a literal here
+            # would be a third writer of `run_gates-` paths, which the prefix
+            # constant's own comment says cannot exist.
+            return _temp_root() / f"{SCRATCH_PREFIX}scratch"
         if self.scratch is None:
-            self.scratch = Path(tempfile.mkdtemp(prefix="run_gates-"))
+            self.scratch = Path(
+                tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=_temp_root())
+            )
         return self.scratch
 
-    def cleanup(self) -> None:
-        """Remove the scratch directory, if one was created.
+    def step_log(self, gate: str, position: int) -> Path:
+        """Where one step's captured output is written.
 
-        It holds captured test output — exactly the material the canary gate
-        exists to police — outside the repository, where the containment gate
-        does not look. Leaving it is both an unbounded leak and a containment
-        surface, so removal is unconditional rather than best-effort on success.
+        Per *step*, not per gate, because `capture_to` is a `Step` field: two
+        steps of one gate sharing a sink would have the canary scan's own log
+        written twice, which is the double-write the pytest gate's contract
+        forbids. The gate name and the position within it are both in the
+        filename so a directory listing reads as the run did.
         """
-        if self.scratch is not None:
-            shutil.rmtree(self.scratch, ignore_errors=True)
-            self.scratch = None
+        return self.scratch_dir() / f"{gate}-{position:02d}.log"
+
+    def mark_complete(self) -> None:
+        """Stamp this run's directory as finished, so a prune may consider it.
+
+        Written last, after the working material has been dealt with, because
+        the mark is what makes the directory eligible for deletion by the next
+        run. A directory that never gets marked is treated as in progress and
+        left alone until `ORPHAN_GRACE_SECONDS` has passed.
+        """
+        if self.scratch is None:
+            return
+        # Suppressed because this is housekeeping, not a gate: an unmarked
+        # directory ages out on the orphan path instead of pinning a slot, and
+        # failing here would turn a green run red for a reason having nothing
+        # to do with any gate.
+        with contextlib.suppress(OSError):
+            (self.scratch / COMPLETE_MARKER).touch()
+
+    def cleanup(self) -> None:
+        """Drop this run's working material; keep its logs; prune older runs.
+
+        This directory holds captured test output — exactly the material the
+        canary gate exists to police — outside the repository, where the
+        containment gate does not look, and it was once removed unconditionally
+        for that reason. It is now the run's *product* rather than a working
+        area: the console no longer carries a step's output, so a path printed
+        beside a failure has to still resolve when someone goes to read it.
+        Deleting it here would make that path a lie, which is the worse of the
+        two failures.
+
+        The leak the old removal answered is bounded rather than eliminated,
+        and the bound differs per kind of file. **ADR-0080 §4 holds that audit**
+        — every retained file, why retaining it is acceptable, and the one
+        residual surface it does not close — and it is not repeated here. A
+        one-line version of it ("every retained log is scanned by the canary
+        gate") was written here and was false for all but one of them; the
+        four-bullet version that replaced it was a second copy of the table,
+        and this repository has now paid twice for a claim kept in two places.
+
+        What belongs here is the one decision this method makes that the table
+        does not: **`ephemeral` is swept on the green path and kept on the red
+        one.** It is the bulk of the volume — the canary worker sink, measured
+        at ~104 MB against ~530 KB of step logs — and nothing outside a passing
+        run reads it. But a canary hit's report names the worker log and the
+        line its match came from, and that report is the last thing printed
+        before this runs, so sweeping it on a failure deletes the evidence
+        between naming it and the operator opening it. That is the same rule
+        that stopped this method deleting the run directory, one level in.
+
+        All of it sits outside the repository, where no gate and no `git add`
+        reaches, and a fixed number of completed runs survive.
+        """
+        if self.scratch is None:
+            # Nothing was created, so there is nothing new to age out and no
+            # reason for a `--list` to delete another run's logs.
+            return
+        if not self.failed:
+            for path in self.ephemeral:
+                shutil.rmtree(path, ignore_errors=True)
+            self.ephemeral.clear()
+        self.mark_complete()
+        prune_scratch_dirs()
+
+
+def _completed_at(run: Path) -> float | None:
+    """When this run marked itself finished, or ``None`` while it is running.
+
+    The whole activity guard is here. `Path.glob` and `Path.is_dir` swallow
+    their own errors — measured on the pinned 3.14: an ACL-denied root, a
+    missing root and a file used as a root all yield nothing rather than
+    raising. That is a property of `glob` rather than of those three cases:
+    `Path.iterdir` on the *same* denied directory raises `PermissionError`
+    (measured), so the swallowing is real and is what leaves this stat as the
+    one filesystem call in the prune whose failure is visible. The reading it
+    produces is the safe one: a directory whose mark cannot be read is treated
+    as still running rather than as prunable.
+    """
+    try:
+        return (run / COMPLETE_MARKER).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _abandoned(run: Path, cutoff: float) -> bool:
+    """Whether an unmarked directory is old enough to be an orphan, not a run.
+
+    An unmarked directory is normally a live run and must be left alone. One
+    left behind by a kill, a power loss or a crash before `mark_complete` never
+    becomes marked, so without this it would hold disk forever. Unstattable
+    counts as abandoned, matching the mark's reading of the same failure from
+    the other side: neither call can show the directory to be live.
+    """
+    try:
+        return run.stat().st_mtime < cutoff
+    except OSError:
+        return True
+
+
+def prune_scratch_dirs(root: Path | None = None, keep: int | None = None) -> list[Path]:
+    """Age out all but the ``keep`` most recently *completed* run directories.
+
+    Completion is an explicit mark rather than an inference from recency, and
+    that is the correctness of the whole retention scheme rather than a detail.
+    Measured: a directory's mtime does not advance while a log inside it is
+    appended, so ordering by mtime cannot distinguish the live directory of a
+    long run from a stale one. Five short runs sharing a temp root would evict
+    a running suite's directory mid-run — deleting the canary worker sink and
+    leaving `scan_log_canary.py` to fail with no failing test, or worse, to scan
+    a surviving subset of the worker logs and pass. `mkdtemp` names are random,
+    so name order is no better.
+
+    In-progress runs are not counted against ``keep``: they are not eligible for
+    deletion at all, so concurrent invocations do not compete for the retained
+    slots. `_abandoned` is what keeps that from being an unbounded promise.
+
+    Every filesystem call here tolerates failure. Two runs pruning at once will
+    race, and losing that race means another process already removed the
+    directory — the intended outcome, not an error worth failing a gate over.
+
+    Returns what it removed — verified against the filesystem, not assumed from
+    having called `rmtree`. `ignore_errors=True` means a directory holding an
+    open log is left in place while the call still returns, so an unconditional
+    append made every caller that reported the list a liar.
+
+    Both settings resolve here rather than in the signature: a default argument
+    binds its value once at import, so a `RUNS_RETAINED` read there could not be
+    changed by anything — including a test that thought it had.
+    """
+    root = _temp_root() if root is None else root
+    keep = RUNS_RETAINED if keep is None else keep
+    cutoff = time.time() - ORPHAN_GRACE_SECONDS
+
+    completed: list[tuple[float, Path]] = []
+    stale: list[Path] = []
+    for path in root.glob(f"{SCRATCH_PREFIX}*"):
+        if not path.is_dir():
+            continue
+        finished = _completed_at(path)
+        if finished is None:
+            if _abandoned(path, cutoff):
+                stale.append(path)
+        else:
+            completed.append((finished, path))
+
+    # Newest completion first, so the tail past `keep` is the oldest work.
+    completed.sort(key=lambda entry: entry[0], reverse=True)
+    stale.extend(path for _, path in completed[keep:])
+
+    removed: list[Path] = []
+    for path in stale:
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            removed.append(path)
+    return removed
 
 
 @dataclass(frozen=True)
@@ -425,6 +667,26 @@ class Gate:
     ci_only_reason: str = ""
     # The pin that appears *in this gate's command*, e.g. `uvx "ruff@0.15.21"`.
     version_pin: str | None = None
+    # False to stop `run_gate` assigning this gate's steps a sink, leaving them
+    # on the inherited console. Exactly one gate sets it:
+    # `check_personal_containment.py` prints the offending repository path on a
+    # violation, and ADR-0079 §R2 makes a filename under the personal directory
+    # provenance — personal data in its own right. Under the old console-only
+    # behaviour that path was printed and gone; spooling it would put a copy of
+    # the one thing the gate exists to find into a file that outlives the run,
+    # which is the surface ADR-0079 §4 requires a guard to be audited against.
+    # The gate prints two lines when it passes, so exempting it costs two lines
+    # of console and buys the whole surface back.
+    #
+    # "Not assigned a sink" rather than "never written to disk", because those
+    # differ for a gate that brings its own `capture_to` — the flag cannot take
+    # one away. No gate does both today and the invariant test asserts none
+    # can: a step's log is either the runner's to withhold or the gate's to
+    # justify, never half of each. ADR-0080 §4 holds the per-gate audit of what
+    # each one can print, including the one residual surface that audit does
+    # not close — stated there rather than restated here, because a claim kept
+    # in two places is one this repository has measured drifting.
+    spool_output: bool = True
     # The pin of a tool the gate *needs* but does not name — `uv` is resolved
     # from PATH, so nothing embeds its version. Kept separate from version_pin
     # because the derivation test asserts a version_pin shows up in the rendered
@@ -647,6 +909,11 @@ def _pytest(ctx: Context) -> list[Step]:
             "second copy this module exists to delete"
         )
     canary_dir = scratch / require_dir_name("CANARY_CAPTURE_DIR", ctx.canary_dir_name)
+    # Working material, not output: the scan below consumes it inside this run,
+    # and nothing reads it afterwards. Registered so `cleanup` removes it while
+    # keeping the step logs beside it — see `Context.ephemeral` for the sizes
+    # that make the distinction worth drawing.
+    ctx.ephemeral.append(canary_dir)
     # CI sweeps a stale canary dir before the run; a fresh scratch directory per
     # invocation makes that impossible here, so there is nothing to sweep.
     # No mkdir here. conftest.py's capture sink does
@@ -838,6 +1105,8 @@ GATES: tuple[Gate, ...] = (
         summary="no path at or under specs/personal is tracked, staged, or in history",
         ci_steps=("Scan full git history for personal-data paths",),
         build=_docs_gate("check_personal_containment.py", "--scope", "branch"),
+        # A violation names the path it found. See `Gate.spool_output`.
+        spool_output=False,
     ),
     Gate(
         name="lockfile",
@@ -1029,7 +1298,68 @@ def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
     return "\n".join(lines)
 
 
-def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
+def _console_safe(line: str) -> str:
+    """A line the current stdout can encode, whatever encoding it happens to be.
+
+    The `__main__` guard reconfigures stdout to UTF-8 with `errors="replace"`,
+    but only when this module is run as a script. Imported and called — which is
+    what the HELM work items propose — stdout keeps the legacy code page on
+    Windows and a single non-ASCII character in a captured traceback raises
+    `UnicodeEncodeError` *inside the failure reporter*, turning a legible
+    failure into an unhandled one. That is the same outcome the `OSError` guard
+    below exists to prevent, reached through the encoder instead of the reader.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return line.encode(encoding, "replace").decode(encoding, "replace")
+
+
+def replay_tail(log: Path, lines: int | None = None) -> None:
+    """Put the end of a suppressed step's output back on the console.
+
+    The compensating half of the quiet default, and it is called from the same
+    function that does the suppressing so the two cannot drift apart. Written to
+    stdout, which is where the line went before it was suppressed; the failure
+    banner around it stays on stderr, exactly as it was.
+
+    How much was withheld is named rather than implied. A tail that silently
+    starts mid-traceback reads as the whole failure, and the path on the last
+    line is what makes the rest recoverable.
+
+    ``lines`` resolves here rather than in the signature, for the reason
+    `prune_scratch_dirs` states about its own two settings: a default argument
+    binds its value once at import, so a test that set `FAILURE_TAIL_LINES` and
+    then called this would get 40 lines and believe it had asked for its own
+    number.
+
+    Bounded as it reads, rather than by slicing the whole file afterwards. The
+    pytest gate's capture is the longest thing here — ~500 KB on this
+    repository — and pulling all of it into memory to print the last 40 lines is
+    work the `deque` does not do.
+    """
+    lines = FAILURE_TAIL_LINES if lines is None else lines
+    total = 0
+    tail: deque[str] = deque(maxlen=max(lines, 0))
+    try:
+        with log.open(encoding="utf-8", errors="replace") as captured:
+            for line in captured:
+                total += 1
+                tail.append(line)
+    except OSError as exc:
+        # Not fatal: the step's exit code has already been decided, and losing
+        # the replay must not turn a legible failure into an unhandled one.
+        print(f"  (could not read the captured output at {log}: {exc})", flush=True)
+        return
+    omitted = total - len(tail)
+    suffix = f", {omitted} earlier line(s) in the file" if omitted else ""
+    print(f"--- last {len(tail)} line(s) of output{suffix} ---", flush=True)
+    for line in tail:
+        print(_console_safe(line.rstrip("\n")))
+    print(f"--- full output: {log} ---", flush=True)
+
+
+def run_step(
+    step: Step, workflow_env: dict[str, str] | None = None, *, echo: bool
+) -> int:
     # The workflow-level env comes from ci.yml, derived like everything else —
     # a literal "1" here was a second copy of a ci.yml value inside the module
     # written to delete second copies, and its expiry is already dated in
@@ -1045,6 +1375,17 @@ def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
     # Applied *after* os.environ, not before: an ambient PYTHONUTF8=0 would
     # otherwise win and put the mismatch straight back. A step may still
     # override it deliberately.
+    #
+    # `echo` governs the captured branch only. An uncaptured child inherits this
+    # process's stdout, so its output reaches the console whatever this says —
+    # a step that somehow arrives here without a sink is noisy, never silently
+    # discarded.
+    #
+    # Required rather than defaulted, because nothing could pin a default: the
+    # one production caller passes it explicitly, so flipping `= True` to
+    # `= False` left the whole suite green (measured) while changing no
+    # behaviour anyone could observe. An argument with no default cannot have a
+    # wrong one, and every caller now says which half of the contract it wants.
     env = {**os.environ, **(workflow_env or {}), **step.env}
     print(f"$ {step.shown()}", flush=True)
     if step.capture_to is None:
@@ -1060,14 +1401,35 @@ def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
             raise GateError(f"could not start `{step.shown()}`: {exc}") from exc
         return completed.returncode
 
-    # Reproduce CI's `| tee`: stream to the console and to a file at once, so a
-    # failing test's traceback is visible *and* scannable by the canary gate.
-    step.capture_to.parent.mkdir(parents=True, exist_ok=True)
+    # Write the captured output to a file, and — under `--verbose` — to the
+    # console as well, reproducing CI's `| tee` for the one step that reads its
+    # own log back: a failing test's traceback stays scannable by the canary
+    # gate either way.
+    try:
+        step.capture_to.parent.mkdir(parents=True, exist_ok=True)
+        sink = step.capture_to.open("w", encoding="utf-8")
+    except OSError as exc:
+        # Converted for the same reason the two `Popen` guards are: `main`
+        # catches `GateError`, so an unwrapped `PermissionError` here — a full
+        # temp volume, a denied ACL, a concurrent run that removed the
+        # directory — killed the runner with a raw pathlib traceback instead of
+        # reporting a gate that could not start.
+        raise GateError(
+            f"could not capture the output of `{step.shown()}`: {exc}"
+        ) from exc
     try:
         started = subprocess.Popen(  # noqa: S603 - fixed executable, no shell
             step.argv,
             cwd=REPO_ROOT,
             env=env,
+            # No inherited console. A child that asks a question — `uv`'s
+            # keyring prompt, a git credential helper — writes it down the pipe
+            # into the log and then blocks on fd 0, where nothing can answer it
+            # and nothing is on screen to say so. Gate steps are deliberately
+            # unbounded, so that is an indefinite hang behind a `$ uv run` line
+            # indistinguishable from the normal two-minute test run. Under the
+            # old streaming behaviour the prompt was at least visible.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1078,20 +1440,25 @@ def run_step(step: Step, workflow_env: dict[str, str] | None = None) -> int:
     except OSError as exc:
         # Same conversion as the uncaptured branch above, so both paths report a
         # missing tool identically rather than one naming it and one crashing.
+        sink.close()
         raise GateError(f"could not start `{step.shown()}`: {exc}") from exc
-    with (
-        started as process,
-        step.capture_to.open("w", encoding="utf-8") as sink,
-    ):
+    with started as process, sink:
         # `stdout=PIPE` above guarantees a pipe; the guard is here rather than an
         # assert because asserts are stripped under -O, and a silently skipped
         # capture would hand the canary scan an empty log and call it clean.
         if process.stdout is not None:
             for line in process.stdout:
-                sys.stdout.write(line)
+                if echo:
+                    sys.stdout.write(line)
                 sink.write(line)
-            sys.stdout.flush()
-    return process.returncode
+            if echo:
+                sys.stdout.flush()
+    code = process.returncode
+    if code != 0 and not echo:
+        # The sink is closed by the `with` above, so the replay reads a complete
+        # file rather than whatever had been flushed.
+        replay_tail(step.capture_to)
+    return code
 
 
 def run_gate(gate: Gate, ctx: Context) -> GateResult:
@@ -1105,12 +1472,17 @@ def run_gate(gate: Gate, ctx: Context) -> GateResult:
         return GateResult.EMPTY
 
     failed = False
-    for step in steps:
+    for position, step in enumerate(steps, start=1):
         if failed and not step.always_run:
             continue
         if step.rebuild is not None:
             step = replace(step, argv=step.rebuild())
-        code = run_step(step, ctx.workflow_env)
+        if not ctx.verbose and gate.spool_output and step.capture_to is None:
+            # Only where a gate has not already chosen a sink. The pytest gate
+            # has, and the canary scan is built from that same path, so
+            # overwriting it here would point the scan at a file nothing writes.
+            step = replace(step, capture_to=ctx.step_log(gate.name, position))
+        code = run_step(step, ctx.workflow_env, echo=ctx.verbose)
         if code != 0:
             print(f"\nFAILED: {gate.name} (exit {code})", file=sys.stderr)
             print(f"  command: {step.shown()}", file=sys.stderr)
@@ -1156,6 +1528,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="skip the slow gates (pytest, pip-audit)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "stream every step's output to the console instead of spooling it "
+            "to a file (the default prints one line per command and replays a "
+            "failing step's last lines)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -1170,6 +1551,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pins={},
         gitleaks_version=None,
         dry=args.list or args.print_only,
+        verbose=args.verbose,
     )
     try:
         ctx.pins = read_pins(text)
@@ -1226,6 +1608,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"# {gate.name}: CI-only — {gate.ci_only_reason}")
             return 0
 
+        if not args.verbose and any(gate.spool_output for gate in runnable):
+            # Printed once, before anything runs, rather than per step: the
+            # directory is the answer to "where did the output go", and a reader
+            # who never needs it pays one line. A failing step names its own
+            # file again at the point of failure, where the question is asked.
+            #
+            # Guarded on there being something to spool, because this line is
+            # what *creates* the directory. `run_gates.py containment` selects
+            # the one exempt gate, so an unguarded notice built an empty
+            # directory, claimed output had been captured into it, and spent a
+            # retention slot evicting a real run to do it. The guard also keeps
+            # a test that fakes `run_gate` out from reaching the shared temp
+            # directory through this line.
+            print(
+                f"Step output is captured to {ctx.scratch_dir()} "
+                "(--verbose streams it instead)."
+            )
+
         # Sequential with an early exit, not a comprehension over every gate:
         # the registry is ordered cheap-to-slow precisely so a lint failure does
         # not cost a full test run first, and collecting all results before
@@ -1234,9 +1634,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         for gate in runnable:
             results[gate.name] = run_gate(gate, ctx)
             if results[gate.name] is GateResult.FAILED:
+                # Recorded before the return so `cleanup` in the `finally`
+                # keeps the working material this failure's report points at.
+                ctx.failed = True
                 return 1
     except GateError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        ctx.failed = True
         return 1
     finally:
         ctx.cleanup()
