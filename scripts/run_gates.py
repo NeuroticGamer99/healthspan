@@ -424,8 +424,34 @@ def _temp_root() -> Path:
     process -- under `-n auto` that includes pytest's own machinery, while
     `capfd` holds the streams -- which is process-wide surgery for a
     module-local concern.
+
+    **The root is checked rather than assumed.** `tempfile.gettempdir()`
+    consults `TMPDIR`, `TEMP` and `TMP` before the platform default -- measured,
+    setting them redirects this wholesale -- so "outside the repository", which
+    this module's docstring states and `cleanup` rests on, is a property of the
+    environment and not one the code established. A root inside the checkout
+    would make every retained log a repository file and, because
+    `review_worktree.py` copies untracked paths into each reviewer worktree,
+    would replicate them into review snapshots too. Refusing is the only
+    reading that keeps the docstring true; narrowing the docstring instead
+    would leave the behaviour and describe it more carefully, which is the
+    weaker of the two fixes.
+
+    Raw *and* resolved, normcased: on Windows a junction or an 8.3 short name
+    reaches the same directory under a name that does not compare equal, and
+    `normcase` is what makes the comparison case-correct on the leg where the
+    filesystem is not. Raised by Copilot on PR #106.
     """
-    return Path(tempfile.gettempdir())
+    root = Path(tempfile.gettempdir())
+    repo = Path(os.path.normcase(REPO_ROOT))
+    for candidate in (root, root.resolve()):
+        if Path(os.path.normcase(candidate)).is_relative_to(repo):
+            raise GateError(
+                f"the temp root is inside the repository ({candidate}). Gate "
+                "output would become a repository file: unset TMPDIR/TEMP/TMP "
+                "or point them somewhere outside the checkout"
+            )
+    return root
 
 
 @dataclass
@@ -1552,7 +1578,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "stream every step's output to the console instead of spooling it "
             "to a file (the default prints one line per command and replays a "
-            "failing step's last lines)"
+            "failing step's last lines). A gate that brings its own sink still "
+            "writes it -- the pytest gate does, for the canary scan to read"
         ),
     )
     args = parser.parse_args(argv)
@@ -1641,7 +1668,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             # directory through this line.
             print(
                 f"Step output is captured to {ctx.scratch_dir()} "
-                "(--verbose streams it instead)."
+                "(--verbose streams it instead, though a gate bringing its own "
+                "sink still writes it)."
             )
 
         # Sequential with an early exit, not a comprehension over every gate:

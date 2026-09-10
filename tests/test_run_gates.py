@@ -2721,6 +2721,45 @@ def test_the_temp_root_resolves_to_the_system_temp_directory(temp_root: Path) ->
     )
 
 
+@pytest.mark.unpatched_temp_root
+@pytest.mark.parametrize("inside", ["", "sub/deeper"])
+def test_a_temp_root_inside_the_repository_is_refused(
+    monkeypatch: pytest.MonkeyPatch, inside: str
+) -> None:
+    """The guarantee is enforced, not inherited from the machine's default.
+
+    `tempfile.gettempdir()` honours `TMPDIR`/`TEMP`/`TMP`, so the module
+    docstring's "outside the repository" was a property of this machine rather
+    than of the code -- and a root inside the checkout turns every retained log
+    into a repository file. Both the repository root itself and a path under it
+    are refused: `is_relative_to` answers True for a path against itself, and a
+    guard written with a bare `parents` check would let the exact root through.
+
+    `gettempdir` is monkeypatched rather than the environment, because the
+    stdlib caches its answer in `tempfile.tempdir` after the first call and an
+    env-var test would pass or fail on whether something had already asked.
+    """
+    target = run_gates.REPO_ROOT / inside if inside else run_gates.REPO_ROOT
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(target))
+
+    with pytest.raises(run_gates.GateError, match="inside the repository"):
+        run_gates._temp_root()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.unpatched_temp_root
+def test_a_temp_root_outside_the_repository_is_allowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other half: the guard refuses a location, not every location.
+
+    Without this, deleting the `is_relative_to` condition and raising
+    unconditionally would still satisfy the test above.
+    """
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+    assert run_gates._temp_root() == tmp_path  # pyright: ignore[reportPrivateUsage]
+
+
 def test_the_dry_path_is_built_from_the_prefix_the_prune_globs_for(
     monkeypatch: pytest.MonkeyPatch, temp_root: Path
 ) -> None:
