@@ -2754,20 +2754,64 @@ def test_the_guard_sees_through_a_root_that_only_resolves_into_the_repository(
 
     Measured in review: dropping `.resolve()` from the guard left all 220 tests
     green, because both other cases hand it an already-absolute, already-real
-    path that the raw comparison catches by itself. A junction, a symlink or an
-    8.3 short name all reach the repository under a name that compares unequal
-    to it -- and so does a *relative* root, which is the same leg reached
-    without needing a link, a privilege, or an OS-specific spelling.
+    path that the raw comparison catches by itself.
 
-    `chdir` to the repository root is what makes `"."` resolve into it. Left as
-    `monkeypatch.chdir` so it is undone even if the assertion fails.
+    **This pins one half of that leg and the test below pins the other**, which
+    is worth stating because a first version claimed both. A `..` segment makes
+    the raw path compare unequal to the repository while resolving into it, so
+    this kills a guard that checks only the raw path -- but `os.path.abspath`
+    collapses `..` too, so substituting it for `.resolve()` still passes here.
+    Dereferencing a *link* is what only `.resolve()` does, and that is the next
+    test's job.
+
+    No `chdir`: an earlier version pointed `gettempdir` at `"."` and chdir'd to
+    the repository root, which measured inert -- the suite already runs from
+    there, and `Path(".").parts` is empty so the premise assertion was true
+    unconditionally. Building the path from `REPO_ROOT` needs no ambient cwd.
     """
-    monkeypatch.chdir(run_gates.REPO_ROOT)
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: ".")
+    root = run_gates.REPO_ROOT
+    outside_looking = root.parent / "no-such-dir" / ".." / root.name
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(outside_looking))
 
     # The premise: raw, this is not under the repository -- so a guard checking
     # only the raw path would let it through, and the test would prove nothing.
-    assert not Path(".").is_relative_to(run_gates.REPO_ROOT)
+    assert not outside_looking.is_relative_to(root)
+    assert outside_looking.resolve() == root
+
+    with pytest.raises(run_gates.GateError, match="inside the repository"):
+        run_gates._temp_root()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.unpatched_temp_root
+def test_the_guard_dereferences_a_link_into_the_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The half a `..` segment cannot reach: a filesystem-level indirection.
+
+    Substituting `os.path.abspath` for `.resolve()` passes every other test in
+    this group -- measured -- and silently reopens the hole the guard was built
+    to close, because `abspath` normalises text and never touches the disk. A
+    link is the only input that separates the two.
+
+    Probed rather than gated on `sys.platform`, which is this repository's
+    standing rule for a capability: creating a directory symlink needs a
+    privilege Windows grants only in developer mode, and measured, this host
+    refuses it. So this skips on one leg and runs on the other -- which is what
+    the two-leg discipline is for, and is why it is worth having rather than
+    narrowing the claim to what a single platform can prove.
+    """
+    link = tmp_path / "into-the-repository"
+    try:
+        os.symlink(run_gates.REPO_ROOT, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this host does not grant the privilege to create a symlink")
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(link))
+
+    assert not link.is_relative_to(run_gates.REPO_ROOT), "the premise: raw, it is outside"
+    assert Path(os.path.abspath(link)) == link, (
+        "the premise: abspath does not dereference, so only resolve can catch this"
+    )
 
     with pytest.raises(run_gates.GateError, match="inside the repository"):
         run_gates._temp_root()  # pyright: ignore[reportPrivateUsage]

@@ -440,9 +440,13 @@ def _temp_root() -> Path:
     **Raw and resolved**, because the two catch different things and the second
     is not decoration: a junction, a symlink, an 8.3 short name or a *relative*
     root all reach the repository under a name that compares unequal to it, and
-    only `.resolve()` sees through them. `test_the_guard_sees_through_a_root_
-    that_only_resolves_into_the_repository` pins that leg; without it, dropping
-    `.resolve()` left the whole suite green.
+    only `.resolve()` sees through them. Two tests pin it between them, and the
+    split matters because `os.path.abspath` covers one half and not the other:
+    `test_the_guard_sees_through_a_root_that_only_resolves_into_the_repository`
+    covers the textual half (a `..` segment), and
+    `test_the_guard_dereferences_a_link_into_the_repository` covers the half
+    that needs the disk, on any host that will let a symlink be created.
+    Without them, dropping `.resolve()` left the whole suite green.
 
     Case is left to `is_relative_to`, which is already correct on both legs --
     `WindowsPath` casefolds, `PosixPath` does not, matching the filesystems.
