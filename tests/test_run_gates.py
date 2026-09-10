@@ -1519,6 +1519,52 @@ def test_an_unmarked_directory_ages_out_once_it_is_past_the_grace_period(
     assert fresh.is_dir(), "an unmarked run inside the grace period was collected"
 
 
+def test_a_live_run_past_the_grace_period_is_collected_like_an_orphan(
+    temp_root: Path,
+) -> None:
+    """The residual ADR-0080 §2 admits, pinned rather than left as prose.
+
+    `_abandoned` decides liveness from the directory's age, and age cannot
+    prove the owning invocation exited, so a run still writing past the cutoff
+    is collected exactly like one killed before it could mark itself. This
+    asserts the behaviour that *is*, not the one that should be: it is the
+    executable half of a documented gap, and a remedy proving an exit instead
+    of inferring one is expected to fail here. Failing is then the signal to
+    close the open-questions entry, which is the whole reason to write it down
+    in a form that can fail.
+
+    It costs no second process and no wall-clock wait. The misclassification is
+    a property of the classification alone, so `undeletable` -- already the
+    file's model of a log a live run still holds -- is enough to reach it, and
+    the entry claimed for one round that a live invocation was needed. Note the
+    ordering: the files are created *before* the backdate, because creating one
+    refreshes the parent's mtime and would undo it. That is the same mechanism
+    `prune_scratch_dirs` documents from the other side.
+    """
+    live = temp_root / f"{run_gates.SCRATCH_PREFIX}live"
+    live.mkdir()
+
+    with undeletable(live):
+        sibling = live / "ruff-01.log"
+        sibling.write_text("a step that finished", encoding="utf-8")
+        stamp = time.time() - run_gates.ORPHAN_GRACE_SECONDS - 60
+        os.utime(live, (stamp, stamp))
+
+        removed = run_gates.prune_scratch_dirs(temp_root)
+
+        assert removed == [], (
+            "the run survived, so a prune reporting it removed is the "
+            "verified-against-the-filesystem contract breaking"
+        )
+        assert not sibling.exists(), (
+            "the premise failed: a closed log of a live run was expected to go"
+        )
+        assert live.is_dir(), (
+            "the premise failed: something was expected to refuse deletion, "
+            "which is what makes this the partial shape rather than the whole"
+        )
+
+
 def test_cleanup_drops_the_canary_sink_and_keeps_the_step_logs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
