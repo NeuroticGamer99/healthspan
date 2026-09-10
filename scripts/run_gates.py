@@ -596,18 +596,14 @@ def _abandoned(run: Path, cutoff: float) -> bool:
     this liveness question too: a directory's mtime advances when a step log is
     created in it, not while one is appended, so a run hung inside a single step
     past the cutoff — or one spanning a suspend longer than it — reads exactly
-    like a run killed before it could mark itself. A concurrent invocation then
-    collects it. On POSIX the whole tree goes and the canary scan matches
-    nothing, falling back to the literal glob it fails closed on; on Windows the
-    open logs refuse deletion while their closed siblings go, and the scan takes
-    the surviving subset and passes. The second is the partial-scan green this
-    retention scheme exists to prevent, arriving on a 24-hour horizon instead of
-    a five-slot race. Bounding the promise is still worth more than the residual
-    — an unbounded one holds disk forever, and reaching this needs a run live
-    past the cutoff *and* a second invocation during it — but the residual is
-    real, and proving an exit rather than inferring one is a mechanism of its
-    own. Raised by Greptile on PR #106; `specs/open-questions.md` carries it
-    with the trigger that would settle it.
+    like a run killed before it could mark itself, and a concurrent invocation
+    collects it. That residual is deliberate and bounded rather than overlooked.
+    ADR-0080 §2 owns the trade and the consequence it carries on each platform;
+    `specs/open-questions.md` owns the deferred remedy and its trigger, and
+    `test_a_live_run_past_the_grace_period_is_collected_like_an_orphan` pins
+    what happens today. Not restated here — the argument had landed in three
+    places by the time it was noticed, which is the duplication `cleanup`
+    declines a few definitions up for the same reason.
     """
     try:
         return run.stat().st_mtime < cutoff
