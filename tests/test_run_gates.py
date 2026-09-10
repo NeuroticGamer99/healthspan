@@ -113,6 +113,39 @@ def temp_root(
     return root
 
 
+def _mode_bits_refuse_deletion(parent: Path) -> bool:
+    """Whether this filesystem really enforces a non-writable directory.
+
+    `sys.platform` cannot answer it. Measured under one WSL install: `chmod
+    0o500` refuses the unlink on native ext4 and refuses *nothing* on a DrvFs
+    mount — a Windows drive seen from inside WSL — where the whole `rmtree`
+    then succeeds. Both report `linux`, so the platform name selects the
+    mechanism while saying nothing about whether it works.
+
+    That matters because the caller's premise is "something here refuses
+    deletion". Where it silently does not, every test built on `undeletable`
+    passes for the wrong reason — the same shape as the Windows-only spelling
+    that reached the POSIX leg green, one layer further in. Probing the
+    property beats naming the filesystem, which is `specs/testing-strategy.md`'s
+    standing rule for exactly this class of guard.
+    """
+    probe = parent / "probe"
+    probe.mkdir()
+    victim = probe / "x"
+    victim.write_text("probe", encoding="utf-8")
+    mode = probe.stat().st_mode
+    os.chmod(probe, 0o500)
+    try:
+        victim.unlink()
+    except OSError:
+        return True
+    else:
+        return False
+    finally:
+        os.chmod(probe, mode)
+        shutil.rmtree(probe, ignore_errors=True)
+
+
 @contextlib.contextmanager
 def undeletable(run: Path) -> Generator[None]:
     """Make ``run`` survive an ``rmtree(ignore_errors=True)``, on either platform.
@@ -137,6 +170,11 @@ def undeletable(run: Path) -> Generator[None]:
         return
     if os.geteuid() == 0:
         pytest.skip("running as root: directory permissions do not refuse anything")
+    if not _mode_bits_refuse_deletion(run):
+        pytest.skip(
+            "this filesystem ignores directory mode bits, so nothing here "
+            "would refuse the deletion this helper exists to provoke"
+        )
     mode = sub.stat().st_mode
     os.chmod(sub, 0o500)
     try:
@@ -1552,16 +1590,26 @@ def test_a_live_run_past_the_grace_period_is_collected_like_an_orphan(
 
         removed = run_gates.prune_scratch_dirs(temp_root)
 
-        assert removed == [], (
-            "the run survived, so a prune reporting it removed is the "
-            "verified-against-the-filesystem contract breaking"
-        )
-        assert not sibling.exists(), (
-            "the premise failed: a closed log of a live run was expected to go"
-        )
+        # Premise first, then the behaviour — the order
+        # `test_prune_reports_only_what_it_actually_removed` sets and says why.
+        # Both premise assertions are about the *fixture*: that something still
+        # refused deletion, so this is the partial shape and not the whole one.
         assert live.is_dir(), (
-            "the premise failed: something was expected to refuse deletion, "
-            "which is what makes this the partial shape rather than the whole"
+            "the premise failed: nothing refused deletion, so this run was "
+            "removed entire and the partial shape was never reached"
+        )
+        assert removed == [], (
+            "the premise failed: the prune removed the whole directory, so its "
+            "report is right and there is no partial deletion to observe"
+        )
+        # The behaviour under test. A remedy that proves the owning invocation
+        # is alive stops collecting this run at all, `sibling` survives, and
+        # this is the assertion that reddens — deliberately. It is the signal
+        # to close the open-questions entry, not a regression to repair here.
+        assert not sibling.exists(), (
+            "a live run past the cutoff was not collected — if that is now by "
+            "design, this characterization test has done its job and the "
+            "open-questions entry it pins should be closed with it"
         )
 
 
@@ -2271,6 +2319,17 @@ def test_the_policy_defaults_are_pinned_here_and_stated_in_their_owning_adr() ->
     assert f"{hours}-hour grace period" in adr, (
         "ADR-0080 does not state the orphan grace period it says it owns"
     )
+
+    # The same drift, one category over: §2 cites tests by name as the things
+    # that pin its claims, and a rename would leave those sentences quietly
+    # false. Resolved against this module rather than spelled out, so a test
+    # the ADR names later is covered without anyone remembering to add it.
+    # Backtick-delimited and whole, so `tests/test_run_gates.py` — the module,
+    # named in §2 for a different reason — is not mistaken for a function.
+    cited = set(re.findall(r"`(test_[a-z0-9_]+)`", adr))
+    assert cited, "ADR-0080 cites no test by name — did §2's citation move?"
+    missing = sorted(name for name in cited if name not in globals())
+    assert not missing, f"ADR-0080 names tests that no longer exist here: {missing}"
 
 
 def test_containment_is_the_only_gate_exempt_from_spooling() -> None:
