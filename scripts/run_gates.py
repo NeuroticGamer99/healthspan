@@ -437,15 +437,24 @@ def _temp_root() -> Path:
     would leave the behaviour and describe it more carefully, which is the
     weaker of the two fixes.
 
-    Raw *and* resolved, normcased: on Windows a junction or an 8.3 short name
-    reaches the same directory under a name that does not compare equal, and
-    `normcase` is what makes the comparison case-correct on the leg where the
-    filesystem is not. Raised by Copilot on PR #106.
+    **Raw and resolved**, because the two catch different things and the second
+    is not decoration: a junction, a symlink, an 8.3 short name or a *relative*
+    root all reach the repository under a name that compares unequal to it, and
+    only `.resolve()` sees through them. `test_the_guard_sees_through_a_root_
+    that_only_resolves_into_the_repository` pins that leg; without it, dropping
+    `.resolve()` left the whole suite green.
+
+    Case is left to `is_relative_to`, which is already correct on both legs --
+    `WindowsPath` casefolds, `PosixPath` does not, matching the filesystems.
+    An earlier version normcased both sides and credited that for the
+    cross-platform correctness; measured, `posixpath.normcase` is the identity
+    function and `WindowsPath.is_relative_to` casefolds without help, so the
+    call did nothing on either platform and the rationale named a mechanism
+    that was not working. Raised by Copilot on PR #106.
     """
     root = Path(tempfile.gettempdir())
-    repo = Path(os.path.normcase(REPO_ROOT))
     for candidate in (root, root.resolve()):
-        if Path(os.path.normcase(candidate)).is_relative_to(repo):
+        if candidate.is_relative_to(REPO_ROOT):
             raise GateError(
                 f"the temp root is inside the repository ({candidate}). Gate "
                 "output would become a repository file: unset TMPDIR/TEMP/TMP "

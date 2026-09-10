@@ -2747,6 +2747,33 @@ def test_a_temp_root_inside_the_repository_is_refused(
 
 
 @pytest.mark.unpatched_temp_root
+def test_the_guard_sees_through_a_root_that_only_resolves_into_the_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `.resolve()` leg, which the two literal-path cases never reach.
+
+    Measured in review: dropping `.resolve()` from the guard left all 220 tests
+    green, because both other cases hand it an already-absolute, already-real
+    path that the raw comparison catches by itself. A junction, a symlink or an
+    8.3 short name all reach the repository under a name that compares unequal
+    to it -- and so does a *relative* root, which is the same leg reached
+    without needing a link, a privilege, or an OS-specific spelling.
+
+    `chdir` to the repository root is what makes `"."` resolve into it. Left as
+    `monkeypatch.chdir` so it is undone even if the assertion fails.
+    """
+    monkeypatch.chdir(run_gates.REPO_ROOT)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: ".")
+
+    # The premise: raw, this is not under the repository -- so a guard checking
+    # only the raw path would let it through, and the test would prove nothing.
+    assert not Path(".").is_relative_to(run_gates.REPO_ROOT)
+
+    with pytest.raises(run_gates.GateError, match="inside the repository"):
+        run_gates._temp_root()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.unpatched_temp_root
 def test_a_temp_root_outside_the_repository_is_allowed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
