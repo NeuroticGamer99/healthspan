@@ -590,6 +590,24 @@ def _abandoned(run: Path, cutoff: float) -> bool:
     becomes marked, so without this it would hold disk forever. Unstattable
     counts as abandoned, matching the mark's reading of the same failure from
     the other side: neither call can show the directory to be live.
+
+    **Age is the only evidence here, and it cannot prove the owning invocation
+    exited.** The measurement that rules out recency for *ordering* applies to
+    this liveness question too: a directory's mtime advances when a step log is
+    created in it, not while one is appended, so a run hung inside a single step
+    past the cutoff — or one spanning a suspend longer than it — reads exactly
+    like a run killed before it could mark itself. A concurrent invocation then
+    collects it. On POSIX the whole tree goes and the canary scan matches
+    nothing, falling back to the literal glob it fails closed on; on Windows the
+    open logs refuse deletion while their closed siblings go, and the scan takes
+    the surviving subset and passes. The second is the partial-scan green this
+    retention scheme exists to prevent, arriving on a 24-hour horizon instead of
+    a five-slot race. Bounding the promise is still worth more than the residual
+    — an unbounded one holds disk forever, and reaching this needs a run live
+    past the cutoff *and* a second invocation during it — but the residual is
+    real, and proving an exit rather than inferring one is a mechanism of its
+    own. Raised by Greptile on PR #106; `specs/open-questions.md` carries it
+    with the trigger that would settle it.
     """
     try:
         return run.stat().st_mtime < cutoff
@@ -610,9 +628,13 @@ def prune_scratch_dirs(root: Path | None = None, keep: int | None = None) -> lis
     a surviving subset of the worker logs and pass. `mkdtemp` names are random,
     so name order is no better.
 
-    In-progress runs are not counted against ``keep``: they are not eligible for
-    deletion at all, so concurrent invocations do not compete for the retained
-    slots. `_abandoned` is what keeps that from being an unbounded promise.
+    In-progress runs are not counted against ``keep``, so concurrent invocations
+    do not compete for the retained slots. That exemption is bounded rather than
+    absolute: `_abandoned` collects an unmarked directory once it is older than
+    the grace period, which keeps "unmarked means leave it alone" from being an
+    unbounded promise and costs a residual it documents — age cannot prove the
+    owning invocation exited, so a run still live past the cutoff is collected
+    like an orphan.
 
     Every filesystem call here tolerates failure. Two runs pruning at once will
     race, and losing that race means another process already removed the
