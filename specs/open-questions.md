@@ -616,6 +616,17 @@ The refusal gate runs first because its `Gate` literal sits at the front of `GAT
 
 **Against adopting it now:** the selector residual is already owned by the carve-out widening (the case-sensitivity entry above), which fixes every gate at once rather than routing every run through one; and a prepend that an operator did not ask for is the kind of helpfulness that makes `--print`'s and `--list`'s output disagree with what runs.
 
+**A third candidate, raised by CodeRabbit on PR #107 and in neither half above: redact the spooled
+output instead of reordering the run.** It attacks the residual where it becomes durable rather than
+where it originates, and so needs no prepend and leaves every selector's gate set alone. Against it:
+"disable retention for those paths" cannot be decided before a gate runs — nothing knows a gate will
+name a path until it has — so in practice it reduces to redaction; and redaction means matching a
+containment path in every line of every gate's output, which duplicates
+`scripts/check_personal_containment.py`'s matcher (whose docstring records six wrong attempts at
+enumerating the holes it closes) and inherits this entry's own case-sensitivity problem one layer
+further in, now on a hot path. Recorded because it is a genuinely different axis, not because it is
+better.
+
 **Acceptance for any remedy:** the ordering claim in `GATES`' comment must be checkable without reading where a literal sits — a test that reorders the registry and still finds the refusal gate first — and if the prepend half is taken, `--list`, `--print` and a real run must agree on the gate set for every selector, pinned for a group as well as for a bare name.
 
 **Trigger: the next change to the registry's order, or the carve-out widening, whichever comes first** — the widening because it re-examines exactly this surface, and a re-sort because that is when the convention is load-bearing and unchecked. Raised by the external review of the containment-first change (round 1, 2026-09-11) as its one item reaching §4's residual; recorded rather than built on the owner's call, since it is a design change and the round that found it reviewed neither half.
