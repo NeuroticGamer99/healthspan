@@ -523,9 +523,17 @@ class Context:
             # constant's own comment says cannot exist.
             return _temp_root() / f"{SCRATCH_PREFIX}scratch"
         if self.scratch is None:
-            self.scratch = Path(
-                tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=_temp_root())
-            )
+            root = _temp_root()
+            try:
+                self.scratch = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=root))
+            except OSError as exc:
+                # Same conversion as the sink's open and its writes: a full,
+                # missing or unwritable temp directory is a gate that could not
+                # start, not a traceback. This is the earliest of the three and
+                # was the last to be converted. Raised by Copilot on PR #106.
+                raise GateError(
+                    f"could not create a run directory in {root}: {exc}"
+                ) from exc
         return self.scratch
 
     def step_log(self, gate: str, position: int) -> Path:
@@ -611,9 +619,17 @@ def _completed_at(run: Path) -> float | None:
     raising. That is a property of `glob` rather than of those three cases:
     `Path.iterdir` on the *same* denied directory raises `PermissionError`
     (measured), so the swallowing is real and is what leaves this stat as the
-    one filesystem call in the prune whose failure is visible. The reading it
-    produces is the safe one: a directory whose mark cannot be read is treated
-    as still running rather than as prunable.
+    one filesystem call in the prune whose failure is visible.
+
+    **What an unreadable mark produces is `None` -- "unmarked" -- and not a
+    verdict.** Liveness is then `_abandoned`'s to decide, and it collects an
+    unmarked directory once it is past the grace period, treating unstattable
+    as abandoned. An earlier version of this line claimed such a directory was
+    "treated as still running rather than as prunable", which the caller
+    contradicts two functions down. Raised by Copilot on PR #106, and a sibling
+    of the same overclaim corrected in `prune_scratch_dirs` on this branch --
+    the correction there was swept for siblings four times and this one, in the
+    function immediately above, survived every pass.
     """
     try:
         return (run / COMPLETE_MARKER).stat().st_mtime
@@ -1404,14 +1420,17 @@ def replay_tail(log: Path, lines: int | None = None) -> None:
     except OSError as exc:
         # Not fatal: the step's exit code has already been decided, and losing
         # the replay must not turn a legible failure into an unhandled one.
-        print(f"  (could not read the captured output at {log}: {exc})", flush=True)
+        print(
+            _console_safe(f"  (could not read the captured output at {log}: {exc})"),
+            flush=True,
+        )
         return
     omitted = total - len(tail)
     suffix = f", {omitted} earlier line(s) in the file" if omitted else ""
     print(f"--- last {len(tail)} line(s) of output{suffix} ---", flush=True)
     for line in tail:
         print(_console_safe(line.rstrip("\n")))
-    print(f"--- full output: {log} ---", flush=True)
+    print(_console_safe(f"--- full output: {log} ---"), flush=True)
 
 
 def run_step(
@@ -1499,17 +1518,33 @@ def run_step(
         # missing tool identically rather than one naming it and one crashing.
         sink.close()
         raise GateError(f"could not start `{step.shown()}`: {exc}") from exc
-    with started as process, sink:
-        # `stdout=PIPE` above guarantees a pipe; the guard is here rather than an
-        # assert because asserts are stripped under -O, and a silently skipped
-        # capture would hand the canary scan an empty log and call it clean.
-        if process.stdout is not None:
-            for line in process.stdout:
+    try:
+        with started as process, sink:
+            # `stdout=PIPE` above guarantees a pipe; the guard is here rather
+            # than an assert because asserts are stripped under -O, and a
+            # silently skipped capture would hand the canary scan an empty log
+            # and call it clean.
+            if process.stdout is not None:
+                for line in process.stdout:
+                    if echo:
+                        sys.stdout.write(line)
+                    sink.write(line)
                 if echo:
-                    sys.stdout.write(line)
-                sink.write(line)
-            if echo:
-                sys.stdout.flush()
+                    sys.stdout.flush()
+    except OSError as exc:
+        # The third site of the conversion the two above already do, and the
+        # one with a consequence beyond a traceback. `main` sets `ctx.failed`
+        # only on the paths it recognises, and `cleanup` sweeps `ephemeral`
+        # when `failed` is false -- so an `OSError` escaping here (a full
+        # volume mid-write, a failed flush on close) reads to cleanup as a
+        # green run and deletes the canary worker sink, which is the evidence
+        # a failure report names. Converting is what routes it through the
+        # handler that sets the flag. Raised by CodeRabbit on PR #106; an
+        # earlier review found the same escape and stopped at the traceback.
+        raise GateError(
+            f"could not write the captured output of `{step.shown()}` to "
+            f"{step.capture_to}: {exc}"
+        ) from exc
     code = process.returncode
     if code != 0 and not echo:
         # The sink is closed by the `with` above, so the replay reads a complete
@@ -1600,7 +1635,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         text = CI_WORKFLOW.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"cannot read {CI_WORKFLOW}: {exc}", file=sys.stderr)
+        print(_console_safe(f"cannot read {CI_WORKFLOW}: {exc}"), file=sys.stderr)
         return 1
 
     # --list and --print read commands rather than running them, so they build
@@ -1680,9 +1715,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             # a test that fakes `run_gate` out from reaching the shared temp
             # directory through this line.
             print(
-                f"Step output is captured to {ctx.scratch_dir()} "
-                "(--verbose streams it instead, though a gate bringing its own "
-                "sink still writes it)."
+                _console_safe(
+                    f"Step output is captured to {ctx.scratch_dir()} "
+                    "(--verbose streams it instead, though a gate bringing its "
+                    "own sink still writes it)."
+                )
             )
 
         # Sequential with an early exit, not a comprehension over every gate:
@@ -1698,7 +1735,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ctx.failed = True
                 return 1
     except GateError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(_console_safe(f"error: {exc}"), file=sys.stderr)
         ctx.failed = True
         return 1
     finally:

@@ -2645,6 +2645,100 @@ def test_the_replay_prints_a_line_the_console_cannot_encode(
     assert "out of range" in console.getvalue()
 
 
+def test_the_replays_own_frame_survives_a_console_that_cannot_encode_the_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`_console_safe` guarded the child's lines and not the frame around them.
+
+    The sibling above puts an unencodable character in the log's *contents*,
+    which the replayed lines already routed through the helper. The path is the
+    other half: `--- full output: <log> ---` and the read-error diagnostic both
+    interpolate it, and a temp directory carries the account name, so a console
+    that cannot encode it crashed the reporter on its own last line. The body
+    here is deliberately ASCII, so only the frame can break this.
+
+    Measured before the guard reached them: `_console_safe` was defined once
+    and called at exactly one site, with four other prints interpolating a path
+    or an exception. Raised by Copilot on PR #106.
+    """
+    console = _LegacyConsole()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+    log = tmp_path / "→ wide.log"
+    log.write_text("a line of plain ascii\n", encoding="utf-8")
+
+    run_gates.replay_tail(log)
+
+    assert "full output" in console.getvalue(), (
+        "the frame naming the log is what the console could not encode"
+    )
+
+
+class _FullDisk(io.StringIO):
+    """A sink that opens and then refuses its writes, the way a full volume does."""
+
+    def write(self, s: str) -> int:
+        raise OSError("No space left on device")
+
+
+def test_a_capture_that_fails_after_the_sink_opened_is_a_gate_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The consequence is not the traceback; it is `cleanup` reading it as green.
+
+    `main` sets `ctx.failed` only on the paths it recognises and `cleanup`
+    sweeps `ephemeral` when `failed` is false -- so an `OSError` escaping the
+    write loop deletes the canary worker sink, the evidence a failure report
+    names. Converting here is what routes it through the handler that sets the
+    flag. The open already converted and the write did not, which is the
+    inconsistency that made this findable. Raised by CodeRabbit on PR #106.
+    """
+    target = tmp_path / "refused.log"
+    real_open = Path.open
+
+    def fake_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        # Matched on the exact path, never on the suffix. `Path.open` is patched
+        # process-wide for the duration, so a `self.suffix == ".log"` test also
+        # catches pytest's own logging inside this xdist worker -- measured: it
+        # crashed `gw8` and failed the run with `INTERNALERROR ... assert not
+        # crashitem`, intermittently, depending on what else the worker did
+        # while the patch was live. Found from the retained gate log, which is
+        # the feature this branch adds.
+        if self == target:
+            return _FullDisk()
+        # `cast` because `Path.open`'s overloads do not survive `*args: Any`,
+        # and a bare passthrough is `Unknown` under --strict.
+        return cast(Any, real_open(self, *args, **kwargs))
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    step = run_gates.Step(
+        [sys.executable, "-c", "print('a line the sink will refuse')"],
+        capture_to=target,
+    )
+
+    with pytest.raises(run_gates.GateError, match="could not write the captured"):
+        run_gates.run_step(step, echo=False)
+
+
+def test_a_run_directory_that_cannot_be_created_is_a_gate_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The earliest of the three sites, and the last to be converted.
+
+    A full, missing or unwritable temp directory made `mkdtemp` raise where
+    `main` catches only `GateError`, so the runner died with a raw traceback
+    before any gate ran. Raised by Copilot on PR #106.
+    """
+
+    def refuse(*args: Any, **kwargs: Any) -> str:
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", refuse)
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+
+    with pytest.raises(run_gates.GateError, match="could not create a run directory"):
+        ctx.scratch_dir()
+
+
 @pytest.mark.parametrize("locked", [False, True], ids=["missing", "unreadable"])
 def test_the_replay_survives_a_log_it_cannot_read(
     locked: bool,
