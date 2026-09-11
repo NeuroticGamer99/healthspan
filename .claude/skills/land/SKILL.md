@@ -73,9 +73,11 @@ The rule has an **enumeration** half — which paths does this change touch — 
 default set. Scroll back to the block whose header begins `=== containment —`; everything below is
 how to read what it printed. Prefer that to re-running: a second branch-history walk buys nothing.
 
-**But do not assume it ran.** `containment` is one gate among several and the runner stops at the
-first failure, so any earlier gate failing means it never executed — and step 2 explicitly supports
-subset runs like `python scripts/run_gates.py ruff`, which never select it at all. If there is no
+**But do not assume it ran.** Step 2 explicitly supports subset runs like
+`python scripts/run_gates.py ruff`, which never select `containment` at all — and that is the case
+that actually occurs. A full run also stops at the first failure, so a gate ordered ahead of it
+failing would mean it never executed; whether anything *is* ordered ahead of it is the runner's to
+change, which is why neither reason is stated as a position in the gate order. If there is no
 `=== containment —` block to scroll back to, run the gate by name:
 
 ```bash

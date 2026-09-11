@@ -565,6 +565,20 @@ class Context:
         with contextlib.suppress(OSError):
             (self.scratch / COMPLETE_MARKER).touch()
 
+    def _scratch_is_empty(self) -> bool:
+        """Whether this run's directory was created and holds nothing at all.
+
+        ``False`` on any error, so a reading that failed leaves the caller on
+        its pre-existing path — mark and retain — rather than deciding a
+        removal from an answer it does not have.
+        """
+        if self.scratch is None:
+            return False
+        try:
+            return not any(self.scratch.iterdir())
+        except OSError:
+            return False
+
     def cleanup(self) -> None:
         """Drop this run's working material; keep its logs; prune older runs.
 
@@ -607,7 +621,25 @@ class Context:
             for path in self.ephemeral:
                 shutil.rmtree(path, ignore_errors=True)
             self.ephemeral.clear()
-        self.mark_complete()
+        if self._scratch_is_empty():
+            # An empty directory is not a product, and marking it complete
+            # spends one of `RUNS_RETAINED` slots to keep nothing — evicting a
+            # run whose logs someone may still want. The notice in `main` is
+            # what creates this directory and it fires whenever *any* selected
+            # gate spools, which is not the same as one having spooled: the run
+            # can exit first. `containment` is the gate that makes that
+            # ordinary rather than rare — it runs first and is the one gate
+            # exempt from spooling (ADR-0080 §5), so every refused tree returns
+            # through here with the directory still empty.
+            #
+            # Removed rather than left unmarked. An unmarked directory is
+            # exempt from `keep`, so that alone would stop the eviction, but it
+            # then lingers until `ORPHAN_GRACE_SECONDS` — trading a wrong
+            # eviction for an accumulating pile of empty directories in the
+            # shared temp root.
+            shutil.rmtree(self.scratch, ignore_errors=True)
+        else:
+            self.mark_complete()
         prune_scratch_dirs()
 
 
@@ -1098,11 +1130,77 @@ def _pip_audit(ctx: Context) -> list[Step]:
 
 # --------------------------------------------------------------------------
 # The registry — the single structure the selector, --list, and the drift test
-# all read. Listed in execution order: cheap gates first, so a lint typo does
-# not cost 112 seconds of pytest before it surfaces.
+# all read. Listed in execution order, under two principles that order the
+# whole tuple and one pairwise constraint that does not:
+#
+# 1. `containment` first. It is the gate that refuses a tree holding a personal
+#    path, and nearly every gate behind it walks that tree and names the
+#    offending path on a violation (ADR-0080 §3 enumerates the six and which of
+#    them add a line number -- `ruff format --check` does not). Running it first
+#    means a run over such a tree stops before any other gate can name the path
+#    it found, which is the bound ADR-0080 §4 rests on.
+# 2. Then the cheap gates ahead of the slow ones (`SLOW_GATES`), so a lint typo
+#    does not cost 112 seconds of pytest before it surfaces. Deliberately *not*
+#    "cheapest first", which is what this said until a review round measured it:
+#    `spec-links` runs ahead of gates that cost appreciably less (ADR-0080 §5
+#    measures all of them; no figure is restated here, and the first draft of
+#    this line restated one wrong), so a strict cost sort is a claim this tuple
+#    does not earn -- and nothing could pin one without encoding a per-gate
+#    timing, a machine-specific number the registry has no business holding.
+#    Cheap-versus-slow is the same distinction `--fast` already acts on, so it
+#    is pinnable against the module rather than against a stopwatch. No position
+#    is quoted here, per `_uv_python_step`'s rule: an ordinal into a registry
+#    that gains entries is wrong the moment one is inserted above it, and this
+#    change is exactly such an insertion.
+# 3. And `spec-links` ahead of `lockfile`, which neither principle above
+#    implies: both gates are cheap and neither is the refusal gate, so a
+#    maintainer re-sorting this tuple to (1) and (2) alone can legally swap
+#    them. `spec-links` runs under `uv run`, which re-locks when
+#    `pyproject.toml` has moved ahead of `uv.lock` — behind `uv lock --check`
+#    it would repair the lockfile that gate has just certified, so local passes
+#    while CI fails on a clean checkout (ADR-0061).
+#    `test_the_docs_gate_runs_before_the_lockfile_gate` pins it, as a relation
+#    rather than as two positions. It is a constraint on one pair, not a
+#    principle over the tuple, which is why `--list` does not state it: nothing
+#    an operator chooses between depends on it.
+#
+# ADR-0080 §5 owns the decision, what (1) costs a local run, and the two
+# consequences it carries -- including that `containment` at `--scope branch`
+# resolves a merge base, so a broken checkout now fails first. **The promotion's
+# cost** is deliberately not repeated here: that figure was measured wrong once
+# already, and a measurement at two sites with nothing pinning them together is
+# one that gets corrected at whichever site the reader happened to open. Scoped
+# to that figure rather than to every number, because principle 2's reason is
+# pytest's 112 seconds, and a principle whose justification lives only in
+# another document is one a reader of this tuple cannot weigh.
+#
+# `--list` states both principles, and
+# `test_the_list_output_states_the_ordering_it_uses` pins both: `containment` at
+# the front of this tuple, and -- over the *local* gates alone -- no cheap gate
+# behind the first slow one. That narrowing is not a hedge: `gitleaks` and
+# `test-matrix` are CI-only and not slow, and they sit behind `pytest`, so the
+# partition is false of the whole tuple and true of what a local run executes.
 # --------------------------------------------------------------------------
 
 GATES: tuple[Gate, ...] = (
+    Gate(
+        name="containment",
+        job="secrets",
+        # The scope is in the summary, not only in the argv: ADR-0075 §1 admits
+        # this gate as a *declared* narrowing and makes naming the reduction at
+        # the gate the one checkable half of that class's two conditions. Both
+        # that ADR and this module's header said `--list` rendered these words
+        # while the summary did not carry them, so the condition was documented
+        # as met by a string that did not exist.
+        summary=(
+            "no path at or under specs/personal is tracked, staged, or in "
+            "history (branch scope)"
+        ),
+        ci_steps=("Scan full git history for personal-data paths",),
+        build=_docs_gate("check_personal_containment.py", "--scope", "branch"),
+        # A violation names the path it found. See `Gate.spool_output`.
+        spool_output=False,
+    ),
     Gate(
         name="adr-index",
         job="docs",
@@ -1172,15 +1270,6 @@ GATES: tuple[Gate, ...] = (
             "uncollapsed fragments are the expected state, so a local run would "
             "fail every branch that has been reviewed"
         ),
-    ),
-    Gate(
-        name="containment",
-        job="secrets",
-        summary="no path at or under specs/personal is tracked, staged, or in history",
-        ci_steps=("Scan full git history for personal-data paths",),
-        build=_docs_gate("check_personal_containment.py", "--scope", "branch"),
-        # A violation names the path it found. See `Gate.spool_output`.
-        spool_output=False,
     ),
     Gate(
         name="lockfile",
@@ -1345,7 +1434,11 @@ def version_of(gate: Gate, ctx: Context) -> str:
 
 def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
     gates = list(gates) if gates is not None else list(GATES)
-    lines = ["Gates derived from .github/workflows/ci.yml", ""]
+    # Derived from the constant that is actually read, not spelled again: the
+    # header asserting a path while `CI_WORKFLOW` pointed somewhere else was a
+    # lie no test could catch, because the only assertion on this line compared
+    # it to the same literal it restated.
+    lines = [f"Gates derived from {CI_WORKFLOW.relative_to(REPO_ROOT).as_posix()}", ""]
     width = max(len(gate.name) for gate in gates)
     for gate in gates:
         where = "local" if gate.local else "CI-only"
@@ -1365,10 +1458,26 @@ def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
         lines.append("")
     selectors = ", ".join(sorted(groups()))
     lines.append(f"Groups: {selectors}")
-    lines.append(
-        "No arguments runs every local gate, cheapest first, "
-        "stopping at the first failure."
-    )
+    # The ordering sentence belongs to the whole registry, so it is only
+    # printed when the whole registry is what was listed. `--list lockfile`
+    # rendered a one-gate list under "containment first", and `--list --fast`
+    # claimed "cheap before slow" with every slow gate already dropped — both
+    # scoped by the "No arguments runs" prefix and so not false, but an
+    # operator following `/land` step 2's documented subset form reads a
+    # sentence about gates that are not on the screen. It went unnoticed
+    # because naming a gate here is new: the sentence named none until the
+    # promotion, when the mismatch stopped being inert.
+    if [gate.name for gate in gates] == [gate.name for gate in GATES]:
+        lines.append(
+            "No arguments runs every local gate — containment first, then cheap "
+            "before slow — stopping at the first failure."
+        )
+    else:
+        lines.append(
+            f"Listed {len(gates)} of {len(GATES)} gates, in the order this "
+            "selection runs. No arguments runs every local gate, stopping at "
+            "the first failure."
+        )
     return "\n".join(lines)
 
 
@@ -1393,6 +1502,53 @@ def _console_safe(line: str, stream: TextIO | None = None) -> str:
     target = sys.stdout if stream is None else stream
     encoding = getattr(target, "encoding", None) or "utf-8"
     return line.encode(encoding, "replace").decode(encoding, "replace")
+
+
+def _say(line: str, stream: TextIO | None = None, *, flush: bool = False) -> None:
+    """Print one operator-facing line, encodable on whatever console this is.
+
+    The guard `_console_safe` provides, applied from one place rather than
+    re-decided at every call site. Hand-wrapping missed five of `main`'s
+    prints: the two literal em dashes in the summary tail, the `CI-only — …`
+    line in the nothing-to-run branch and its twin under `--print`, and the
+    whole of `--list`'s output — to which this branch then added two more em
+    dashes in the footer. A review measured the last of those raising
+    `UnicodeEncodeError` on a cp437 stdout under `import run_gates;
+    run_gates.main(['--list'])`, which is the imported-and-called case
+    `_console_safe` documents itself as existing for.
+
+    So the rule is not "wrap the lines that look risky" — every one of these
+    lines interpolates registry or builder text, and which of them can carry a
+    non-ASCII character changes whenever a `summary`, a `ci_only_reason` or a
+    `display` is edited.
+
+    **The invariant is stated over the whole module, not over a list of
+    functions, because three successive lists were each wrong.** Naming the
+    guarded functions here is what failed: this docstring once excused
+    `run_gate` as "reports a step's own captured output, where `replay_tail`
+    already does this work" — true of the failure banner, never true of the
+    gate-start banner — and when `run_gate` was added, `run_step`'s
+    `$ {step.shown()}` line one call further down was still bare. Reviewers
+    measured a crash at each. So the claim made here is deliberately narrow:
+    *this function* applies the guard, and
+    `test_every_console_write_in_the_runner_is_encoding_guarded` is what asserts
+    that no `print` or `sys.std*.write` anywhere in this module emits text that
+    did not pass through `_console_safe`. That question is asked of the AST, so
+    a new writer is covered without anyone remembering to extend a list.
+
+    Every console write here is a call to this function, with one deliberate
+    exception that the invariant above still covers: `run_step`'s `--verbose`
+    echo writes raw, because it reproduces a child's output byte for byte and
+    this function appends a newline. It wraps its own argument instead.
+
+    `flush` exists because ordering matters for an announcement: a step's
+    `$ command` line precedes a child process that writes to the same terminal.
+    It is pinned by `test_say_flushes_when_asked_and_not_otherwise` — dropping it
+    left every console double in the suite indifferent, a `StringIO` behaving
+    the same flushed or not.
+    """
+    target = sys.stdout if stream is None else stream
+    print(_console_safe(line, target), file=target, flush=flush)
 
 
 def replay_tail(log: Path, lines: int | None = None) -> None:
@@ -1429,17 +1585,14 @@ def replay_tail(log: Path, lines: int | None = None) -> None:
     except OSError as exc:
         # Not fatal: the step's exit code has already been decided, and losing
         # the replay must not turn a legible failure into an unhandled one.
-        print(
-            _console_safe(f"  (could not read the captured output at {log}: {exc})"),
-            flush=True,
-        )
+        _say(f"  (could not read the captured output at {log}: {exc})", flush=True)
         return
     omitted = total - len(tail)
     suffix = f", {omitted} earlier line(s) in the file" if omitted else ""
-    print(f"--- last {len(tail)} line(s) of output{suffix} ---", flush=True)
+    _say(f"--- last {len(tail)} line(s) of output{suffix} ---", flush=True)
     for line in tail:
-        print(_console_safe(line.rstrip("\n")))
-    print(_console_safe(f"--- full output: {log} ---"), flush=True)
+        _say(line.rstrip("\n"))
+    _say(f"--- full output: {log} ---", flush=True)
 
 
 def run_step(
@@ -1472,7 +1625,12 @@ def run_step(
     # behaviour anyone could observe. An argument with no default cannot have a
     # wrong one, and every caller now says which half of the contract it wants.
     env = {**os.environ, **(workflow_env or {}), **step.env}
-    print(f"$ {step.shown()}", flush=True)
+    # `step.shown()` is builder-supplied text, so this line carries the same
+    # class of content as the banners above it. It was the bare `print` a second
+    # review round found one call below the ones that had just been routed — the
+    # enumeration had moved rather than closed, which is why the invariant is now
+    # checked over this module's whole AST rather than over a list of functions.
+    _say(f"$ {step.shown()}", flush=True)
     if step.capture_to is None:
         try:
             completed = subprocess.run(  # noqa: S603 - fixed executable, no shell
@@ -1536,7 +1694,14 @@ def run_step(
             if process.stdout is not None:
                 for line in process.stdout:
                     if echo:
-                        sys.stdout.write(line)
+                        # Guarded, and written raw rather than through `_say`:
+                        # this echoes a child's output byte for byte, newlines
+                        # included, where `_say` would add one of its own. It is
+                        # the one console write in this module that is not a
+                        # `_say` call, which is why the invariant is stated as
+                        # "passes through `_console_safe`" rather than "calls
+                        # `_say`". A `print(`-substring scan could never see it.
+                        sys.stdout.write(_console_safe(line))
                     sink.write(line)
                 if echo:
                     sys.stdout.flush()
@@ -1563,13 +1728,20 @@ def run_step(
 
 
 def run_gate(gate: Gate, ctx: Context) -> GateResult:
-    print(f"\n=== {gate.name} — {gate.summary} ===", flush=True)
+    # Through `_say`, like every other operator-facing line. This banner carries
+    # a literal em dash and a registry `summary`, and it is the *first* thing
+    # printed on every real run — so an imported-and-called run on a console that
+    # cannot encode U+2014 crashed here before reaching any gate. Measured by a
+    # reviewer against a cp437 stdout. An earlier version of `_say`'s docstring
+    # excused this function wholesale as "reports a step's own captured output",
+    # which is true of the failure banner below and was never true of this line.
+    _say(f"\n=== {gate.name} — {gate.summary} ===", flush=True)
     steps = gate.steps(ctx)
     if not steps:
         # Reported as its own outcome rather than as a pass: a gate that
         # executed nothing has proved nothing, and folding it into the passed
         # count is the false green `Gate.steps` refuses for CI-only gates.
-        print("  (nothing to do — no work for this gate)")
+        _say("  (nothing to do — no work for this gate)")
         return GateResult.EMPTY
 
     failed = False
@@ -1585,10 +1757,13 @@ def run_gate(gate: Gate, ctx: Context) -> GateResult:
             step = replace(step, capture_to=ctx.step_log(gate.name, position))
         code = run_step(step, ctx.workflow_env, echo=ctx.verbose)
         if code != 0:
-            print(f"\nFAILED: {gate.name} (exit {code})", file=sys.stderr)
-            print(f"  command: {step.shown()}", file=sys.stderr)
+            _say(f"\nFAILED: {gate.name} (exit {code})", sys.stderr)
+            _say(f"  command: {step.shown()}", sys.stderr)
             if step.on_failure:
-                print(f"  note: {step.on_failure}", file=sys.stderr)
+                # Registry prose, so it can gain a dash at any time — which is
+                # the whole argument for routing these rather than auditing them
+                # per line.
+                _say(f"  note: {step.on_failure}", sys.stderr)
             # Not an early return: a later `always_run` step still has to run,
             # and its own failure is folded into the same verdict.
             failed = True
@@ -1644,10 +1819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         text = CI_WORKFLOW.read_text(encoding="utf-8")
     except OSError as exc:
-        print(
-            _console_safe(f"cannot read {CI_WORKFLOW}: {exc}", sys.stderr),
-            file=sys.stderr,
-        )
+        _say(f"cannot read {CI_WORKFLOW}: {exc}", sys.stderr)
         return 1
 
     # --list and --print read commands rather than running them, so they build
@@ -1691,26 +1863,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             # silence, and a reader asking what a gate runs cannot tell it from
             # an answer. Two reasons, never conflated — a local gate --fast
             # dropped is not a gate this machine cannot run.
-            print("nothing to run.", file=sys.stderr)
+            _say("nothing to run.", sys.stderr)
             for gate in dropped:
-                print(f"  - {gate.name}: dropped by --fast", file=sys.stderr)
+                _say(f"  - {gate.name}: dropped by --fast", sys.stderr)
             for gate in skipped:
-                print(
-                    f"  - {gate.name}: CI-only — {gate.ci_only_reason}", file=sys.stderr
-                )
+                _say(f"  - {gate.name}: CI-only — {gate.ci_only_reason}", sys.stderr)
             return 1
 
         if args.list:
-            print(render_list(ctx, selected))
+            _say(render_list(ctx, selected))
             return 0
 
         if args.print_only:
             for gate in runnable:
-                print(f"# {gate.name}")
-                for step in gate.steps(ctx):
-                    print(step.shown())
+                _say(f"# {gate.name}")
+                # Reported inline and the enumeration continued, which is what
+                # `--list` does with the same error (`render_list`'s per-gate
+                # handler). Left outside any handler, one gate whose builder
+                # refuses aborted the loop through `main`'s `except GateError`:
+                # the commands printed so far stayed on stdout with no marker
+                # that the list had been truncated, so a script or an agent
+                # reading `--print` to enumerate commands silently got a
+                # partial set. The two read-only branches now answer a broken
+                # builder the same way.
+                try:
+                    steps = gate.steps(ctx)
+                except GateError as exc:
+                    _say(f"# ! {exc}")
+                else:
+                    for step in steps:
+                        _say(step.shown())
             for gate in skipped:
-                print(f"# {gate.name}: CI-only — {gate.ci_only_reason}")
+                _say(f"# {gate.name}: CI-only — {gate.ci_only_reason}")
             return 0
 
         if not args.verbose and any(gate.spool_output for gate in runnable):
@@ -1726,18 +1910,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             # retention slot evicting a real run to do it. The guard also keeps
             # a test that fakes `run_gate` out from reaching the shared temp
             # directory through this line.
-            print(
-                _console_safe(
-                    f"Step output is captured to {ctx.scratch_dir()} "
-                    "(--verbose streams it instead, though a gate bringing its "
-                    "own sink still writes it)."
-                )
+            #
+            # It answers "will anything spool", which is not "has anything
+            # spooled": with `containment` first and exempt, a refused tree
+            # returns from the loop below having written nothing here. That
+            # residue is `Context.cleanup`'s to remove, and the guard is not the
+            # place to fix it — the run's first failure point is not knowable
+            # before the run.
+            _say(
+                f"Step output is captured to {ctx.scratch_dir()} "
+                "(--verbose streams it instead, though a gate bringing its "
+                "own sink still writes it)."
             )
 
         # Sequential with an early exit, not a comprehension over every gate:
-        # the registry is ordered cheap-to-slow precisely so a lint failure does
-        # not cost a full test run first, and collecting all results before
-        # checking them throws that away.
+        # the registry puts `containment` first and then the cheap gates ahead
+        # of the slow ones (the two principles above `GATES`) precisely so a
+        # refused tree, or a lint failure, does not cost a full test run first,
+        # and collecting all results before checking them throws that away.
         results: dict[str, GateResult] = {}
         for gate in runnable:
             results[gate.name] = run_gate(gate, ctx)
@@ -1747,7 +1937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ctx.failed = True
                 return 1
     except GateError as exc:
-        print(_console_safe(f"error: {exc}", sys.stderr), file=sys.stderr)
+        _say(f"error: {exc}", sys.stderr)
         ctx.failed = True
         return 1
     finally:
@@ -1759,9 +1949,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # empty-gate report made the summary contradict itself: "All 12 selected
     # gate(s) passed." immediately followed by one that examined nothing.
     if empty:
-        print(f"\n{len(passed)} selected gate(s) passed.")
+        _say(f"\n{len(passed)} selected gate(s) passed.")
     else:
-        print(f"\nAll {len(passed)} selected gate(s) passed.")
+        _say(f"\nAll {len(passed)} selected gate(s) passed.")
     if empty:
         # Named *and* non-zero. Naming it while still exiting 0 was the false
         # green in a quieter register: `/land` reads the exit code and its rule
@@ -1770,15 +1960,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         # anyway. The only gate that can be empty here is markdown-lint, and it
         # is empty only when `git ls-files` matches no tracked *.md — which in
         # this repository means the query broke, not that there is no markdown.
-        print(f"{len(empty)} gate(s) had nothing to run — they prove nothing:")
+        _say(f"{len(empty)} gate(s) had nothing to run — they prove nothing:")
         for name in empty:
-            print(f"  - {name}")
-        print("Exiting non-zero: a gate that examined nothing is not a pass.")
+            _say(f"  - {name}")
+        _say("Exiting non-zero: a gate that examined nothing is not a pass.")
         return 1
     if skipped:
-        print(f"Skipped {len(skipped)} CI-only gate(s) — this is not full CI green:")
+        _say(f"Skipped {len(skipped)} CI-only gate(s) — this is not full CI green:")
         for gate in skipped:
-            print(f"  - {gate.name}: {gate.ci_only_reason}")
+            _say(f"  - {gate.name}: {gate.ci_only_reason}")
     return 0
 
 
