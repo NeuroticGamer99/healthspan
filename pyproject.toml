@@ -54,6 +54,16 @@ extraPaths = ["scripts", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    # Opts a test out of test_run_gates.py's autouse temp-root redirect, so the
+    # real resolution runs somewhere. Registration buys quiet, not correctness:
+    # measured, an *unregistered* mark still reaches `request.keywords`, so the
+    # opt-out keeps working and only a PytestUnknownMarkWarning appears — and
+    # neither this file nor ci.yml turns that warning into a failure. It is
+    # registered so the suite stays warning-free and a genuine typo in a mark
+    # name is not hidden among warnings nobody reads.
+    "unpatched_temp_root: let run_gates._temp_root resolve for real",
+]
 
 # Markdown style-lint gate (ADR-0062). Authoritative config for the PyMarkdown
 # (`uvx pymarkdownlnt`) gate on the docs-consistency CI job.
