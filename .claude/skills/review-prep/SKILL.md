@@ -121,7 +121,16 @@ Final message:
    and tell the user to state that intended scope to `/code-review` — a bare command reviews its own
    default range, which would then differ from the pin. If the pin is just the default branch diff,
    the bare command already matches it and no extra instruction is needed.
-5. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
+5. **The adjudication lens's command, relayed verbatim**, when this round was briefed (ADR-0072
+   §1 — an external round runs two lenses and is not complete until both have reported).
+   `/review-brief` (`.claude/skills/review-brief/SKILL.md`, step 6) composes the whole
+   `/codex:adversarial-review` line with every value resolved and hands it over as a fenced block;
+   reprint **that block**, unchanged, in a block of its own.
+   Do not compose a line here: the values in it — the brief's absolute path, the pinned base SHA —
+   belong to the briefing session, and a second spelling of the command in this file is a second
+   thing to drift. If no brief reached this session, say the round is running **one** lens, rather
+   than running one silently.
+6. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
    capture its findings. The carrier file preserves the scope and SHAs across compaction, but the
    *findings themselves* live only in conversation context until the report is written — so a new
    session would still lose them.

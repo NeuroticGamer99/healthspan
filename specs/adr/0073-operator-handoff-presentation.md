@@ -31,7 +31,13 @@ The two share a shape: **an instruction that states an awareness where it should
 ## Decision Outcome
 
 ### 1. `.claude/operator-handoff.md` is the single authoritative statement
-It defines a **handoff target** — a path or command the user has to open, copy, or run — and requires four things of one: **absolute** (for anything outside the workspace, which every scratchpad artifact is), **resolved** (no placeholder of any kind survives into what the user sees — stated as a shape rather than a list, because a closed enumeration let `/code-review <effort>` through as a literal template that satisfied every named rule), **alone in its own fenced `text` block** (one target per block, so a triple-click or the copy button selects exactly the thing), and **never elided** into prose or behind an ellipsis. It states the two reasons — the copy button and the unreconstructable session UUID — and bounds itself: paths named in explanation, paths written into artifacts read by machines, and multi-line recipes already fenced are all outside it.
+It defines a **handoff target** — a path or command the user has to open, copy, or run — and requires five things of one: **absolute** (for anything outside the workspace, which every scratchpad artifact is), **resolved** (no placeholder of any kind survives into what the user sees — stated as a shape rather than a list, because a closed enumeration let `/code-review <effort>` through as a literal template that satisfied every named rule), **alone in its own fenced `text` block** (one target per block, so a triple-click or the copy button selects exactly the thing), **never elided** into prose or behind an ellipsis, and — for a path embedded in a *command* target
+— **spelled with forward slashes**, because the parsers standing between the fenced block and the
+program silently consume backslashes (measured twice, in bash's unquoted assignment and in
+`codex@1.0.6`'s argument tokenizer, each producing a de-separated path and no error; the plugin
+auto-updates, so its version is the pin on that half). The fifth
+rule is scoped to command targets on purpose: a path handed over to be opened is not parsed by
+anything, and rewriting its spelling would buy nothing. It states the two reasons — the copy button and the unreconstructable session UUID — and bounds itself: paths named in explanation, paths written into artifacts read by machines, and multi-line recipes already fenced are all outside it.
 
 `/land`, `/review-prep`, `/review-handoff`, `/apply-review` and `/ship` cite it — named without step numbers, the same way `.claude/operator-handoff.md` names them and for the same reason: nothing gates an ordinal, and this change renumbered two skill sections while it was being written. Each keeps only what is genuinely local — `/review-handoff` step 3 still specifies that its hand-off block contains `/apply-review` plus the quoted path and nothing else, because that is content, not presentation.
 
@@ -79,7 +85,7 @@ An **orphan-citation check** — sweep the tree for each owning document's path 
 ### Option 2 — `CLAUDE.md`
 - Pro: binds every session, including ones that invoke no skill; the session-UUID trap is arguably an unguessable gotcha, which is that file's bar.
 - Con: the same file's bar was applied to the under-reporting rule and rejected it as ordinary engineering practice, so the pair would land in two different homes.
-- Con: `CLAUDE.md` is loaded into every session's context; a presentation contract with four rules and two rationales is a poor use of that budget when a citation costs one line.
+- Con: `CLAUDE.md` is loaded into every session's context; a presentation contract and its rationales is a poor use of that budget when a citation costs one line — and the contract grows, so the budget argument only sharpens. (It said "four rules" until rule 5 landed, which is why it now names none: the count is not what the argument rests on, and carrying it here meant restating §1's rule list in a section nobody updates.)
 
 ### Option 3 — `/review-handoff` as the authority
 - Pro: cheapest; it already carries the rule and the reasoning.

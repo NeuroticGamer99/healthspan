@@ -87,6 +87,10 @@ _EXPECTED_PAIRS = frozenset(
         ("scripts/run_gates.py", ".claude/skills/apply-review/SKILL.md"),
         ("scripts/run_gates.py", ".claude/skills/wi/SKILL.md"),
         ("scripts/run_gates.py", "CLAUDE.md"),
+        (
+            ".claude/skills/review-brief/SKILL.md",
+            ".claude/skills/review-prep/SKILL.md",
+        ),
     }
 )
 
