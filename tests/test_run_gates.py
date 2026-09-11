@@ -3067,7 +3067,9 @@ def test_the_dry_path_is_built_from_the_prefix_the_prune_globs_for(
 
 
 def test_a_run_whose_gates_all_decline_spooling_creates_no_directory(
-    temp_root: Path, capfd: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    temp_root: Path,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     """The notice is what creates the directory, so it has to be earned.
 
@@ -3076,7 +3078,33 @@ def test_a_run_whose_gates_all_decline_spooling_creates_no_directory(
     unconditionally, the notice built an empty directory, told the reader output
     had been captured into it, and spent a retention slot evicting a real run to
     say so.
+
+    **`run_gate` is stubbed, and that is the fix for a real CI failure rather
+    than a convenience.** This drove the *actual* containment gate, whose
+    `--scope branch` resolves a merge base against `origin/main` -- which a CI
+    checkout, shallow and detached on a PR merge ref, cannot always answer. The
+    gate then correctly reports "could not run" and exits 1, and this test read
+    that as a defect: red on six of eight runs from the branch's first push,
+    green on the other two at identical SHAs. CI's own containment step uses
+    `--scope history` for the same reason. Nothing here needs the gate to
+    *pass*; the subject is `main`'s notice guard, which runs before any gate.
+
+    The registry property this leans on is pinned separately, by
+    `test_containment_is_the_only_gate_exempt_from_spooling`, so stubbing gives
+    up no coverage -- but the premise is asserted below rather than assumed,
+    because a selection that quietly began spooling would make this vacuous.
     """
+
+    def passes(*_: object) -> run_gates.GateResult:
+        return run_gates.GateResult.PASSED
+
+    monkeypatch.setattr(run_gates, "run_gate", passes)
+
+    assert not any(gate.spool_output for gate in run_gates.resolve(["containment"])), (
+        "the premise failed: the selected gate no longer declines spooling, so "
+        "the notice was never due and this proves nothing"
+    )
+
     assert run_gates.main(["containment"]) == 0
 
     assert "Step output is captured to" not in capfd.readouterr().out
