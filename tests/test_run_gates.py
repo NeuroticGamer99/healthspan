@@ -31,6 +31,7 @@ same drift the runner is built to remove.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import os
@@ -42,7 +43,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeIs, cast
 
 import pytest
 import run_gates
@@ -50,6 +51,7 @@ import run_gates
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ADR_DIR = REPO_ROOT / "specs" / "adr"
 CI_TEXT = run_gates.CI_WORKFLOW.read_text(encoding="utf-8")
+RUNNER_SOURCE = (REPO_ROOT / "scripts" / "run_gates.py").read_text(encoding="utf-8")
 
 LOCAL_GATES = [gate for gate in run_gates.GATES if gate.local]
 CI_ONLY_GATES = [gate for gate in run_gates.GATES if not gate.local]
@@ -202,6 +204,80 @@ def completed(run: Path, stamp: float | None = None) -> Path:
     return run
 
 
+def pinned(ctx: run_gates.Context, key: str) -> str:
+    """The version ci.yml pins for ``key``, or a red that names the key.
+
+    `ctx.pins[key]` raised a bare `KeyError` when a pin was missing, which
+    aborts before the caller's assertion message can name either the registry or
+    the workflow — the same defect the `min()` comment in
+    `test_the_list_output_states_the_ordering_it_uses` records, reintroduced one
+    test over. It also makes the em-dash fallback `version_of` implements for a
+    missing pin unreachable by the oracle.
+    """
+    value = ctx.pins.get(key)
+    assert value is not None, (
+        f"ci.yml pins no {key}, so the version column can only hold a "
+        "placeholder and this oracle cannot say what it should show"
+    )
+    return value
+
+
+def list_blocks(rendered: str) -> list[tuple[str, list[str]]]:
+    """`--list`'s per-gate blocks in order, parsed by indent rather than by gaps.
+
+    Splitting the output on the blank line between blocks assumes no block
+    contains one, and a block can. Measured end to end: with
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER=1` the `git ls-files` behind
+    `_tracked_markdown` fails with git's dubious-ownership advice, whose stderr
+    holds an interior blank line; the builder embeds that text verbatim and
+    `render_list` renders it inside the markdown-lint block, so a chunk count
+    came out one over `len(GATES)` — a red blaming the registry for a git
+    configuration problem, with `zip(..., strict=True)` left to misalign on any
+    variant that keeps the count. The safe-directory condition is ordinary on
+    Windows and in containers.
+
+    The indent is the structure `render_list` actually writes: every line of a
+    block starts with two spaces, and a body line is then padded past the
+    gate-name column, so the heading is the one line whose third character is
+    not a space.
+
+    **A block stops at the first line the renderer did not indent**, which means
+    the tail of an embedded multi-line message is not part of it: `render_list`
+    appends such a message as one `! …` line, so its own newlines reach the
+    output unindented. Measured against the git advice above — 16 blocks, the
+    markdown-lint block keeping its heading, summary and the message's first
+    line, and the remaining advice lines belonging to no block. Left that way
+    deliberately: nothing asserts on an embedded message's tail, and a
+    continuation at column 0 is indistinguishable from the `Groups:` line that
+    really does end the last block.
+
+    **A second blind spot, measured by a reviewer and unreachable today.** The
+    heading test is "indented by two, third character not a space", so an
+    embedded line that happens to start with exactly two spaces and then a
+    non-space reads as a *new* heading and contributes a fabricated gate name
+    from its first token. Constructed directly: three gates where the middle
+    one's step carried a `display` holding a newline followed by
+    `"  fakehead more text"` parsed as `['alpha', 'beta', 'fakehead',
+    'gamma']`. No production builder puts a newline in a `display` —
+    `_python_display` and `_docs_gate` compose single lines — so there is no
+    behaviour to guard and nothing to mutate. Recorded rather than fixed,
+    because what a reader needs is the list of inputs this helper misreads, and
+    a helper whose disclosed limits are narrower than its real ones is the
+    defect this round is about.
+    """
+    blocks: list[tuple[str, list[str]]] = []
+    current: list[str] | None = None
+    for line in rendered.splitlines():
+        if line.startswith("  ") and line[2:3] != " ":
+            current = [line]
+            blocks.append((line.strip().split(" ", 1)[0], current))
+        elif current is not None and line.startswith("  "):
+            current.append(line)
+        else:
+            current = None
+    return blocks
+
+
 @dataclass
 class StepRecorder:
     """What `run_step` was handed, for a test driving `run_gate` without children."""
@@ -257,11 +333,18 @@ def gate_named(name: str) -> run_gates.Gate:
     return run_gates.gate_by_name()[name]
 
 
-def _context(tmp_path: Path | None = None) -> run_gates.Context:
+def _context(tmp_path: Path | None = None, *, dry: bool = False) -> run_gates.Context:
     """A context over the real workflow, with scratch pinned into tmp_path.
 
     Presetting ``scratch`` keeps the test gate from calling ``mkdtemp`` and
     leaving directories behind; it is the only state a build touches.
+
+    ``dry`` is a parameter rather than a flag a caller sets afterwards. Set
+    afterwards it is one reordering away from a real `mkdtemp` in the shared temp
+    root — `scratch_dir` returns its never-created placeholder only while the
+    flag is already on — and a test that leaks one there leaves a directory the
+    pruner will not collect until the grace period. Construction is the only
+    point at which the guarantee holds for every later line.
     """
     env = {
         name: value
@@ -274,6 +357,7 @@ def _context(tmp_path: Path | None = None) -> run_gates.Context:
         scratch=tmp_path,
         workflow_env=env,
         canary_dir_name=run_gates.read_workflow_env(CI_TEXT, "CANARY_CAPTURE_DIR"),
+        dry=dry,
     )
 
 
@@ -487,6 +571,20 @@ def test_ci_only_gates_are_declared_with_a_reason() -> None:
     """A gate that cannot run locally has to say why, because --list prints it."""
     for gate in CI_ONLY_GATES:
         assert gate.ci_only_reason.strip(), f"{gate.name} is CI-only with no reason"
+
+
+def test_every_gate_declares_a_summary() -> None:
+    """The description `--list` prints for every gate, local or not.
+
+    The sibling above gives `ci_only_reason` this invariant and `summary` had
+    none, which made every oracle of the form `gate.summary in body` vacuous for
+    an empty one: review blanked a summary and `--list` rendered a blank
+    description line with the module green. `--list` is the operator's index of
+    what each gate proves, so a gate with nothing in this column is a gate
+    nobody can choose to run.
+    """
+    for gate in run_gates.GATES:
+        assert gate.summary.strip(), f"{gate.name} is listed with no summary"
 
 
 def test_gate_names_are_unique() -> None:
@@ -768,6 +866,434 @@ def test_list_respects_fast(capsys: pytest.CaptureFixture[str]) -> None:
         assert f"\n  {slow} " not in out, f"--list --fast advertised {slow}"
 
 
+def test_the_list_output_states_the_ordering_it_uses(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--list` claims two ordering principles; pin both where they are read.
+
+    The string it renders was "cheapest first" for as long as `containment` sat
+    seventh, and nothing detected the mismatch — which is why the sentence is
+    read here rather than trusted. It is the only place an operator is told why
+    a containment scan is paid for before the cheap gates.
+
+    **Driven through `main` rather than by calling `render_list`**: `--list`
+    renders with `dry=True` and a direct call does not, so guarding the
+    sentence's `lines.append` with `if not ctx.dry:` removes it from
+    `python3 scripts/run_gates.py --list` while leaving a `render_list`
+    assertion green — measured. A direct call pins the sentence's content and
+    not its delivery, which is the half that matters.
+
+    **Both principles are asserted, and the first version of this test asserted
+    only the first.** Review measured the gap: promoting `pytest` — the ~112s
+    gate — to `GATES[1]` left the whole module green while the rendered sentence
+    went on claiming an ordering the registry had stopped obeying, which is the
+    exact failure this test exists to prevent, reintroduced one principle over.
+    The second principle is pinned as cheap-before-slow rather than as a cost
+    sort, because that is the distinction the module itself draws (`SLOW_GATES`,
+    which `--fast` acts on); a strict sort is not true of the registry —
+    `spec-links` runs ahead of gates that cost appreciably less, which ADR-0080
+    §5 measures. No figure, no ordinal and no superlative is restated here: the
+    timings are one machine's and §5 owns them, a quoted position would be wrong
+    the moment an entry is inserted above it, and "the dearest docs gate" was
+    uncheckable because `markdown-lint` is a docs gate with no measurement at
+    all. Each of those three was written here first and corrected by review.
+    """
+    assert run_gates.main(["--list"]) == 0
+    rendered = capsys.readouterr().out
+
+    assert "containment first, then cheap before slow" in rendered, (
+        "--list no longer states the ordering the registry uses; "
+        "see the two principles above GATES"
+    )
+    # The other half of the same sentence, pinned for the same reason the first
+    # half is: measured in review, truncating the sentence here left the whole
+    # module green, so fail-fast was an operator-facing claim with no reader.
+    assert "stopping at the first failure" in rendered, (
+        "--list no longer states that a run stops at the first failure"
+    )
+
+    # Principle 1, over the gates a local run *executes* — which is the set the
+    # sentence is about ("runs every local gate") and the set ADR-0080 §4's
+    # bound is about. `GATES[0].name` was the oracle and is weaker than it
+    # looks: review replaced the containment entry with a CI-only one
+    # (`build=None`), leaving `GATES[0].name == "containment"` true while the
+    # first gate a local run actually executes became `adr-index` and §4's bound
+    # was void, with this test, the partition below and
+    # `test_containment_precedes_the_gates_that_lint_the_tree` all green.
+    local = [gate.name for gate in run_gates.GATES if gate.local]
+    assert local[0] == "containment", (
+        f"--list claims containment runs first and a local run starts with {local[0]}"
+    )
+    # Principle 2, over the same set: the CI-only tail (`gitleaks`,
+    # `test-matrix`) is not slow and sits behind `pytest`, so the partition is a
+    # property of what a local run executes, not of the whole tuple.
+    slow_positions = [i for i, name in enumerate(local) if name in run_gates.SLOW_GATES]
+    # Not `min()` over a bare generator: emptying SLOW_GATES raised a bare
+    # ValueError with nothing naming the registry, which is a red test that
+    # teaches the reader nothing. Measured in review.
+    assert slow_positions, (
+        "no local gate is in SLOW_GATES, so --list's cheap-before-slow claim "
+        "describes nothing — did the slow gates leave the registry?"
+    )
+    slow_from = min(slow_positions)
+    cheap_behind_slow = set(local[slow_from:]) - run_gates.SLOW_GATES
+    assert not cheap_behind_slow, (
+        "--list claims cheap gates run before slow ones, and these cheap gates "
+        f"run after the first slow one: {sorted(cheap_behind_slow)}"
+    )
+
+
+# The placeholder `version_of` renders where there is no pin to show. Named here
+# rather than spelled inline, because an em dash sitting in an assertion's
+# *expected value* is indistinguishable from a typo at the point a reader has to
+# judge whether the test is right. Not because the module avoids the character \u2014
+# it holds 166 of them in prose (measured), which is why only this use is named.
+EM_DASH = "\u2014"
+
+
+def test_the_list_output_names_its_source_and_every_selector_group(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Two more operator-facing claims `--list` makes, with no reader until now.
+
+    Both were measured unpinned by the same review round that found the ordering
+    sentence half-pinned, and they are the same defect one line above and one
+    below it: deleting the `Groups:` append erased the typable list of selector
+    names — not the names themselves, which also appear in each gate's own
+    `[job]` bracket, and that is exactly why the oracle below is an equality over
+    one line rather than a search of the output — and replacing the header with
+    arbitrary text retired the module's central provenance claim, both with the
+    suite green.
+
+    The header is not decoration. "Gates derived from ci.yml" is what the
+    versions-are-derived section of this module exists to make true, so an
+    output that stops saying it, or says it falsely, is a claim worth a reader.
+    """
+    assert run_gates.main(["--list"]) == 0
+    rendered = capsys.readouterr().out
+
+    assert rendered.startswith("Gates derived from .github/workflows/ci.yml"), (
+        "--list no longer names ci.yml as where its commands and pins come from"
+    )
+    # Read off the `Groups:` line as an equality, not as containment anywhere in
+    # the output. The first version of this assertion asked whether each group
+    # name appeared in `rendered` at all, and deleting the `Groups:` line left it
+    # green — every job name also appears in its own gates' `[docs]`-style
+    # brackets, so a subset test over the whole output cannot see the line go
+    # missing. Measured, and the reason the oracle is an equality over one line.
+    groups_line = next(
+        (line for line in rendered.splitlines() if line.startswith("Groups: ")),
+        None,
+    )
+    assert groups_line is not None, (
+        "--list no longer lists the selector groups an operator can type"
+    )
+    listed = {name.strip() for name in groups_line.removeprefix("Groups: ").split(",")}
+    # Derived from `groups()`, so a new job becomes a new required entry here
+    # rather than a second list to maintain.
+    assert listed == set(run_gates.groups()), (
+        f"--list advertises {sorted(listed)} but the registry has "
+        f"{sorted(run_gates.groups())}"
+    )
+    # Two oracles that do *not* move with what they check, because the equality
+    # above moves with both of its sources. Review measured it: emptying
+    # `ALIASES` drops `ruff` from the rendered line and from `groups()` at once,
+    # so the equality reports agreement while `--list` stops advertising a
+    # selector an operator can type — and `/land` step 2 documents typing it.
+    # The job names are read off `GATES` instead of `groups()`, which is the
+    # other half: `groups()` is what builds the line.
+    assert "ruff" in listed, (
+        "--list no longer advertises the `ruff` alias; ALIASES is the only "
+        "source for it and the equality above cannot see it leave"
+    )
+    assert listed >= {gate.job for gate in run_gates.GATES}, (
+        "--list advertises fewer job groups than the registry defines: "
+        f"{sorted({gate.job for gate in run_gates.GATES} - listed)}"
+    )
+
+
+def test_the_list_footer_claims_an_ordering_only_for_the_whole_registry(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`render_list` renders filtered selections too, and the footer names a gate.
+
+    Measured: `--list lockfile` printed "containment first, then cheap before
+    slow" under a one-gate list with no containment in it, and `--list --fast`
+    printed "cheap before slow" with every slow gate already dropped. The "No
+    arguments runs" prefix scopes both, so neither was false — but `/land` step 2
+    documents running a subset, and an operator who does is told about gates that
+    are not on the screen. Inert until this branch, because the sentence named no
+    gate before the promotion.
+
+    All three of this module's other `--list` tests drive the unfiltered render,
+    so nothing read the filtered one.
+    """
+    assert run_gates.main(["--list", "lockfile"]) == 0
+    filtered = capsys.readouterr().out
+
+    assert "containment first" not in filtered, (
+        "a one-gate list claims containment runs first"
+    )
+    assert f"Listed 1 of {len(run_gates.GATES)} gates" in filtered, filtered
+    assert "stopping at the first failure" in filtered, (
+        "the filtered footer dropped the fail-fast claim, which is true of any run"
+    )
+
+    assert run_gates.main(["--list", "--fast"]) == 0
+    fast = capsys.readouterr().out
+
+    assert "cheap before slow" not in fast, (
+        "--list --fast claims cheap-before-slow with the slow gates dropped"
+    )
+
+
+def test_list_reports_a_gate_that_cannot_build_its_steps(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A `GateError` at build time must reach the operator, not be swallowed.
+
+    `render_list` catches it per gate so one unbuildable gate does not hide the
+    others — the right behaviour, and it was unpinned: review
+    measured that replacing the handler with `except GateError: pass` left the
+    suite green, so `--list` would list such a gate with no steps, no error, and
+    exit 0. Silence on a zero exit is the failure mode this module's own guards
+    were written against.
+
+    **Driven through `main`, which took two rounds to get right.** The first
+    version built a `Context` by hand and called `render_list`, reasoning that
+    `canary_dir_name` is settable by no CLI flag. True, and not sufficient:
+    review then guarded the handler's own append with `if not ctx.dry:` and the
+    whole module stayed green, because `--list` is the only production caller and
+    it renders with `dry=True`. The trigger reaches `main` through the value it
+    reads the name from, so the delivered path is the one tested and the
+    `stderr` assertion below has something it could fail on.
+
+    `canary_dir_name` is the reachable trigger: the pytest gate refuses an
+    escaping one at build time, which
+    `test_the_pytest_gate_refuses_an_escaping_canary_dir_name` pins.
+    """
+    real = run_gates.read_workflow_env
+
+    def escaping(text: str, name: str) -> str | None:
+        if name == "CANARY_CAPTURE_DIR":
+            return "../outside"
+        return real(text, name)
+
+    monkeypatch.setattr(run_gates, "read_workflow_env", escaping)
+
+    # Exit 0 is correct and is the hazard: one unbuildable gate is reported, not
+    # fatal, so the report is the only thing standing between the operator and a
+    # silent omission.
+    assert run_gates.main(["--list"]) == 0
+    captured = capsys.readouterr()
+
+    assert "../outside" in captured.out, (
+        "--list swallowed the build failure of a gate it still listed"
+    )
+    # Every gate still has a block of its own, read as blocks rather than as
+    # names appearing anywhere in the output. Two of the three names this loop
+    # used to check were satisfied by text belonging to something else
+    # (measured): with the whole `containment` block removed, "containment" was
+    # still present in the ordering footer, and with the whole `pytest` block
+    # removed, "pytest" was still present inside pyright's own shown command
+    # (`--with "pytest==9.1.1"`). Only `ruff-check` was a real read. The names
+    # also came from a hand-written tuple, which this module's docstring forbids
+    # where the registry can supply them — and a literal list is what gives a
+    # newly added gate no coverage here at all.
+    listed = [name for name, _ in list_blocks(captured.out)]
+    assert listed == [gate.name for gate in run_gates.GATES], (
+        f"--list dropped or reordered gates over another gate's error: {listed}"
+    )
+    assert captured.err == "", "a listed build failure also wrote to stderr"
+
+
+def test_every_listed_gate_shows_its_version_scope_job_summary_and_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every element of a `--list` entry is read by an operator; pin them all.
+
+    Found by enumerating the function rather than the diff, which is why they are
+    pinned in one test rather than one per defect. Measured in review, each
+    separately, each leaving the suite green: blanking the version column,
+    blanking the `local`/`CI-only` marker, deleting the `[job]` bracket,
+    deleting the per-gate summary, and — the sharpest — **deleting the
+    `$ {step.shown()}` appends, which renders every gate with no command at
+    all.** That is this function's primary output.
+
+    **One of the five initially survived here too.** The first version of this
+    test named the version column in this docstring and asserted nothing about
+    it, so blanking that column left the module green -- the third time in this
+    branch that a docstring claimed a pin its assertions did not deliver. Every
+    element is now read off the line it belongs to.
+
+    The blocks come from `list_blocks`, which parses them by indent: a block can
+    contain a blank line, and that docstring holds the measurement. The
+    structure is pinned too — a header, one block per registry entry in order,
+    then the `Groups:` line and the ordering sentence.
+    """
+    # One sample of the working tree, not two. `markdown-lint`'s command
+    # renders a *count* of tracked-or-untracked `*.md` files, and the render
+    # below and the per-gate rebuild each ran their own `git ls-files`: any
+    # non-ignored markdown file appearing or vanishing between the two samples
+    # — a concurrent agent writing a ledger fragment, an editor's swap file —
+    # flipped the count and failed this test with "--list does not show
+    # markdown-lint's command", blaming `render_list` for a working-tree race.
+    # Measured at review time as 137 against 136, the extra being an untracked
+    # ledger fragment the review workflow itself had just written.
+    sampled = run_gates._tracked_markdown()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(run_gates, "_tracked_markdown", lambda: sampled)
+
+    assert run_gates.main(["--list"]) == 0
+    rendered = capsys.readouterr().out
+
+    assert rendered.startswith("Gates derived from .github/workflows/ci.yml")
+    blocks = list_blocks(rendered)
+    assert len(blocks) == len(run_gates.GATES), (
+        f"--list rendered {len(blocks)} gate blocks for "
+        f"{len(run_gates.GATES)} registry entries"
+    )
+
+    # `dry`, because that is what `--list` renders with -- and under `dry` a
+    # step's `display` string contains no scratch path at all (`Context.dry`'s
+    # own comment), so the commands below are reproducible and can be compared
+    # rather than merely counted. It also means no scratch directory is created —
+    # set at construction, for the reason `_context` records.
+    ctx = _context(dry=True)
+
+    # The premise the version chain inside the loop leans on. `version_of`
+    # resolves the gitleaks gate from `ctx.gitleaks_version` before it looks at
+    # either pin, so the chain's order and production's are equivalent only
+    # while that gate has neither — and ci.yml already pins GITLEAKS_VERSION,
+    # which makes giving the gate a `version_pin` the obvious next edit. If that
+    # happens, production's precedence is the authority and this oracle has to
+    # follow it; that is a decision rather than a rename, so it reddens here.
+    gitleaks = run_gates.gate_by_name()["gitleaks"]
+    assert (gitleaks.version_pin, gitleaks.tool_pin) == (None, None), (
+        "the gitleaks gate now carries a pin, so the version column has two "
+        "possible sources and version_of's branch order decides which"
+    )
+
+    for gate, (name, lines) in zip(run_gates.GATES, blocks, strict=True):
+        assert name == gate.name, (
+            f"--list block order diverged from the registry at {gate.name}"
+        )
+        # Read off the heading line rather than the whole block, so a value that
+        # happens to occur in a summary cannot satisfy an assertion about the
+        # heading.
+        heading, *rest = lines
+        body = "\n".join(rest)
+
+        assert f"[{gate.job}]" in heading, f"--list omits {gate.name}'s job group"
+        # Resolved from `ci.yml`'s pins, NOT from `version_of` -- an oracle that
+        # calls the function under test reads the column's presence and cannot
+        # see it carry the wrong pin. Measured in review: three mutations of
+        # `version_of` survived the earlier `version_of(gate, ctx) in heading`
+        # form, including one that advertised pytest's version beside every
+        # pinned gate. `test_a_tool_pinned_gate_renders_its_required_version`
+        # already draws the line this way.
+        # In production's order. `version_of` tests the gitleaks gate *first*,
+        # then `version_pin`, then `tool_pin`; this chain had the gitleaks arm
+        # last, which agrees with production only while that gate carries
+        # neither pin — so a review moved the real branch last and this test
+        # stayed green. The premise is pinned above the loop.
+        if gate.name == "gitleaks":
+            expected_version = ctx.gitleaks_version or EM_DASH
+        elif gate.version_pin:
+            expected_version = pinned(ctx, gate.version_pin)
+        elif gate.tool_pin:
+            # With the `needs ` prefix: it is what stops the value reading as a
+            # version the command carries, and expecting the bare pin as a
+            # substring let the prefix vanish here unnoticed.
+            expected_version = f"needs {pinned(ctx, gate.tool_pin)}"
+        else:
+            expected_version = EM_DASH
+        assert expected_version in heading, (
+            f"--list shows {gate.name} a version that is not the one ci.yml "
+            f"pins ({expected_version!r} expected)"
+        )
+        scope = "local" if gate.local else "CI-only"
+        assert scope in heading, f"--list does not say {gate.name} is {scope}"
+
+        assert gate.summary in body, f"--list omits {gate.name}'s summary"
+        if gate.local:
+            # The command text, not just the `$ ` marker: review measured that
+            # truncating `step.shown()` to its first token rendered every gate
+            # as a bare `$ uv` with the suite green. Comparable because `ctx` is
+            # `dry` above.
+            for step in gate.steps(ctx):
+                assert f"$ {step.shown()}" in body, (
+                    f"--list does not show {gate.name}'s command {step.shown()!r}"
+                )
+            # Independent of `Step.shown()`, which both sides of the comparison
+            # above come from. Dropping the `display` override so `shown()`
+            # falls back to `" ".join(argv)` leaves that comparison green while
+            # `--list` starts handing the operator an absolute interpreter path
+            # — what `_python_display` exists to prevent, and an identifying
+            # string in output that gets copied into PRs and handoffs
+            # (ADR-0073). Measured surviving the comparison in review.
+            assert sys.executable not in body, (
+                f"--list shows {gate.name} an absolute interpreter path"
+            )
+        else:
+            assert gate.ci_only_reason in body, (
+                f"--list omits why {gate.name} is CI-only"
+            )
+
+    # One literal, for one gate, because the other mutation review measured —
+    # truncating `shown()` to its first token — moves both sides of the
+    # comparison above together and leaves every gate rendered as a bare `$ uv`
+    # or `$ python3`. Spelled out for the gate whose pasteable form this branch
+    # moved, so the assertion reads as the thing an operator copies.
+    containment = "\n".join(dict(blocks)["containment"])
+    assert (
+        "$ python3 scripts/check_personal_containment.py --scope branch" in containment
+    ), containment
+
+
+def test_print_reports_a_gate_that_cannot_build_its_steps(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--print` answers a broken builder the way `--list` does, and did not.
+
+    The two read-only branches diverged on the same input. `render_list` catches
+    `GateError` per gate and exits 0 having rendered the whole registry — pinned
+    by the sibling above as the right behaviour — while `--print`'s loop sat
+    outside any handler, so the error propagated to `main`'s: the commands
+    printed so far already on stdout, `error: …` on stderr, exit 1, and **no
+    marker that the enumeration had been truncated**. A script or an agent
+    reading `--print` for the command set silently got a partial one. Measured:
+    16 gates listed by `--list`, 12 commands printed by `--print`.
+
+    Same reachable trigger as the sibling: an escaping `CANARY_CAPTURE_DIR`,
+    which the pytest gate refuses at build time.
+    """
+    real = run_gates.read_workflow_env
+
+    def escaping(text: str, name: str) -> str | None:
+        if name == "CANARY_CAPTURE_DIR":
+            return "../outside"
+        return real(text, name)
+
+    monkeypatch.setattr(run_gates, "read_workflow_env", escaping)
+
+    assert run_gates.main(["--print"]) == 0
+    captured = capsys.readouterr()
+
+    assert "../outside" in captured.out, (
+        "--print swallowed the build failure of a gate it was enumerating"
+    )
+    assert captured.err == "", "a reported build failure also wrote to stderr"
+    named = [
+        line.removeprefix("# ").split(":", 1)[0]
+        for line in captured.out.splitlines()
+        if line.startswith("# ") and not line.startswith("# !")
+    ]
+    assert sorted(named) == sorted(gate.name for gate in run_gates.GATES), (
+        f"--print stopped enumerating after a gate's error: {named}"
+    )
+
+
 def test_print_reports_an_empty_selection_rather_than_succeeding_silently(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1028,11 +1554,27 @@ def test_the_runner_stops_at_the_first_failure(
 def test_the_run_stops_at_the_first_failing_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cross-gate fail-fast: a lint failure must not cost a full test run first.
+    """Cross-gate fail-fast: the first gate to fail must not cost a full run.
 
     This is `main`'s loop rather than `run_gate`'s, and it is the half the
-    ordering argument actually rests on — deleting the early exit, or reordering
-    GATES so pytest runs first, is invisible to the within-gate test above.
+    ordering argument actually rests on — deleting the early exit is invisible
+    to the within-gate test above and reddens here.
+
+    **It does not see a reorder, and this docstring claimed it did.** The oracle
+    is `GATES_IN_ORDER[0]`, derived from the registry, so it follows whatever
+    order the registry has: measured in review with `pytest` forced first, this
+    test stayed green while `test_containment_precedes_the_gates_that_lint_the_tree`
+    and `test_the_list_output_states_the_ordering_it_uses` reddened. With
+    `test_the_docs_gate_runs_before_the_lockfile_gate`, which pins `spec-links`
+    ahead of `lockfile` (ADR-0061), those three are where a reorder is caught --
+    named rather than counted, because "the two order tests" goes stale on a
+    rename or a third one with nothing to notice, and that is exactly what this
+    sentence did: it gave that reason while omitting the third test, which was
+    silent here only because inserting an entry at the front preserves the pair
+    it guards.
+    The mutation that proved it had to be checked by
+    printing `GATES[0]` rather than by reading the patch — the first attempt
+    sorted on a gate name that does not exist and changed nothing.
     """
     ran: list[str] = []
 
@@ -1050,7 +1592,19 @@ def test_the_run_stops_at_the_first_failing_gate(
 
 
 def test_fast_skips_the_slow_gates(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--fast is defined by which gates it drops, so name them explicitly."""
+    """--fast is defined by which gates it drops, so name them explicitly.
+
+    **The membership of `SLOW_GATES` is pinned here and nowhere else, and that
+    literal is load-bearing.** Slowness is not a registry property — pinning it
+    by derivation would need a per-gate timing, a machine-specific number the
+    registry has no business holding (the second principle above `GATES`) — so
+    every oracle that reads `SLOW_GATES` moves with it. Review measured the
+    consequence: adding `pyright` to the set left the whole module green,
+    including the cheap-before-slow partition in
+    `test_the_list_output_states_the_ordering_it_uses`, while `--fast` silently
+    stopped running a typecheck gate that takes seconds. A gate joining this set
+    is a decision about the default local run; it reddens here first.
+    """
     ran: list[str] = []
 
     def fake_run_gate(
@@ -1061,19 +1615,47 @@ def test_fast_skips_the_slow_gates(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
     assert run_gates.main(["--fast"]) == 0
-    assert "pytest" not in ran
-    assert "pip-audit" not in ran
-    assert "ruff-check" in ran
+    # Literal first because SIM300 reads the other order as a Yoda condition.
+    assert {"pytest", "pip-audit"} == run_gates.SLOW_GATES, (
+        f"--fast's drop set is now {sorted(run_gates.SLOW_GATES)}; a gate added "
+        "here stops running in the default local run, and no other test can see "
+        "it happen"
+    )
+    # The complement, derived: everything local and not slow still ran, so the
+    # flag cannot quietly widen past the set above.
+    expected = [
+        gate.name
+        for gate in run_gates.GATES
+        if gate.local and gate.name not in run_gates.SLOW_GATES
+    ]
+    assert ran == expected, f"--fast ran {ran}, expected {expected}"
 
 
 def test_fast_over_an_explicit_slow_gate_does_not_call_it_ci_only(
-    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The empty-selection message must name the real reason.
 
     Reporting "every selected gate is CI-only" for a local gate that `--fast`
     dropped tells the reader the gate cannot run on this machine, when it can.
+
+    **`run_gate` is faked even though this test expects to reach no gate**, which
+    is the sibling's shape (`test_fast_skips_the_slow_gates`) and is a safety
+    property rather than a style: the exit-1 premise here is entirely that
+    `--fast` drops `pytest`, so the moment that is false `main` runs the real
+    pytest gate -- which contains this test. Measured in review: with
+    `SLOW_GATES` emptied, the module spawned a nested `pytest` and several
+    hundred children and did not finish inside 600s. Emptying that set is the
+    natural mutation against this change's cheap-before-slow assertion, so the
+    hazard sits directly in front of anyone verifying it.
     """
+
+    def fail_if_called(
+        gate: run_gates.Gate, _: run_gates.Context
+    ) -> run_gates.GateResult:
+        pytest.fail(f"a dropped gate ran: {gate.name}")
+
+    monkeypatch.setattr(run_gates, "run_gate", fail_if_called)
     assert run_gates.main(["pytest", "--fast"]) == 1
     err = capsys.readouterr().err
     assert "pytest" in err
@@ -1278,6 +1860,11 @@ def test_main_prunes_older_runs_after_a_run(
         _gate: run_gates.Gate, ctx: run_gates.Context
     ) -> run_gates.GateResult:
         created.append(ctx.scratch_dir())
+        # Captures something, as the real `run_gate` does for any gate that
+        # spools: `cleanup` keeps a run directory that holds output and removes
+        # one that is empty, so a fake writing nothing would exercise the
+        # removal path while claiming to test retention.
+        ctx.step_log(_gate.name, 1).write_text("captured\n", encoding="utf-8")
         return run_gates.GateResult.PASSED
 
     monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
@@ -1447,6 +2034,10 @@ def test_cleanup_keeps_this_runs_directory(temp_root: Path) -> None:
     """
     ctx = run_gates.Context(pins={}, gitleaks_version=None)
     scratch = ctx.scratch_dir()
+    # The product is the captured output, so the fixture has to have some. An
+    # empty directory is the one case `cleanup` deliberately removes, and
+    # asserting survival without writing anything tested that path instead.
+    ctx.step_log("adr-index", 1).write_text("captured\n", encoding="utf-8")
 
     assert scratch.is_dir()
     assert scratch.parent == temp_root
@@ -1466,6 +2057,7 @@ def test_cleanup_marks_this_run_complete_so_a_later_run_may_age_it_out(
     """
     ctx = run_gates.Context(pins={}, gitleaks_version=None)
     scratch = ctx.scratch_dir()
+    ctx.step_log("adr-index", 1).write_text("captured\n", encoding="utf-8")
 
     assert not (scratch / run_gates.COMPLETE_MARKER).exists(), (
         "the directory was marked complete before the run finished"
@@ -1494,6 +2086,7 @@ def test_cleanup_prunes_older_runs_but_not_this_one(temp_root: Path) -> None:
 
     ctx = run_gates.Context(pins={}, gitleaks_version=None)
     scratch = ctx.scratch_dir()
+    ctx.step_log("adr-index", 1).write_text("captured\n", encoding="utf-8")
     ctx.cleanup()
 
     assert scratch.is_dir(), "the prune removed the run that ran it"
@@ -1503,6 +2096,65 @@ def test_cleanup_prunes_older_runs_but_not_this_one(temp_root: Path) -> None:
     assert scratch.name in survivors
     assert older[0].name not in survivors, "the oldest run was kept"
     assert older[-1].name in survivors, "the newest of the older runs was pruned"
+
+
+def test_cleanup_removes_a_run_directory_that_captured_nothing(
+    temp_root: Path,
+) -> None:
+    """An empty run directory is not a product, so it is not retained as one.
+
+    Marking it complete would spend one of `RUNS_RETAINED` slots to keep
+    nothing. Removal rather than simply leaving it unmarked: an unmarked
+    directory is exempt from the count, which stops the eviction, but then
+    lingers in the shared temp root until `ORPHAN_GRACE_SECONDS`.
+    """
+    ctx = run_gates.Context(pins={}, gitleaks_version=None)
+    scratch = ctx.scratch_dir()
+
+    assert scratch.is_dir(), "the fixture never created a run directory"
+    ctx.cleanup()
+
+    assert not scratch.exists(), "an empty run directory was retained"
+
+
+def test_a_failure_before_anything_spools_evicts_no_earlier_run(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path
+) -> None:
+    """The retention slot a first-gate failure used to spend, pinned end to end.
+
+    `main`'s notice creates the run directory whenever *any* selected gate
+    spools, which is not the same as one having spooled. `containment` runs
+    first and is the one gate exempt from spooling, so every refused tree
+    reaches `cleanup` with the directory still empty — and marking that empty
+    directory complete made it the newest completed run, evicting the oldest
+    real one. Measured before the fix with `RUNS_RETAINED` at its shipped
+    value: the temp root held five completed directories and the next refused
+    tree dropped one of them.
+
+    Driven through `main` rather than `Context`, because the defect is the
+    interaction between the notice, the early exit and the prune; each of the
+    three is correct alone.
+    """
+    kept = completed(temp_root / f"{run_gates.SCRATCH_PREFIX}earlier", stamp=1)
+    (kept / "adr-index-01.log").write_text("earlier run\n", encoding="utf-8")
+
+    def fail_first(
+        gate: run_gates.Gate, _ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        assert gate.name == run_gates.GATES[0].name, (
+            f"a gate ran before the registry's first: {gate.name}"
+        )
+        return run_gates.GateResult.FAILED
+
+    monkeypatch.setattr(run_gates, "run_gate", fail_first)
+    monkeypatch.setattr(run_gates, "RUNS_RETAINED", 1)
+
+    assert run_gates.main([]) == 1
+
+    assert kept.is_dir(), "a failure that captured nothing evicted an earlier run"
+    assert (kept / "adr-index-01.log").is_file(), "the evicted run's logs are gone"
+    remaining = sorted(p.name for p in temp_root.glob(f"{run_gates.SCRATCH_PREFIX}*"))
+    assert remaining == [kept.name], remaining
 
 
 def test_a_run_still_in_progress_is_never_pruned(temp_root: Path) -> None:
@@ -2314,10 +2966,12 @@ def test_the_policy_defaults_are_pinned_here_and_stated_in_their_owning_adr() ->
     point: an oracle that moves with the value under test cannot fail.
 
     **Unrecorded:** grepping ADR-0080 for these numbers matched exactly one
-    line, the `### 5. Ownership` heading, while the ADR claimed to own the
-    defaults and the code attributed both upward to it. The ADR's numbers are
-    matched against the constants rather than against literals, so changing a
-    constant reddens this until the document that owns it is changed too.
+    line — at the time, the section number of the Ownership heading, since
+    renumbered to `### 6. Ownership` by the insertion of §5 — while the ADR
+    claimed to own the defaults and the code attributed both upward to it. The
+    ADR's numbers are matched against the constants rather than against
+    literals, so changing a constant reddens this until the document that owns
+    it is changed too.
 
     **All three defaults, not the two the finding named.** The orphan grace
     period was added by the same change that pinned the other two and was left
@@ -2356,30 +3010,34 @@ def test_the_policy_defaults_are_pinned_here_and_stated_in_their_owning_adr() ->
 def test_containment_precedes_the_gates_that_lint_the_tree() -> None:
     """ADR-0080 §4 reasons from where `containment` sits; pin it, don't assert it.
 
-    §4 bounds a residual by saying a full run reaches `containment` before a
+    §4 bounds a residual by saying a full run reaches `containment` before any
     gate that could name a path under the containment directory, so the run
-    stops first. That is true of `markdown-lint` and **false of `spec-links`**,
-    which is ordered ahead of `containment` and runs on every full run before
-    anything could halt it. The ADR said "both" for one commit, written from a
-    truncated gate log rather than from the registry -- so the relationship is
-    asserted here, where it is read from `GATES` and cannot be misremembered.
+    stops first. For one commit that was true of `markdown-lint` and false of
+    `spec-links`, which was ordered ahead of `containment`; the earlier version
+    of this test pinned that split and named the reorder as the signal to
+    rewrite §4. The reorder landed, so the assertion is now the general one:
+    **`containment` is first**, which is what makes §4 one sentence instead of
+    a concession per gate.
 
-    This deliberately pins the order as it *is*, including the part §4 has to
-    concede. Reordering `containment` ahead of `spec-links` would be a real
-    improvement and would redden this test; that is the intended signal, and
-    §4's bound is what should be rewritten when it fires.
+    Asserted over the whole registry rather than over the two gates §4 used to
+    name, because the bound is about every gate that walks the tree — a new
+    one added ahead of `containment` would falsify §4 without touching either
+    name. No list of exceptions, and no `GATES[0]`: the bound is about the first
+    gate a **local** run executes, and review measured the difference. Replacing
+    the containment entry with a CI-only one (`build=None`) keeps it at
+    `GATES[0]` while a local run starts with `adr-index`, which voids §4
+    outright — and left every ordering test in this module green. The membership
+    loop is kept because it is what a rename trips.
     """
     order = [gate.name for gate in run_gates.GATES]
     for name in ("containment", "spec-links", "markdown-lint"):
         assert name in order, f"{name} left the registry; ADR-0080 §4 cites it"
 
-    assert order.index("markdown-lint") > order.index("containment"), (
-        "markdown-lint now runs before containment, so ADR-0080 §4's "
-        "'a full run stops first' no longer holds for it either"
-    )
-    assert order.index("spec-links") < order.index("containment"), (
-        "spec-links now runs after containment — an improvement ADR-0080 §4 "
-        "does not yet claim; rewrite its bound rather than relaxing this"
+    local = [gate.name for gate in run_gates.GATES if gate.local]
+    assert local[0] == "containment", (
+        f"{local[0]} now runs before containment, so ADR-0080 §4's "
+        "'a full run stops first' no longer holds for every gate behind it — "
+        "rewrite the bound rather than relaxing this"
     )
 
 
@@ -2617,6 +3275,593 @@ class _LegacyConsole(io.StringIO):
     def write(self, s: str) -> int:
         s.encode(self.encoding)
         return super().write(s)
+
+
+class _FlushRecorder(io.StringIO):
+    """A stream that counts the flushes asked of it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.flushes = 0
+
+    def flush(self) -> None:
+        self.flushes += 1
+        super().flush()
+
+
+def test_say_flushes_when_asked_and_not_otherwise() -> None:
+    """`_say`'s `flush` argument reaches the stream, which nothing checked.
+
+    Measured by a reviewer: discarding the caller's argument — `flush=False`
+    unconditionally inside `_say` — left the whole module green. Every console
+    double here is a `StringIO`, and a `StringIO` behaves identically flushed or
+    not, so no existing test could see it.
+
+    What the argument buys is ordering, not output: `run_step` prints a step's
+    `$ command` line and then hands the terminal to a child process, so an
+    unflushed banner can appear *after* the output of the command it introduces.
+    The gate-start banner and the failure replay have the same hazard.
+    """
+    stream = _FlushRecorder()
+
+    run_gates._say("no flush wanted", stream)  # pyright: ignore[reportPrivateUsage]
+
+    assert stream.flushes == 0, "_say flushed a line that did not ask to be flushed"
+
+    run_gates._say(  # pyright: ignore[reportPrivateUsage]
+        "flush wanted", stream, flush=True
+    )
+
+    assert stream.flushes == 1, (
+        "_say did not flush a line that asked to be flushed, so a banner can "
+        "appear after the output of the command it introduces"
+    )
+    assert "flush wanted" in stream.getvalue()
+
+
+class _Cp437Console(_LegacyConsole):
+    """The other Windows code page, which refuses the em dash cp1252 accepts.
+
+    cp1252 encodes U+2014 at 0x97, so the fixture above cannot see a line whose
+    only non-ASCII character is an em dash go unguarded — and `--list`'s output
+    carries em dashes and nothing else. cp437 is the US OEM page a `cmd.exe`
+    still starts in and it has no em dash at all.
+    """
+
+    encoding = "cp437"
+
+
+def test_the_list_output_survives_a_console_that_cannot_encode_an_em_dash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--list`'s own output was the one operator-facing print left unguarded.
+
+    Review measured `import run_gates; run_gates.main(['--list'])` raising
+    `UnicodeEncodeError: 'charmap' codec can't encode character '—'` on a cp437
+    stdout — the imported-and-called case `_console_safe` documents itself as
+    existing for, and what the HELM work items propose doing. Six other prints
+    in the module were wrapped and this one was missed, plausibly because the
+    sibling fixture's cp1252 encodes the character. This branch then added two
+    more em dashes to that stream in the ordering footer; the version column's
+    placeholder is a third source, once per gate with no pin.
+    """
+    console = _Cp437Console()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+
+    assert run_gates.main(["--list"]) == 0
+
+    rendered = console.getvalue()
+    assert "containment first, then cheap before slow" in rendered, rendered
+    assert EM_DASH not in rendered, "an em dash reached a console that refuses it"
+
+
+def test_a_real_gate_run_survives_a_console_that_cannot_encode_an_em_dash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`run_gate`'s own banners, on the console the convention test cannot see.
+
+    The behavioural half of the rule, and the one that was missing: the scan in
+    the test below reads function source, so it can only ever be as wide as the
+    list of functions it is given — it named `main` alone while `run_gate`'s
+    gate-start banner crashed. That banner is the **first** line of every real
+    run and it carries both a literal em dash and the gate's `summary`, so this
+    drives a real `run_gate` rather than a read-only branch.
+
+    Reproduced by a reviewer before the fix: `UnicodeEncodeError: 'charmap'
+    codec can't encode character '\\u2014' in position 11` on a cp437 stdout,
+    raised before any step ran.
+    """
+    console = _Cp437Console()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+    record_steps(monkeypatch, exit_code=0)
+    gate = next(g for g in run_gates.GATES if g.name == "containment")
+
+    result = run_gates.run_gate(gate, _context(tmp_path))
+
+    assert result is run_gates.GateResult.PASSED
+    rendered = console.getvalue()
+    assert gate.name in rendered, rendered
+    assert EM_DASH not in rendered, "an em dash reached a console that refuses it"
+
+
+def console_writes(tree: ast.Module) -> list[tuple[ast.Call, str]]:
+    """Every call in ``tree`` that writes to the console, with its spelling.
+
+    Two spellings, because the module uses both: a `print(...)` call, and a
+    `.write(...)` on `sys.stdout`/`sys.stderr`. A `.write` on anything else is a
+    file — `run_step` writes a step's output to its log sink on the line below
+    the one it echoes to the console — so the receiver is what discriminates,
+    not the method name.
+    """
+    found: list[tuple[ast.Call, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "print":
+            found.append((node, "print()"))
+        elif (
+            isinstance(func, ast.Attribute)
+            and func.attr == "write"
+            and isinstance(func.value, ast.Attribute)
+            and func.value.attr in {"stdout", "stderr"}
+            and isinstance(func.value.value, ast.Name)
+            and func.value.value.id == "sys"
+        ):
+            found.append((node, f"sys.{func.value.attr}.write()"))
+    return found
+
+
+TEXT_BEARING_KEYWORDS = frozenset({"sep", "end"})
+
+
+def guarded_by_console_safe(call: ast.Call) -> bool:
+    """Whether every argument of ``call`` that carries text to the console is safe.
+
+    Safe means one of two things, and the second is a mechanism rather than a
+    convention: the argument is a `_console_safe(...)` call, or it is a string
+    literal that is **pure ASCII**, which no console encoding can fail to
+    represent. Anything else — an f-string, a name, a starred argument whose
+    contents are unknowable here, a call with no arguments at all — is refused.
+    Failing closed costs an author one edit; failing open costs an operator a
+    crash inside the failure reporter.
+
+    **Safe also means guarding the stream actually written to**, which is the
+    third correction and the one that was an *assertion* rather than an
+    omission. `_console_safe` reads the encoding of the stream it is handed and
+    defaults to stdout, so `print(_console_safe(a), file=sys.stderr)` guards
+    stdout and writes to stderr: on a UTF-8 stdout beside a cp437 stderr the em
+    dash survives the guard and the write still raises. A row below pinned that
+    exact spelling as guarded, excused by "`file` carries no text" — true of
+    text and false of streams, so the check blessed the one mismatch it exists
+    to catch. `file` is therefore read here, not for its text but for its
+    identity; `flush` remains unread.
+
+    **Which arguments carry text took two corrections before that, each found by
+    a reviewer.** First this read `call.args[0]` alone, so `print(_console_safe(a),
+    b)` passed with `b` unguarded. Then it read every positional argument and
+    ignored `call.keywords`, so `print(_console_safe(a), sep=x, end=y)` passed
+    while `sep` and `end` went to the console untouched. Both gaps were dormant —
+    the module's one remaining `print` passes only `file` and `flush` — and both
+    were the same defect class as the three function enumerations before them,
+    one argument slot further out each time, which is why the rule is now stated
+    over *what a call does with text* rather than over a position in its
+    signature.
+    """
+    text_bearing = text_arguments(call)
+    if not text_bearing:
+        return False
+    target = stream_written_to(call)
+    if target == UNREADABLE_STREAM:
+        # Refused rather than compared. Two unreadable sides are *equal* as
+        # strings, so comparing them would pass `print(_console_safe(*pack),
+        # **kw)` — the one shape where neither side is known at all.
+        return False
+    return all(
+        is_ascii_literal(arg)
+        or (is_console_safe_call(arg) and stream_guarded_by(arg) == target)
+        for arg in text_bearing
+    )
+
+
+def is_console_safe_call(node: ast.expr) -> TypeIs[ast.Call]:
+    """Whether ``node`` is a `_console_safe(...)` call.
+
+    Annotated `TypeIs` rather than `bool` so the narrowing is real: callers pair
+    it with `stream_guarded_by`, which needs an `ast.Call`, and under
+    `pyright --strict` a plain `bool` leaves the argument an `ast.expr`.
+    """
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_console_safe"
+    )
+
+
+def is_literal_none(node: ast.expr) -> bool:
+    """Whether ``node`` is the literal `None`."""
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def text_arguments(call: ast.Call) -> list[ast.expr]:
+    """The arguments of ``call`` that carry text to the console."""
+    return [
+        *call.args,
+        *(kw.value for kw in call.keywords if kw.arg in TEXT_BEARING_KEYWORDS),
+    ]
+
+
+def every_text_argument_is_wrapped(call: ast.Call) -> bool:
+    """Whether each text argument is wrapped or ASCII, ignoring which stream.
+
+    Only to tell the two failure classes apart when reporting: a call that
+    satisfies this and still fails `guarded_by_console_safe` is wrapped for the
+    *wrong* stream, which is a different edit from one that is not wrapped at
+    all.
+    """
+    arguments = text_arguments(call)
+    return bool(arguments) and all(
+        is_console_safe_call(arg) or is_ascii_literal(arg) for arg in arguments
+    )
+
+
+# `sys.stdout` as `ast.dump` renders it: the stream a bare `print(...)` and a
+# `_console_safe(...)` with no stream argument both resolve to. Comparing dumps
+# rather than source text means `target` matches `target` — which is the shape
+# `_say` actually uses — without this needing to resolve a name to a value.
+STDOUT_KEY = ast.dump(ast.parse("sys.stdout", mode="eval").body)
+
+# A stream this check cannot identify, and deliberately **not** stdout.
+# Defaulting an unreadable argument to stdout fails *open*, which is the
+# opposite of the rule stated in `guarded_by_console_safe`: measured by a
+# reviewer, `print(_console_safe(*pack), file=sys.stdout)` injected into the
+# real module left the invariant test green, because both sides collapsed to
+# stdout while the guard actually encodes for whatever `pack` holds. The same
+# hole sat on the write side, which that round did not name — `file=` can
+# arrive inside `**kwargs`, so a bare `print(_console_safe(a), **kw)` read as
+# stdout too. Never compare two of these as equal; see the caller.
+UNREADABLE_STREAM = "<unreadable>"
+
+
+def stream_written_to(call: ast.Call) -> str:
+    """Which stream ``call`` puts text on, as a key comparable across spellings.
+
+    A `.write` names its stream as the receiver. A `print` names it with `file=`,
+    and omitting that keyword — or passing `None` — means stdout, which is how
+    `print` itself resolves it. `**kwargs` can carry `file=`, and `sep`/`end`
+    besides, so a call that has one is unreadable rather than stdout.
+    """
+    func = call.func
+    if isinstance(func, ast.Attribute) and func.attr == "write":
+        return ast.dump(func.value)
+    for keyword in call.keywords:
+        if keyword.arg == "file":
+            if is_literal_none(keyword.value):
+                return STDOUT_KEY
+            return ast.dump(keyword.value)
+    if any(keyword.arg is None for keyword in call.keywords):
+        return UNREADABLE_STREAM
+    return STDOUT_KEY
+
+
+def stream_guarded_by(call: ast.Call) -> str:
+    """Which stream a `_console_safe(...)` call encodes for, as the same key.
+
+    Its second parameter is `stream`, positionally or by keyword, and `None` —
+    or no argument at all — means stdout, resolved in its body rather than in its
+    signature so a redirected stream is seen. A starred or double-starred
+    argument can hold that stream where this cannot read it, so such a call is
+    unreadable rather than stdout.
+    """
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    ):
+        return UNREADABLE_STREAM
+    if len(call.args) > 1:
+        node: ast.expr | None = call.args[1]
+    else:
+        node = next(
+            (kw.value for kw in call.keywords if kw.arg == "stream"),
+            None,
+        )
+    if node is None or is_literal_none(node):
+        return STDOUT_KEY
+    return ast.dump(node)
+
+
+def is_ascii_literal(node: ast.expr) -> bool:
+    """Whether ``node`` is a string literal no console encoding can refuse."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.isascii()
+    )
+
+
+@pytest.mark.parametrize(
+    ("snippet", "detected"),
+    [
+        ("print(x)", ["print()"]),
+        ("sys.stdout.write(x)", ["sys.stdout.write()"]),
+        ("sys.stderr.write(x)", ["sys.stderr.write()"]),
+        # A `.write` on anything else is a file, and `sink` is the real
+        # collision: `run_step` writes a step's output to its log sink on the
+        # line below the one it echoes to the console. One row, not two — a
+        # second non-`sys` receiver exercises the same branch for the same
+        # reason and a reviewer flagged the pair as redundant.
+        ("sink.write(x)", []),
+        # Reached by the walk, not only by a top-level scan.
+        ("def outer():\n    def inner():\n        print(x)", ["print()"]),
+    ],
+)
+def test_the_console_write_detector_recognises_the_spellings_it_claims(
+    snippet: str, detected: list[str]
+) -> None:
+    """What `console_writes` matches, stated as cases rather than asserted.
+
+    The detector is the mechanism the module-wide invariant rests on, so the
+    set it recognises is a claim in its own right. Two of these are the ones
+    that matter: a `.write` on a non-`sys` receiver must **not** be flagged, or
+    the check fires on a log sink; and a write inside a nested function must be,
+    since reach past the top level is the whole reason this reads the AST
+    instead of a function's own source text.
+    """
+    found = [spelling for _, spelling in console_writes(ast.parse(snippet))]
+
+    assert found == detected, snippet
+
+
+@pytest.mark.parametrize(
+    ("snippet", "guarded"),
+    [
+        ("print(_console_safe(a))", True),
+        ("sys.stdout.write(_console_safe(a))", True),
+        # The case a reviewer measured passing a first-argument-only check.
+        ("print(_console_safe(a), b)", False),
+        ("print(a, _console_safe(b))", False),
+        # And the case a reviewer measured passing an all-positional check:
+        # `sep` and `end` reach the console exactly as an argument does.
+        ("print(_console_safe(a), sep=b)", False),
+        ("print(_console_safe(a), end=b)", False),
+        # ASCII literals cannot fail to encode, including as sep/end.
+        ('print("plain ascii")', True),
+        ('print(_console_safe(a), sep="", end="\\n")', True),
+        ('print(_console_safe(a), sep=" \\u2014 ")', False),
+        # `flush` carries no text and is not checked. `file` carries none
+        # either, but it names the stream the guard has to match: this row
+        # asserted True on the strength of "carries no text", which blessed a
+        # stdout-encoded line written to stderr.
+        ("print(_console_safe(a), file=sys.stderr, flush=True)", False),
+        ("print(_console_safe(a, sys.stderr), file=sys.stderr, flush=True)", True),
+        ("print(_console_safe(a, stream=sys.stderr), file=sys.stderr)", True),
+        # `_say`'s own shape: one name used for both, which matches without
+        # anything here resolving it to a stream object.
+        ("print(_console_safe(line, target), file=target, flush=flush)", True),
+        ("print(_console_safe(line, other), file=target)", False),
+        # An explicit `None` means stdout on both sides, as it does at runtime.
+        # Pinned against a *different* spelling on the other side: `None`
+        # against `None` passes even with the canonicalisation deleted, since
+        # both sides then fall back to the same `ast.dump` string, so that row
+        # could not tell the two implementations apart. A reviewer measured it
+        # surviving `is_literal_none` stubbed to `return False`.
+        ("print(_console_safe(a, None), file=sys.stdout)", True),
+        ("print(_console_safe(a, sys.stdout), file=None)", True),
+        ("print(_console_safe(a, None), file=sys.stderr)", False),
+        # Unreadable beats stdout, on either side and on both at once. The
+        # first of these passed before the sentinel existed.
+        ("print(_console_safe(*pack), file=sys.stdout)", False),
+        ("print(_console_safe(a), **kw)", False),
+        ("print(_console_safe(*pack), **kw)", False),
+        ("sys.stdout.write(_console_safe(*pack))", False),
+        # Identity is *spelling*, not the runtime object, so an alias for the
+        # same stream reads as a mismatch. Conservative — it costs an author one
+        # edit and can never hide a real mismatch — and pinned here rather than
+        # resolved, because resolving it needs dataflow this check does not do.
+        # `console_writes` discloses its own alias blindness the same way.
+        ("err = sys.stderr\nprint(_console_safe(a, sys.stderr), file=err)", False),
+        # The raw write in `run_step`, and its stderr counterpart, which would
+        # be guarding the wrong stream.
+        ("sys.stderr.write(_console_safe(a))", False),
+        ("sys.stderr.write(_console_safe(a, sys.stderr))", True),
+        ("sys.stdout.write(_console_safe(a, sys.stderr))", False),
+        # An ASCII literal needs no stream match — no encoding can refuse it.
+        ('print("plain ascii", file=sys.stderr)', True),
+        ("print(a)", False),
+        ("print(*parts)", False),
+        ("print()", False),
+    ],
+)
+def test_the_guard_check_requires_every_argument_to_be_wrapped(
+    snippet: str, guarded: bool
+) -> None:
+    """`print(_console_safe(a), b)` is not guarded, and once read as if it were.
+
+    Checking only `call.args[0]` let a second, unwrapped positional argument
+    through — measured by a reviewer against the real module by injecting
+    exactly this spelling, which passed green. The remaining rows pin the
+    fail-closed cases: a starred argument whose contents are unknowable here,
+    and a call with no positional arguments at all.
+    """
+    writes = console_writes(ast.parse(snippet))
+    assert len(writes) == 1, snippet
+    call, _ = writes[0]
+
+    assert guarded_by_console_safe(call) is guarded, snippet
+
+
+def test_a_real_step_announcement_survives_a_console_that_cannot_encode_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`run_step`'s `$ command` line, driven rather than scanned.
+
+    The sibling above drives `run_gate` but stubs `run_step` out through
+    `record_steps`, so the real body of `run_step` never ran against a hostile
+    console — which is how its bare `print` survived a round that had just
+    routed the two banners around it. A reviewer reproduced the crash by giving
+    a `Step` a `display` carrying an em dash.
+
+    What is load-bearing is that **`run_step` itself is not stubbed**, which the
+    `run_gate` sibling cannot offer. The child being a real process is not:
+    a reviewer reproduced these exact assertions with `subprocess.run` faked and
+    got an identical pass, so claiming the real subprocess buys ordering here was
+    wrong — nothing below compares the banner against a child's output, and
+    `-c pass` emits none to compare with. Flush ordering is pinned separately by
+    `test_say_flushes_when_asked_and_not_otherwise`. The real process is kept
+    only because it costs one cheap spawn and needs no fake to maintain.
+    """
+    console = _Cp437Console()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+    step = run_gates.Step([sys.executable, "-c", "pass"], "probe — with a dash")
+
+    assert run_gates.run_step(step, echo=False) == 0
+
+    rendered = console.getvalue()
+    assert "probe" in rendered, rendered
+    assert EM_DASH not in rendered, "an em dash reached a console that refuses it"
+
+
+def test_the_verbose_echo_survives_a_console_that_cannot_encode_the_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one guarded write with no behavioural cover, and the likeliest source.
+
+    `run_step`'s `--verbose` echo is the module's only console write that is not
+    a `_say` call — it writes raw to keep a child's bytes intact — so it was
+    covered by the AST check alone while every other site had a paired
+    double-console test. A reviewer flagged the asymmetry. It is also the site
+    whose text this repository controls least: the others interpolate a registry
+    `summary` or a builder `display`, where this one carries whatever a child
+    process emitted, which is where a box-drawing character or an arrow actually
+    comes from.
+
+    The child writes UTF-8 to its own `buffer` rather than relying on locale, so
+    the bytes are the same on every leg. `run_step` decodes with
+    `errors="replace"`, so the parent holds a real em dash and only the console
+    substitutes — which the last assertion pins: the **captured log keeps the
+    character**, because the guard exists to protect the console and must not
+    corrupt the file the canary scan reads.
+    """
+    console = _Cp437Console()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+    emit = "import sys; sys.stdout.buffer.write('alpha — omega\\n'.encode())"
+    log = tmp_path / "echo.log"
+    step = run_gates.Step([sys.executable, "-c", emit], "echo probe", capture_to=log)
+
+    assert run_gates.run_step(step, echo=True) == 0
+
+    rendered = console.getvalue()
+    assert "alpha" in rendered, rendered
+    assert "omega" in rendered, rendered
+    assert EM_DASH not in rendered, "an em dash reached a console that refuses it"
+    assert EM_DASH in log.read_text(encoding="utf-8"), (
+        "the console guard reached the captured log, which the canary gate reads"
+    )
+
+
+def test_every_console_write_in_the_runner_is_encoding_guarded() -> None:
+    """No line reaches the console without passing through `_console_safe`.
+
+    **Derived from the module's AST, not from a list of functions, because the
+    list is what kept being wrong.** Three rounds each widened an enumeration
+    and each left a reachable gap one step further out:
+
+    1. Six prints were wrapped by hand and `render_list`'s was missed, so
+       `--list` crashed on a cp437 stdout.
+    2. `main`'s prints were routed and a textual scan of `main`'s own source was
+       added to hold the line — blind to `run_gate`, a function `main` *calls*,
+       whose gate-start banner carries an em dash and crashed. Measured by a
+       reviewer while that scan was green.
+    3. `run_gate` was added to the scan's list — blind to `run_step`, one call
+       further down, whose `$ {step.shown()}` line carries builder-supplied text
+       and crashed. Also measured by a reviewer. The same round's scan could not
+       have seen `sys.stdout.write` at all, whatever list it was given, because
+       it matched the substring `print(`.
+
+    A fourth widening would have the same shape. What closes it is asking the
+    question over every call in the file: a console write is a `print` or a
+    `sys.std*.write`, and it is guarded when every argument carrying text — the
+    positional ones and `sep`/`end` — is either a `_console_safe(...)` call or a
+    pure-ASCII literal, which no encoding can refuse. `guarded_by_console_safe`
+    records what each of those two clauses cost to learn. `_say` satisfies it
+    once, in its own body, and
+    every other writer satisfies it by calling `_say`. One site writes raw
+    (`run_step`'s `--verbose` echo, which must not gain a newline) and wraps the
+    argument itself.
+
+    This test found a site neither reviewer named — `replay_tail`'s tail header —
+    which is the evidence that a derived check beats a longer list rather than
+    merely being tidier.
+
+    **Its scope is the two spellings named above, and that is a limit, not a
+    totality.** A write through an alias (`out = sys.stderr; out.write(…)`),
+    `os.write(1, …)`, `writelines`, or `logging` is invisible to it — measured,
+    not assumed, and none exists in the module today. Disclosed rather than
+    chased: resolving an alias means dataflow analysis, and the honest end state
+    of three failed enumerations is a check that says exactly what it covers.
+    """
+    tree = ast.parse(RUNNER_SOURCE)
+    writes = console_writes(tree)
+
+    # The detector itself can stop matching — a rename, a refactor that moves
+    # every write behind an indirection — and a scan that finds nothing passes
+    # vacuously. The floor is **one**, not the current count: `_say`'s own
+    # `print` is the single write that must always exist, while the other
+    # (`run_step`'s raw echo) could legitimately be routed differently one day.
+    # A floor at the current value would redden that change with a message
+    # blaming the detector, which is the false alarm this check exists to avoid
+    # being.
+    assert writes, (
+        "no console write found in run_gates.py at all — the detector has "
+        "stopped matching, so this test proves nothing"
+    )
+
+    # Reported as two classes, because the remedy differs and a message naming
+    # the wrong one sends the author to the wrong edit. A mismatch *did* pass
+    # through `_console_safe` — saying it did not is the sort of confidently
+    # wrong diagnostic this suite exists to keep out of the module.
+    unwrapped: list[str] = []
+    mismatched: list[str] = []
+    unreadable: list[str] = []
+    for call, spelling in writes:
+        if guarded_by_console_safe(call):
+            continue
+        site = f"{spelling} at run_gates.py:{call.lineno}"
+        guard_streams = {
+            stream_guarded_by(arg)
+            for arg in text_arguments(call)
+            if is_console_safe_call(arg)
+        }
+        if (
+            stream_written_to(call) == UNREADABLE_STREAM
+            or UNREADABLE_STREAM in guard_streams
+        ):
+            # Third class, and not a mismatch: claiming a *different* stream was
+            # given would assert something this check cannot know. Saying so is
+            # the whole point — the previous message's confident wording is what
+            # a reviewer flagged one round earlier.
+            unreadable.append(site)
+        elif every_text_argument_is_wrapped(call):
+            mismatched.append(site)
+        else:
+            unwrapped.append(site)
+
+    assert not unwrapped, (
+        "these console writes do not pass their text through _console_safe, so "
+        "a console that cannot encode a character in them raises inside the "
+        f"reporter: {unwrapped}. Call _say, or wrap the argument."
+    )
+    assert not mismatched, (
+        "these console writes are wrapped, but `_console_safe` was given a "
+        "different stream than the write targets, so the guard reads the wrong "
+        "encoding and the write can still raise: "
+        f"{mismatched}. Pass the same stream to both."
+    )
+    assert not unreadable, (
+        "this check cannot tell which stream these writes guard or target — a "
+        "starred or double-starred argument can hold it — so it refuses them "
+        "rather than assuming stdout, which is how the same shape passed "
+        f"before: {unreadable}. Spell the stream out on both sides."
+    )
 
 
 def test_the_replay_prints_a_line_the_console_cannot_encode(
