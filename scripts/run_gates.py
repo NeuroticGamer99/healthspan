@@ -33,10 +33,10 @@ reported as skipped and named in the summary. Omitting them would let a clean
 local run read as full CI green when it never was -- the silent-partial failure
 above, reintroduced by the tool meant to fix it.
 
-**Nothing here is authoritative; CI is.** Two of the six CI jobs cannot be
-reproduced on one machine at all (the macOS leg, and gitleaks' hash-verified
-binary). This script exists so a session does not burn 600 seconds and does not
-mistake a partial run for a full one -- not to replace the gate.
+**Nothing here is authoritative; CI is.** Two of the jobs `ci.yml` defines
+cannot be reproduced on one machine at all (the macOS leg, and gitleaks'
+hash-verified binary). This script exists so a session does not burn 600 seconds
+and does not mistake a partial run for a full one -- not to replace the gate.
 
 Deliberate divergences from CI, each with a reason:
 
@@ -1135,7 +1135,7 @@ def _pip_audit(ctx: Context) -> list[Step]:
 #
 # 1. `containment` first. It is the gate that refuses a tree holding a personal
 #    path, and nearly every gate behind it walks that tree and names the
-#    offending path on a violation (ADR-0080 §3 enumerates the six and which of
+#    offending path on a violation (ADR-0080 §3 holds the list, and which of
 #    them add a line number -- `ruff format --check` does not). Running it first
 #    means a run over such a tree stops before any other gate can name the path
 #    it found, which is the bound ADR-0080 §4 rests on.
