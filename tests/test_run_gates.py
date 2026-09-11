@@ -43,7 +43,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeIs, cast
 
 import pytest
 import run_gates
@@ -3426,35 +3426,122 @@ def guarded_by_console_safe(call: ast.Call) -> bool:
     Failing closed costs an author one edit; failing open costs an operator a
     crash inside the failure reporter.
 
-    **Which arguments carry text took two corrections, each found by a
-    reviewer.** First this read `call.args[0]` alone, so `print(_console_safe(a),
+    **Safe also means guarding the stream actually written to**, which is the
+    third correction and the one that was an *assertion* rather than an
+    omission. `_console_safe` reads the encoding of the stream it is handed and
+    defaults to stdout, so `print(_console_safe(a), file=sys.stderr)` guards
+    stdout and writes to stderr: on a UTF-8 stdout beside a cp437 stderr the em
+    dash survives the guard and the write still raises. A row below pinned that
+    exact spelling as guarded, excused by "`file` carries no text" — true of
+    text and false of streams, so the check blessed the one mismatch it exists
+    to catch. `file` is therefore read here, not for its text but for its
+    identity; `flush` remains unread.
+
+    **Which arguments carry text took two corrections before that, each found by
+    a reviewer.** First this read `call.args[0]` alone, so `print(_console_safe(a),
     b)` passed with `b` unguarded. Then it read every positional argument and
     ignored `call.keywords`, so `print(_console_safe(a), sep=x, end=y)` passed
-    while `sep` and `end` went to the console untouched. `file` and `flush` are
-    not text and are not checked. Both gaps were dormant — the module's one
-    remaining `print` passes only `file` and `flush` — and both were the same
-    defect class as the three function enumerations before them, one argument
-    slot further out each time, which is why the rule is now stated over *what a
-    call does with text* rather than over a position in its signature.
+    while `sep` and `end` went to the console untouched. Both gaps were dormant —
+    the module's one remaining `print` passes only `file` and `flush` — and both
+    were the same defect class as the three function enumerations before them,
+    one argument slot further out each time, which is why the rule is now stated
+    over *what a call does with text* rather than over a position in its
+    signature.
     """
-    text_bearing = [
-        *call.args,
-        *(kw.value for kw in call.keywords if kw.arg in TEXT_BEARING_KEYWORDS),
-    ]
+    text_bearing = text_arguments(call)
     if not text_bearing:
         return False
+    target = stream_written_to(call)
     return all(
-        is_console_safe_call(arg) or is_ascii_literal(arg) for arg in text_bearing
+        is_ascii_literal(arg)
+        or (is_console_safe_call(arg) and stream_guarded_by(arg) == target)
+        for arg in text_bearing
     )
 
 
-def is_console_safe_call(node: ast.expr) -> bool:
-    """Whether ``node`` is a `_console_safe(...)` call."""
+def is_console_safe_call(node: ast.expr) -> TypeIs[ast.Call]:
+    """Whether ``node`` is a `_console_safe(...)` call.
+
+    Annotated `TypeIs` rather than `bool` so the narrowing is real: callers pair
+    it with `stream_guarded_by`, which needs an `ast.Call`, and under
+    `pyright --strict` a plain `bool` leaves the argument an `ast.expr`.
+    """
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_console_safe"
     )
+
+
+def is_literal_none(node: ast.expr) -> bool:
+    """Whether ``node`` is the literal `None`."""
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def text_arguments(call: ast.Call) -> list[ast.expr]:
+    """The arguments of ``call`` that carry text to the console."""
+    return [
+        *call.args,
+        *(kw.value for kw in call.keywords if kw.arg in TEXT_BEARING_KEYWORDS),
+    ]
+
+
+def every_text_argument_is_wrapped(call: ast.Call) -> bool:
+    """Whether each text argument is wrapped or ASCII, ignoring which stream.
+
+    Only to tell the two failure classes apart when reporting: a call that
+    satisfies this and still fails `guarded_by_console_safe` is wrapped for the
+    *wrong* stream, which is a different edit from one that is not wrapped at
+    all.
+    """
+    arguments = text_arguments(call)
+    return bool(arguments) and all(
+        is_console_safe_call(arg) or is_ascii_literal(arg) for arg in arguments
+    )
+
+
+# `sys.stdout` as `ast.dump` renders it: the stream a bare `print(...)` and a
+# `_console_safe(...)` with no stream argument both resolve to. Comparing dumps
+# rather than source text means `target` matches `target` — which is the shape
+# `_say` actually uses — without this needing to resolve a name to a value.
+STDOUT_KEY = ast.dump(ast.parse("sys.stdout", mode="eval").body)
+
+
+def stream_written_to(call: ast.Call) -> str:
+    """Which stream ``call`` puts text on, as a key comparable across spellings.
+
+    A `.write` names its stream as the receiver. A `print` names it with `file=`,
+    and omitting that keyword — or passing `None` — means stdout, which is how
+    `print` itself resolves it.
+    """
+    func = call.func
+    if isinstance(func, ast.Attribute) and func.attr == "write":
+        return ast.dump(func.value)
+    for keyword in call.keywords:
+        if keyword.arg == "file":
+            if is_literal_none(keyword.value):
+                return STDOUT_KEY
+            return ast.dump(keyword.value)
+    return STDOUT_KEY
+
+
+def stream_guarded_by(call: ast.Call) -> str:
+    """Which stream a `_console_safe(...)` call encodes for, as the same key.
+
+    Its second parameter is `stream`, positionally or by keyword, and `None` —
+    or no argument at all — means stdout, resolved in its body rather than in its
+    signature so a redirected stream is seen.
+    """
+    if len(call.args) > 1:
+        node: ast.expr | None = call.args[1]
+    else:
+        node = next(
+            (kw.value for kw in call.keywords if kw.arg == "stream"),
+            None,
+        )
+    if node is None or is_literal_none(node):
+        return STDOUT_KEY
+    return ast.dump(node)
 
 
 def is_ascii_literal(node: ast.expr) -> bool:
@@ -3515,8 +3602,26 @@ def test_the_console_write_detector_recognises_the_spellings_it_claims(
         ('print("plain ascii")', True),
         ('print(_console_safe(a), sep="", end="\\n")', True),
         ('print(_console_safe(a), sep=" \\u2014 ")', False),
-        # `file` and `flush` carry no text, so they are not checked.
-        ("print(_console_safe(a), file=sys.stderr, flush=True)", True),
+        # `flush` carries no text and is not checked. `file` carries none
+        # either, but it names the stream the guard has to match: this row
+        # asserted True on the strength of "carries no text", which blessed a
+        # stdout-encoded line written to stderr.
+        ("print(_console_safe(a), file=sys.stderr, flush=True)", False),
+        ("print(_console_safe(a, sys.stderr), file=sys.stderr, flush=True)", True),
+        ("print(_console_safe(a, stream=sys.stderr), file=sys.stderr)", True),
+        # `_say`'s own shape: one name used for both, which matches without
+        # anything here resolving it to a stream object.
+        ("print(_console_safe(line, target), file=target, flush=flush)", True),
+        ("print(_console_safe(line, other), file=target)", False),
+        # An explicit `None` means stdout on both sides, as it does at runtime.
+        ("print(_console_safe(a, None), file=None)", True),
+        # The raw write in `run_step`, and its stderr counterpart, which would
+        # be guarding the wrong stream.
+        ("sys.stderr.write(_console_safe(a))", False),
+        ("sys.stderr.write(_console_safe(a, sys.stderr))", True),
+        ("sys.stdout.write(_console_safe(a, sys.stderr))", False),
+        # An ASCII literal needs no stream match — no encoding can refuse it.
+        ('print("plain ascii", file=sys.stderr)', True),
         ("print(a)", False),
         ("print(*parts)", False),
         ("print()", False),
@@ -3666,15 +3771,31 @@ def test_every_console_write_in_the_runner_is_encoding_guarded() -> None:
         "stopped matching, so this test proves nothing"
     )
 
-    unguarded = [
-        f"{spelling} at run_gates.py:{call.lineno}"
-        for call, spelling in writes
-        if not guarded_by_console_safe(call)
-    ]
-    assert not unguarded, (
+    # Reported as two classes, because the remedy differs and a message naming
+    # the wrong one sends the author to the wrong edit. A mismatch *did* pass
+    # through `_console_safe` — saying it did not is the sort of confidently
+    # wrong diagnostic this suite exists to keep out of the module.
+    unwrapped: list[str] = []
+    mismatched: list[str] = []
+    for call, spelling in writes:
+        if guarded_by_console_safe(call):
+            continue
+        site = f"{spelling} at run_gates.py:{call.lineno}"
+        if every_text_argument_is_wrapped(call):
+            mismatched.append(site)
+        else:
+            unwrapped.append(site)
+
+    assert not unwrapped, (
         "these console writes do not pass their text through _console_safe, so "
         "a console that cannot encode a character in them raises inside the "
-        f"reporter: {unguarded}. Call _say, or wrap the argument."
+        f"reporter: {unwrapped}. Call _say, or wrap the argument."
+    )
+    assert not mismatched, (
+        "these console writes are wrapped, but `_console_safe` was given a "
+        "different stream than the write targets, so the guard reads the wrong "
+        "encoding and the write can still raise: "
+        f"{mismatched}. Pass the same stream to both."
     )
 
 

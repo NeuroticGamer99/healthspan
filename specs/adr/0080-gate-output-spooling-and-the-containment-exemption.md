@@ -191,5 +191,5 @@ This ADR owns the spooling behaviour, the retention policy and its defaults, the
 - Applies [ADR-0079](0079-personal-data-outside-the-repository.md) — §R2 is why §3 exempts the gate it does, and §4 is the audit §4 above answers. Applying is not extending, so ADR-0079 owes no reciprocal link and is not edited.
 - Relates to [ADR-0075](0075-local-gate-divergence-from-ci.md) — owns the local runner's shape. This change engages no divergence class and adds no row to that table, which already records four diverging gates; the new behaviour is this ADR's own.
 - Relates to [ADR-0063](0063-parallel-ci-test-execution.md) — the canary sink and scan, unchanged by this.
-- Relates to [ADR-0070](0070-personal-data-containment-gate.md) — the gate §3 exempts and §5 promotes to first. Neither changes what it checks, so ADR-0070 is not edited.
+- Relates to [ADR-0070](0070-personal-data-containment-gate.md) — the gate §3 exempts and §5 promotes to first. Neither changes what it checks, so its **decision content** is not edited; §6 records the one in-place correction this change does make there, to a Consequences sentence the new ordering falsified. This line read "ADR-0070 is not edited", which the patch and §6 both contradicted.
 - Relates to [ADR-0078](0078-gate-growth-beyond-an-enumerated-contract.md) — the gate-behaviour axis, which this change does not move.

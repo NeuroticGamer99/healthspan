@@ -1130,8 +1130,14 @@ def _pip_audit(ctx: Context) -> list[Step]:
 
 # --------------------------------------------------------------------------
 # The registry — the single structure the selector, --list, and the drift test
-# all read. Listed in execution order, under two principles that order the
-# whole tuple and one pairwise constraint that does not:
+# all read. Listed in execution order, under two principles -- the first over
+# the whole tuple, the second only over the gates a local run executes -- and
+# one pairwise constraint that is neither. The narrowing on (2) is not a hedge
+# and is restated at the foot of this comment with what measures it: `gitleaks`
+# and `test-matrix` are cheap, CI-only, and sit behind the slow `pytest`, so
+# cheap-before-slow is false of the whole tuple and true of a local run. This
+# line claimed both principles ordered the tuple while the paragraph below
+# said otherwise.
 #
 # 1. `containment` first. It is the gate that refuses a tree holding a personal
 #    path, and nearly every gate behind it walks that tree and names the
@@ -1538,8 +1544,11 @@ def _say(line: str, stream: TextIO | None = None, *, flush: bool = False) -> Non
 
     Every console write here is a call to this function, with one deliberate
     exception that the invariant above still covers: `run_step`'s `--verbose`
-    echo writes raw, because it reproduces a child's output byte for byte and
-    this function appends a newline. It wraps its own argument instead.
+    echo writes raw, because a child's line already carries its own terminator
+    and this function would append a second. It wraps its own argument instead.
+    Not *byte for byte*, which is what this said: `Popen` has already decoded
+    those bytes with `errors="replace"`, and `_console_safe` may replace again.
+    What the raw write preserves is the line ending, not the bytes.
 
     `flush` exists because ordering matters for an announcement: a step's
     `$ command` line precedes a child process that writes to the same terminal.
@@ -1695,8 +1704,12 @@ def run_step(
                 for line in process.stdout:
                     if echo:
                         # Guarded, and written raw rather than through `_say`:
-                        # this echoes a child's output byte for byte, newlines
-                        # included, where `_say` would add one of its own. It is
+                        # the child's line already ends in its own newline and
+                        # `_say` would add a second. Not byte for byte, which is
+                        # what this claimed -- `Popen` decoded these bytes with
+                        # errors="replace" above, and `_console_safe` may replace
+                        # again; the line *ending* is what survives here, not the
+                        # bytes. It is
                         # the one console write in this module that is not a
                         # `_say` call, which is why the invariant is stated as
                         # "passes through `_console_safe`" rather than "calls
