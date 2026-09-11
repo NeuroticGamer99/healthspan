@@ -114,6 +114,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path, PurePath
+from typing import TextIO
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -1371,7 +1372,7 @@ def render_list(ctx: Context, gates: Sequence[Gate] | None = None) -> str:
     return "\n".join(lines)
 
 
-def _console_safe(line: str) -> str:
+def _console_safe(line: str, stream: TextIO | None = None) -> str:
     """A line the current stdout can encode, whatever encoding it happens to be.
 
     The `__main__` guard reconfigures stdout to UTF-8 with `errors="replace"`,
@@ -1381,8 +1382,16 @@ def _console_safe(line: str) -> str:
     `UnicodeEncodeError` *inside the failure reporter*, turning a legible
     failure into an unhandled one. That is the same outcome the `OSError` guard
     below exists to prevent, reached through the encoder instead of the reader.
+    **Takes the stream it is protecting.** It read `sys.stdout`'s encoding
+    unconditionally for one release, which was right while its only caller
+    printed to stdout and wrong the moment two of them printed to `stderr`:
+    the two streams can carry different encodings, so guarding a `stderr`
+    write against `stdout`'s is guarding the wrong one. `None` means stdout,
+    resolved in the body rather than in the signature so a redirected stream is
+    seen -- a default argument would bind whatever `sys.stdout` was at import.
     """
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    target = sys.stdout if stream is None else stream
+    encoding = getattr(target, "encoding", None) or "utf-8"
     return line.encode(encoding, "replace").decode(encoding, "replace")
 
 
@@ -1635,7 +1644,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         text = CI_WORKFLOW.read_text(encoding="utf-8")
     except OSError as exc:
-        print(_console_safe(f"cannot read {CI_WORKFLOW}: {exc}"), file=sys.stderr)
+        print(
+            _console_safe(f"cannot read {CI_WORKFLOW}: {exc}", sys.stderr),
+            file=sys.stderr,
+        )
         return 1
 
     # --list and --print read commands rather than running them, so they build
@@ -1735,7 +1747,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ctx.failed = True
                 return 1
     except GateError as exc:
-        print(_console_safe(f"error: {exc}"), file=sys.stderr)
+        print(_console_safe(f"error: {exc}", sys.stderr), file=sys.stderr)
         ctx.failed = True
         return 1
     finally:

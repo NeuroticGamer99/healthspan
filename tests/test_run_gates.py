@@ -2673,6 +2673,82 @@ def test_the_replays_own_frame_survives_a_console_that_cannot_encode_the_path(
     )
 
 
+def test_the_pre_run_notice_survives_a_console_that_cannot_encode_the_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The notice interpolates the scratch path, which carries the account name.
+
+    A temp directory is `…/Users/<name>/…` on Windows, so the one line printed
+    before any gate runs is the *first* thing a legacy console can refuse — and
+    it fails before a single gate has reported, which is the least legible
+    moment available.
+    """
+    root = tmp_path / "→ temp-root"
+    root.mkdir()
+    monkeypatch.setattr(run_gates, "_temp_root", lambda: root)
+    console = _LegacyConsole()
+    monkeypatch.setattr(run_gates.sys, "stdout", console)
+
+    def passes(*_: object) -> run_gates.GateResult:
+        return run_gates.GateResult.PASSED
+
+    monkeypatch.setattr(run_gates, "run_gate", passes)
+
+    run_gates.main([])
+
+    assert "Step output is captured to" in console.getvalue()
+
+
+def test_the_error_handler_survives_a_console_that_cannot_encode_the_message(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path
+) -> None:
+    """`error: {exc}` is the last thing a failed run prints, and it writes to stderr.
+
+    Two of the guarded sites print to `stderr` while the helper read
+    `sys.stdout`'s encoding, so a `stderr` write was being checked against the
+    wrong stream's capability. Both consoles are faked here for that reason:
+    with the helper reading stdout only, a stdout that *can* encode would have
+    let this pass while stderr still refused.
+    """
+    # stdout *can* encode (a bare StringIO has no `encoding`, so the helper
+    # falls back to utf-8) and stderr cannot. That asymmetry is the whole test:
+    # with two legacy consoles it passes either way, and the stream argument
+    # goes unpinned.
+    out, err = io.StringIO(), _LegacyConsole()
+    monkeypatch.setattr(run_gates.sys, "stdout", out)
+    monkeypatch.setattr(run_gates.sys, "stderr", err)
+
+    def boom(*_: object) -> run_gates.GateResult:
+        raise run_gates.GateError("the gate refused: ├─ bad value →")
+
+    monkeypatch.setattr(run_gates, "run_gate", boom)
+
+    assert run_gates.main([]) == 1
+    assert "the gate refused" in err.getvalue()
+
+
+def test_an_unreadable_workflow_reports_on_a_console_that_cannot_encode_it(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path
+) -> None:
+    """The earliest failure `main` can report, and the other `stderr` site.
+
+    It fires before any gate is selected, so a crash here replaces the one
+    message that would have said why nothing ran. Same stream asymmetry as the
+    handler test: stdout can encode, stderr cannot.
+    """
+    out, err = io.StringIO(), _LegacyConsole()
+    monkeypatch.setattr(run_gates.sys, "stdout", out)
+    monkeypatch.setattr(run_gates.sys, "stderr", err)
+
+    def refuse(*_: object, **__: object) -> str:
+        raise OSError("├─ the workflow could not be read →")
+
+    monkeypatch.setattr(run_gates.CI_WORKFLOW.__class__, "read_text", refuse)
+
+    assert run_gates.main([]) == 1
+    assert "could not be read" in err.getvalue()
+
+
 class _FullDisk(io.StringIO):
     """A sink that opens and then refuses its writes, the way a full volume does."""
 
@@ -2680,8 +2756,26 @@ class _FullDisk(io.StringIO):
         raise OSError("No space left on device")
 
 
+class _RefusingSink(Path):
+    """A capture path whose sink opens and then refuses every write.
+
+    A `Path` subclass rather than a `monkeypatch` of `Path.open`, and the
+    difference is not stylistic. The patched version matched on `.log` and so
+    also intercepted pytest's own logging inside the xdist worker running it --
+    measured: it crashed `gw8` with `INTERNALERROR ... assert not crashitem`,
+    intermittently, and the file alone passed. Narrowing the match to the exact
+    path fixed the symptom and left a process-wide patch in place; this removes
+    the patch. `capture_to` is an ordinary `Path` field, so the object can just
+    *be* the thing that refuses. `.parent` preserves the subclass, which
+    `run_step` needs for its `mkdir` before the open.
+    """
+
+    def open(self, *args: Any, **kwargs: Any) -> Any:
+        return _FullDisk()
+
+
 def test_a_capture_that_fails_after_the_sink_opened_is_a_gate_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     """The consequence is not the traceback; it is `cleanup` reading it as green.
 
@@ -2692,31 +2786,53 @@ def test_a_capture_that_fails_after_the_sink_opened_is_a_gate_error(
     flag. The open already converted and the write did not, which is the
     inconsistency that made this findable. Raised by CodeRabbit on PR #106.
     """
-    target = tmp_path / "refused.log"
-    real_open = Path.open
-
-    def fake_open(self: Path, *args: Any, **kwargs: Any) -> Any:
-        # Matched on the exact path, never on the suffix. `Path.open` is patched
-        # process-wide for the duration, so a `self.suffix == ".log"` test also
-        # catches pytest's own logging inside this xdist worker -- measured: it
-        # crashed `gw8` and failed the run with `INTERNALERROR ... assert not
-        # crashitem`, intermittently, depending on what else the worker did
-        # while the patch was live. Found from the retained gate log, which is
-        # the feature this branch adds.
-        if self == target:
-            return _FullDisk()
-        # `cast` because `Path.open`'s overloads do not survive `*args: Any`,
-        # and a bare passthrough is `Unknown` under --strict.
-        return cast(Any, real_open(self, *args, **kwargs))
-
-    monkeypatch.setattr(Path, "open", fake_open)
     step = run_gates.Step(
         [sys.executable, "-c", "print('a line the sink will refuse')"],
-        capture_to=target,
+        capture_to=_RefusingSink(tmp_path / "refused.log"),
     )
 
     with pytest.raises(run_gates.GateError, match="could not write the captured"):
         run_gates.run_step(step, echo=False)
+
+
+def test_a_capture_failure_keeps_the_evidence_a_report_would_have_named(
+    monkeypatch: pytest.MonkeyPatch, temp_root: Path, tmp_path: Path
+) -> None:
+    """The consequence the conversion exists for, pinned end to end.
+
+    The sibling above stops at the exception type, which is one layer short of
+    why this matters: `main` sets `ctx.failed` only in its `except GateError`
+    branch, and `cleanup` sweeps `ephemeral` -- the canary worker sink, ~104 MB
+    of it -- whenever `failed` is false. So an unconverted `OSError` did not
+    merely print a traceback; it read to cleanup as a green run and deleted the
+    material a failure report names. Measured before this existed: deleting
+    `ctx.failed = True` from that branch left the whole suite green.
+
+    Driven through `main` rather than asserted on a hand-built `Context`,
+    because the flag, the handler and the sweep are three different functions
+    and the bug lived in the seam between them.
+    """
+    seen: list[run_gates.Context] = []
+    worker_sink = tmp_path / "canary-logs"
+    worker_sink.mkdir()
+
+    def fake_run_gate(
+        _: run_gates.Gate, ctx: run_gates.Context
+    ) -> run_gates.GateResult:
+        seen.append(ctx)
+        ctx.ephemeral.append(worker_sink)
+        raise run_gates.GateError("could not write the captured output: disk full")
+
+    monkeypatch.setattr(run_gates, "run_gate", fake_run_gate)
+
+    assert run_gates.main([]) == 1
+
+    assert seen, "the premise failed: no gate ran, so nothing registered evidence"
+    assert seen[0].failed, "the GateError handler did not mark the run failed"
+    assert worker_sink.is_dir(), (
+        "cleanup swept the working material a failure report points at, which "
+        "is what an unconverted OSError used to cause by leaving failed False"
+    )
 
 
 def test_a_run_directory_that_cannot_be_created_is_a_gate_error(
