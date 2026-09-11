@@ -3452,6 +3452,11 @@ def guarded_by_console_safe(call: ast.Call) -> bool:
     if not text_bearing:
         return False
     target = stream_written_to(call)
+    if target == UNREADABLE_STREAM:
+        # Refused rather than compared. Two unreadable sides are *equal* as
+        # strings, so comparing them would pass `print(_console_safe(*pack),
+        # **kw)` — the one shape where neither side is known at all.
+        return False
     return all(
         is_ascii_literal(arg)
         or (is_console_safe_call(arg) and stream_guarded_by(arg) == target)
@@ -3506,13 +3511,25 @@ def every_text_argument_is_wrapped(call: ast.Call) -> bool:
 # `_say` actually uses — without this needing to resolve a name to a value.
 STDOUT_KEY = ast.dump(ast.parse("sys.stdout", mode="eval").body)
 
+# A stream this check cannot identify, and deliberately **not** stdout.
+# Defaulting an unreadable argument to stdout fails *open*, which is the
+# opposite of the rule stated in `guarded_by_console_safe`: measured by a
+# reviewer, `print(_console_safe(*pack), file=sys.stdout)` injected into the
+# real module left the invariant test green, because both sides collapsed to
+# stdout while the guard actually encodes for whatever `pack` holds. The same
+# hole sat on the write side, which that round did not name — `file=` can
+# arrive inside `**kwargs`, so a bare `print(_console_safe(a), **kw)` read as
+# stdout too. Never compare two of these as equal; see the caller.
+UNREADABLE_STREAM = "<unreadable>"
+
 
 def stream_written_to(call: ast.Call) -> str:
     """Which stream ``call`` puts text on, as a key comparable across spellings.
 
     A `.write` names its stream as the receiver. A `print` names it with `file=`,
     and omitting that keyword — or passing `None` — means stdout, which is how
-    `print` itself resolves it.
+    `print` itself resolves it. `**kwargs` can carry `file=`, and `sep`/`end`
+    besides, so a call that has one is unreadable rather than stdout.
     """
     func = call.func
     if isinstance(func, ast.Attribute) and func.attr == "write":
@@ -3522,6 +3539,8 @@ def stream_written_to(call: ast.Call) -> str:
             if is_literal_none(keyword.value):
                 return STDOUT_KEY
             return ast.dump(keyword.value)
+    if any(keyword.arg is None for keyword in call.keywords):
+        return UNREADABLE_STREAM
     return STDOUT_KEY
 
 
@@ -3530,8 +3549,14 @@ def stream_guarded_by(call: ast.Call) -> str:
 
     Its second parameter is `stream`, positionally or by keyword, and `None` —
     or no argument at all — means stdout, resolved in its body rather than in its
-    signature so a redirected stream is seen.
+    signature so a redirected stream is seen. A starred or double-starred
+    argument can hold that stream where this cannot read it, so such a call is
+    unreadable rather than stdout.
     """
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    ):
+        return UNREADABLE_STREAM
     if len(call.args) > 1:
         node: ast.expr | None = call.args[1]
     else:
@@ -3614,7 +3639,26 @@ def test_the_console_write_detector_recognises_the_spellings_it_claims(
         ("print(_console_safe(line, target), file=target, flush=flush)", True),
         ("print(_console_safe(line, other), file=target)", False),
         # An explicit `None` means stdout on both sides, as it does at runtime.
-        ("print(_console_safe(a, None), file=None)", True),
+        # Pinned against a *different* spelling on the other side: `None`
+        # against `None` passes even with the canonicalisation deleted, since
+        # both sides then fall back to the same `ast.dump` string, so that row
+        # could not tell the two implementations apart. A reviewer measured it
+        # surviving `is_literal_none` stubbed to `return False`.
+        ("print(_console_safe(a, None), file=sys.stdout)", True),
+        ("print(_console_safe(a, sys.stdout), file=None)", True),
+        ("print(_console_safe(a, None), file=sys.stderr)", False),
+        # Unreadable beats stdout, on either side and on both at once. The
+        # first of these passed before the sentinel existed.
+        ("print(_console_safe(*pack), file=sys.stdout)", False),
+        ("print(_console_safe(a), **kw)", False),
+        ("print(_console_safe(*pack), **kw)", False),
+        ("sys.stdout.write(_console_safe(*pack))", False),
+        # Identity is *spelling*, not the runtime object, so an alias for the
+        # same stream reads as a mismatch. Conservative — it costs an author one
+        # edit and can never hide a real mismatch — and pinned here rather than
+        # resolved, because resolving it needs dataflow this check does not do.
+        # `console_writes` discloses its own alias blindness the same way.
+        ("err = sys.stderr\nprint(_console_safe(a, sys.stderr), file=err)", False),
         # The raw write in `run_step`, and its stderr counterpart, which would
         # be guarding the wrong stream.
         ("sys.stderr.write(_console_safe(a))", False),
@@ -3777,11 +3821,26 @@ def test_every_console_write_in_the_runner_is_encoding_guarded() -> None:
     # wrong diagnostic this suite exists to keep out of the module.
     unwrapped: list[str] = []
     mismatched: list[str] = []
+    unreadable: list[str] = []
     for call, spelling in writes:
         if guarded_by_console_safe(call):
             continue
         site = f"{spelling} at run_gates.py:{call.lineno}"
-        if every_text_argument_is_wrapped(call):
+        guard_streams = {
+            stream_guarded_by(arg)
+            for arg in text_arguments(call)
+            if is_console_safe_call(arg)
+        }
+        if (
+            stream_written_to(call) == UNREADABLE_STREAM
+            or UNREADABLE_STREAM in guard_streams
+        ):
+            # Third class, and not a mismatch: claiming a *different* stream was
+            # given would assert something this check cannot know. Saying so is
+            # the whole point — the previous message's confident wording is what
+            # a reviewer flagged one round earlier.
+            unreadable.append(site)
+        elif every_text_argument_is_wrapped(call):
             mismatched.append(site)
         else:
             unwrapped.append(site)
@@ -3796,6 +3855,12 @@ def test_every_console_write_in_the_runner_is_encoding_guarded() -> None:
         "different stream than the write targets, so the guard reads the wrong "
         "encoding and the write can still raise: "
         f"{mismatched}. Pass the same stream to both."
+    )
+    assert not unreadable, (
+        "this check cannot tell which stream these writes guard or target — a "
+        "starred or double-starred argument can hold it — so it refuses them "
+        "rather than assuming stdout, which is how the same shape passed "
+        f"before: {unreadable}. Spell the stream out on both sides."
     )
 
 
