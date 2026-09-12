@@ -67,11 +67,12 @@ _NEEDLE_ROWS = [
 #
 # Scope, stated where the next editor will be standing: this pins *which pairs
 # are registered*, not the needle tuple attached to a pair. Emptying a needle
-# leaves its pair registered and does not fire this test. Harmless only while
-# exactly one row carries needles, because emptying that one also empties
-# `_NEEDLE_ROWS` and reddens `test_the_registry_is_not_empty`. **Adding a second
-# needle row is the trigger** to extend the oracle — specs/open-questions.md
-# carries the entry and the acceptance criterion.
+# leaves its pair registered and does not fire this test. That gap used to be
+# covered by accident — while exactly one row carried needles, emptying it also
+# emptied `_NEEDLE_ROWS` and reddened `test_the_registry_is_not_empty`. **The
+# second needle row arrived (the review-brief/review-prep relay), which was the
+# registered trigger**, so the cover is gone and `_EXPECTED_NEEDLES` below is
+# the oracle that replaces it. Needle *content* is pinned there, not here.
 _EXPECTED_PAIRS = frozenset(
     {
         (".claude/operator-handoff.md", ".claude/skills/review-brief/SKILL.md"),
@@ -87,8 +88,68 @@ _EXPECTED_PAIRS = frozenset(
         ("scripts/run_gates.py", ".claude/skills/apply-review/SKILL.md"),
         ("scripts/run_gates.py", ".claude/skills/wi/SKILL.md"),
         ("scripts/run_gates.py", "CLAUDE.md"),
+        (
+            ".claude/skills/review-brief/SKILL.md",
+            ".claude/skills/review-prep/SKILL.md",
+        ),
     }
 )
+
+# Hand-maintained for the same reason `_EXPECTED_PAIRS` is: a needle dropped
+# from a row deletes its own parametrized case rather than reddening one, so the
+# expectation cannot be derived from `CITATIONS`.
+#
+# Only rows that carry needles appear. A row *gaining* its first needle is a
+# strengthening and reddens this pin too — correctly: adding a needle is a
+# deliberate act, and the pin is where it is announced.
+_EXPECTED_NEEDLES: frozenset[tuple[str, str, tuple[str, ...]]] = frozenset(
+    {
+        (
+            ".claude/bot-review-triage.md",
+            ".claude/skills/apply-review/SKILL.md",
+            ("Under-reporting",),
+        ),
+        (
+            ".claude/skills/review-brief/SKILL.md",
+            ".claude/skills/review-prep/SKILL.md",
+            ("relayed verbatim",),
+        ),
+    }
+)
+
+
+def test_the_registered_needles_are_pinned() -> None:
+    """A needle emptied or reworded reddens here, where nothing else sees it.
+
+    The gap this closes, and why it could not stay open: `_EXPECTED_PAIRS` is
+    blind to the needle tuple, and every other needle assertion in this file is
+    parametrized over `_NEEDLE_ROWS` — derived from the registry, so dropping a
+    needle removes its own case instead of failing one. While the registry held
+    exactly one needle row that was survivable, because emptying it emptied
+    `_NEEDLE_ROWS` and `test_the_registry_is_not_empty` fired. With two rows
+    that cover is gone: emptying one leaves the other's needle standing,
+    `_NEEDLE_ROWS` non-empty, and both pairs registered.
+
+    `specs/open-questions.md` registered this as a trigger with an acceptance
+    criterion — emptying the needle tuple on exactly one of two needle-bearing
+    rows, both pairs intact, must redden a *named* test. This is that test.
+
+    Compares whole sets in both directions, like `_EXPECTED_PAIRS` and for the
+    identical reason: a count admits the edit that drops one needle while adding
+    another, and two sequential asserts unwind at the first, reporting the
+    addition and hiding the removal.
+    """
+    actual = frozenset(_NEEDLE_ROWS)
+    unpinned = actual - _EXPECTED_NEEDLES
+    dropped = _EXPECTED_NEEDLES - actual
+    assert (unpinned, dropped) == (frozenset(), frozenset()), (
+        f"registered needles drifted from the pin. Present but not pinned: "
+        f"{sorted(unpinned)} -- pin them in the same edit, since the pin is what "
+        f"makes a later removal visible. Pinned but gone from CITATIONS: "
+        f"{sorted(dropped)} -- a citation has lost the needle that proved it was "
+        "the intended one, and the bare path can be satisfied by an unrelated "
+        "mention of the same file."
+    )
 
 
 def test_the_registry_membership_is_pinned() -> None:
@@ -149,12 +210,18 @@ def test_the_registry_is_not_empty() -> None:
     The mapping is hand-maintained, so the mode where it is gutted rather than
     corrupted has to be asserted against directly.
 
-    `_NEEDLE_ROWS` is asserted here too, and that is not symmetry. Emptying the
-    one needle tuple turns `…_a_registered_needle_is_missing` into a bare
-    `SKIPPED` with no reason while every other test stays green — a registered
-    protection silently ceasing to be exercised, which is the exact failure the
-    needles were added to catch, recurring one layer up in the suite that
-    guards the gate. A skip is invisible against a two-digit skip count in CI.
+    `_NEEDLE_ROWS` is asserted here too, and that is not symmetry: emptying
+    *every* needle tuple turns `…_a_registered_needle_is_missing` into a bare
+    `SKIPPED` with no reason while the rest of the file stays green — a
+    registered protection silently ceasing to be exercised, which is the exact
+    failure the needles were added to catch, recurring one layer up in the suite
+    that guards the gate. A skip is invisible against a two-digit skip count.
+
+    It no longer covers emptying *one* tuple of several, which it did while the
+    registry had a single needle row. `test_the_registered_needles_are_pinned`
+    owns that case now, and owning it explicitly is the point — this assertion
+    covered it as a side effect of the registry's size, so it stopped covering
+    it the moment a second needle row was added, with nothing saying so.
     """
     assert check_doc_citations.CITATIONS
     assert all(callers for callers in check_doc_citations.CITATIONS.values())

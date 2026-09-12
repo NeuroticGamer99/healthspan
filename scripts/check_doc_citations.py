@@ -107,6 +107,25 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
         ".claude/skills/wi/SKILL.md": (),
         "CLAUDE.md": (),
     },
+    # ADR-0072 §1 — the adjudication lens's command is composed once, by
+    # `/review-brief`, and relayed unchanged by `/review-prep`. The first
+    # owning document here that is itself a skill, which the registry's shape
+    # allows and nothing else about it changes: "owning document" means the one
+    # copy of a rule, not a particular directory.
+    #
+    # The needle matters more than usual. `/review-prep`'s dependency was
+    # written for a year in the natural vocabulary — the bare slash-command
+    # name — which the path assertion cannot see at all, so the citation says
+    # the path explicitly and the needle pins the instruction that path is
+    # there for. Without it the row would pass on any future mention of the
+    # file for any reason.
+    #
+    # What this gates is the pointer, not the relay. Whether `/review-prep`
+    # actually reprints the block unchanged is judgement, ungated for the
+    # reasons ADR-0073 §3 gives for the rest of this registry.
+    ".claude/skills/review-brief/SKILL.md": {
+        ".claude/skills/review-prep/SKILL.md": ("relayed verbatim",),
+    },
 }
 
 

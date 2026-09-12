@@ -378,6 +378,19 @@ and what it excludes); **angles for this round**; **already verified, with evide
 orchestrator's own uncertainties, numbered**; **the reporting bar**; and **the exact commands to
 run**.
 
+**That last section holds `/code-review` only. The adjudication command is never written into the
+brief** — it is composed here and emitted by step 7, and the brief carries a one-line note saying
+so rather than a copy of it. The reason is a circularity, not tidiness: the command contains the
+brief's absolute path, the brief's filename **is** the digest of its own bytes, so a command
+written into the brief either names the file the brief is about to stop being (hash first, then
+rename, and the embedded path is stale) or changes the digest that decides the name (substitute
+first, and the path cannot be known yet). There is no ordering that resolves it, which is why the
+resolved line lives outside the hashed bytes. Keeping it out also keeps one **author**: step 7's
+block is the only place the resolved command is composed, so no artifact holds a copy that can
+drift from it. `/review-prep` does print it a second time, and that is a relay rather than a second
+spelling — it reprints step 7's block unchanged and is forbidden to compose its own, which is the
+distinction that makes one author enough.
+
 **Gate results are mechanically filled.** Run the gates through `python3 scripts/run_gates.py` —
 never assemble their commands by hand — and state which were green at brief time. The interpreter
 is part of the invocation, twice over: the script carries no execute bit, so a bare
@@ -420,15 +433,91 @@ because `/review-handoff` is obliged to answer them by number. This is prompted 
 substituted: an invented uncertainty is worse than none, since it directs real attention at a
 question nobody had.
 
-**Two commands, not one** (ADR-0072 §1). An external round fans out to two lenses, so the
-section holds both: `/code-review` for discovery, and `/codex:adversarial-review` — the one
-external command that accepts instructions — for adjudication, coverage and the numbered
-uncertainties. **The second reaches the brief by path, not by a rendering of it**: hand it the
-brief's absolute path and tell it to treat that file as its brief. Do not condense, summarise or
-re-render the brief into the command line. A condensed copy loses the do-not-re-run and settled
-lists, which are what stop a reviewer relitigating; and the transport forbids characters the
-uncertainties routinely contain, so any rendering must break either fidelity or the command line.
-The path costs neither.
+**Two commands, not one** (ADR-0072 §1). An external round runs two lenses: `/code-review` for
+discovery, and `/codex:adversarial-review` — the one external command that accepts instructions —
+for adjudication, coverage and the numbered uncertainties. **The exact-commands section carries
+`/code-review` only**, for the digest reason given where the section list is stated; this skill
+composes the adjudication command and step 7 emits it separately. `/review-prep` composes the
+first, in the reviewer session, against the scope it pins there. **This skill composes the second,
+whole**, because the two values it needs — the brief's path and the pinned base — exist nowhere
+else at the moment the operator has to type it.
+
+**The second reaches the brief by path, not by a rendering of it**: hand it the brief's absolute
+path and tell it to treat that file as its brief. Do not condense, summarise or re-render the
+brief into the command line. A condensed copy loses the do-not-re-run and settled lists, which are
+what stop a reviewer relitigating; and the transport forbids characters the uncertainties
+routinely contain, so any rendering must break either fidelity or the command line. The path costs
+neither. The standing instruction below is not a rendering — it is fixed text that varies with no
+round, and it carries no brief content for a condensation to lose.
+
+**Compose it whole. An instruction to assemble a command is not a command.** Nobody can invoke
+`/codex:adversarial-review` on the operator's behalf — the plugin sets
+`disable-model-invocation: true`, so the operator types it, into a session that has not read this
+brief and cannot fill a blank left in it. A skill that describes the flags instead of emitting
+them has handed over the part that is easy and kept the part that is error-prone. Compose it here,
+emit it at step 7, and write it into no artifact in between — the shape, with every
+angle-bracketed value replaced before it is printed:
+
+```text
+/codex:adversarial-review --base <base SHA> --scope branch --model gpt-6-astra --background Read the brief at <brief absolute path, forward slashes> and treat that file as your brief for this review. Honour its do-not-re-run and settled lists, answer its numbered uncertainties by number, state what you examined, and challenge the premises the brief itself asserts.
+```
+
+**Every claim the bullets below make about that command was read from the plugin's own source at
+`codex@1.0.6`** — an auto-updating third-party dependency, so the version is the pin and a plugin
+bump is the trigger to re-verify them. Nothing in this repository can gate a fact about another
+package's source; naming the version is what lets a later reader tell a stale claim from a
+standing one.
+
+- **The focus text is fixed.** It is the same sentence pair every round; nothing about this round
+  goes into it. Its whole job is to make the file at that path authoritative and to name the four
+  outputs — honoured exclusions, uncertainties answered by number, coverage, and disputed premises
+  — which are what distinguishes the adjudication lens from a second discovery pass. Measured
+  2026-09-08 (ADR-0072 §1): given the path and told to treat it as its brief, the lens honoured the
+  exclusions and answered all six uncertainties by number.
+- **The path inside it takes forward slashes**, under `.claude/operator-handoff.md` rule 5, which
+  owns the rule and the measurements behind it. The instance this lens contributes: the plugin's
+  own tokenizer drops `\` as an escape, so a Windows-spelled brief path arrives de-separated and
+  resolves to nothing — the unbriefed round again, this time from a block that looked correct when
+  it was copied.
+- **Normalizing slashes is necessary and not sufficient — check the resolved path and refuse.**
+  Four other characters mangle it, by the same two layers: the tokenizer opens a quoted run on `'`
+  or `"` and drops the character, and the shell layer consumes backticks, `$` and newlines. These
+  are reachable in a real scratchpad path, not hypothetical — a Windows account named `O'Brien`
+  gives `C:/Users/o'brien/...`, which arrives as `C:/Users/obrien/...` (measured against
+  `codex@1.0.6`). So before printing the command, inspect the resolved path: if it carries `'`,
+  `"`, a backtick, `$`, a newline, or a backslash still standing after normalization, **do not
+  emit the command** — say which character, and that the round cannot be briefed by path until the
+  brief sits somewhere whose path survives the transport (writing it to a directory without that
+  character is the repair). **Escaping is deliberately not the remedy**: ADR-0072 §1 already
+  rejected rendering content into this command line because the transport forbids characters the
+  content routinely carries, and an escaping layer for the path is the same bet one field over,
+  across the same two parsers. A round that loudly cannot start beats one that silently ran
+  unbriefed, which is the failure this whole section exists to close.
+- **Keep the prose free of `'`, `"`, backticks, `$` and newlines**, which is why it is written flat
+  and without possessives. The same tokenizer opens a quoted run on `'` or `"` and drops the
+  character; the shell layer that carries the arguments consumes backticks, `$` and newlines. The
+  quote case is lossy rather than fatal — measured, `the brief's own premises` arrives as
+  `the briefs own premises` — but the words the round depends on are not worth spending on an
+  apostrophe.
+- **`--base <the fragment's resolved base SHA>`, never the default scope.**
+  `/codex:adversarial-review` resolves scope `auto` by asking whether the tree is dirty, and its
+  dirty test counts **untracked** files — so step 5's ledger fragment, which this skill creates and
+  deliberately leaves for the next `/savepoint`, is by itself enough to flip the lens to a
+  working-tree diff. It would then review the fragment this round just wrote instead of the range,
+  and nothing would say so: the plugin marks that resolution non-explicit. `--base` is tested
+  before the dirty check and pins the range outright. **`--scope branch` is not a substitute** —
+  with no `--base` it detects the repository's default branch, which is not this round's pinned
+  base whenever the branch is behind or the base is a merge-base SHA. It is carried in the line
+  behind `--base` as a statement of intent, not as the thing doing the work. Both lenses must be
+  given the same range or the round compares two different diffs.
+- **`--background` unconditionally.** With neither `--background` nor `--wait` the command stops to
+  ask which, and for a round scoped at step 4 the answer is never `--wait`: that mode is for a
+  one-to-two-file smoke. Emitting the flag removes a question with one answer.
+- **`--model` is accepted though undocumented, and is the only record of what ran** — the review
+  output never names the model and is not written to the Codex session store, so the flag is the
+  weaker substitute for a transcript. Reasoning effort is not a flag at all; it comes from
+  `~/.codex/config.toml`. Say as much when reporting the round, rather than implying the lens
+  self-identified.
 
 **Write it, hash it, then name it.** The brief's revision stamp **is its filename** — a stamp
 stored inside the file proves the wrong thing, because editing the brief updates its self-described
@@ -459,9 +548,12 @@ consumes no new `N`, and its new `<h8>` overwrites the stamp in the same fragmen
 
 ## 7. Hand it over
 
-Present the brief's path per `.claude/operator-handoff.md` — absolute, resolved, alone in its own
-fenced block. The scratchpad root contains a per-session UUID that exists nowhere the reader can
-look it up, so an elided or templated path is not merely untidy but unusable.
+An external round hands over **two** targets, each per `.claude/operator-handoff.md` — absolute,
+resolved, alone in its own fenced block: the brief's path, and the composed
+`/codex:adversarial-review` line from step 6. The scratchpad root contains a per-session UUID that
+exists nowhere the reader can look it up, so an elided or templated path is not merely untidy but
+unusable — and the command line carries that same path inside it, where the same failure is
+harder to see.
 
 Then state, in prose:
 
@@ -480,24 +572,20 @@ Then state, in prose:
    that does not run is worse than an absent one, because the operator stops looking.
 
 4. That an external round runs **both** lenses (ADR-0072 §1) — `/code-review`, at `max` unless the
-   operator named a level, and `/codex:adversarial-review` pointed at **this brief's absolute
-   path**. Both reports **are to go** to one `/review-handoff`, which `/apply-review` then consumes
-   as a merged set — neither skill does that today (ADR-0072 §1), so say that too rather than
-   describing it as current behaviour.
-   Give the path in full: the second command's whole value is that the reviewer reads the brief
-   rather than a rendering of it, and a path it cannot resolve silently reduces that round to an
-   unbriefed one.
+   operator named a level, and `/codex:adversarial-review`. Both reports **are to go** to one
+   `/review-handoff`, which `/apply-review` then consumes as a merged set — neither skill does that
+   today (ADR-0072 §1), so say that too rather than describing it as current behaviour.
 
-   **Emit `--base <the fragment's resolved base SHA>` on that command, and never rely on its
-   default scope.** `/codex:adversarial-review` resolves scope `auto` by asking whether the tree is
-   dirty, and its dirty test counts **untracked** files — so step 5's ledger fragment, which this
-   skill creates and deliberately leaves for the next `/savepoint`, is by itself enough to flip the
-   lens to a working-tree diff. It would then review the fragment this round just wrote instead of
-   the range, and nothing would say so: the plugin marks that resolution non-explicit. `--base`
-   is tested before the dirty check and pins the range outright. **`--scope branch` is not a
-   substitute** — with no `--base` it detects the repository's default branch, which is not this
-   round's pinned base whenever the branch is behind or the base is a merge-base SHA. Both lenses
-   must be given the same range or the round compares two different diffs.
+   **Print the second command as a second handoff target**, composed per step 6 and obeying the
+   same five rules as the path: its own fenced block, nothing else in it, every value resolved —
+   the base SHA substituted, the brief's absolute path substituted in forward-slash form, no angle
+   brackets left. Two
+   targets means two blocks, so the brief path above and this line are never combined. The
+   operator types this command into a session that has not read the brief and cannot complete a
+   blank left in it; a line printed with a placeholder still in it is worse than prose, because it
+   looks runnable. This is the one instruction here that is checkable after the fact by reading
+   what was printed — so check it: a bracket surviving into the block is the failure, and it is
+   visible.
 
    **Say plainly that the path is handed to a lens after `/review-prep` has run.** ADR-0072 §2
    bounds reads of the brief at absorption, and prep does not absorb it today (§1) — so this is
@@ -531,7 +619,8 @@ step 1 lists. Concretely:
 - **Step 6's "exact commands to run" section is empty for a local round**, and says so rather than
   being omitted: there are no commands, because this session launches the agents itself and briefs
   them with the brief's full text rather than a path — a smoke has no file to point at. Everything
-  else step 6 composes is written as normal.
+  else step 6 composes is written as normal. The composed `/codex:adversarial-review` line is part
+  of that emptiness, so step 7 hands over no target at all here — neither of its two.
 - **The last smoke before `/land` is where the whole-artifact angle is dispatched** — its own
   round, no exclusion list at all. This is step 6's precedence rule applied to the local loop
   rather than a second rule: the differentiated angles run with exclusions in the earlier smokes,

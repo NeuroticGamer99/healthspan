@@ -40,7 +40,7 @@ Finally, the owner needs the loop to be a **budget instrument**. The decision "k
 | Skill | Runs in | Produces |
 |---|---|---|
 | `/review-brief` | **orchestrator** session | the briefing file, **and the round's fragment**, created when it allocates `N` (§5) |
-| `/review-prep` | **reviewer** session | the carrier (absorbing the brief) and the exact command to run |
+| `/review-prep` | **reviewer** session | the carrier (absorbing the brief), the exact `/code-review` command to run, and — **relayed verbatim, never composed here** — the adjudication lens's command that `/review-brief` composed |
 | `/review-handoff` | **reviewer** session | the report, and the round's fragment **filled in** — it does not create it |
 | `/apply-review` | **orchestrator** session | the fixes, and the fragment's severity and `Disposition` columns |
 
@@ -90,12 +90,51 @@ brief.
 **The brief reaches the second lens BY PATH — it is never re-rendered into the command line.** A
 condensation was specified first and is rejected: it drops the do-not-re-run and settled lists,
 which are what stop a reviewer relitigating, and the transport forbids double quotes, backticks,
-`$` and newlines, which ordinary uncertainties routinely contain — so any rendering must break
+`$` and newlines — and, measured 2026-09-11 against `codex@1.0.6`'s tokenizer, single quotes and
+backslashes too, the latter silently, since `\` is consumed as an escape — all of which ordinary
+uncertainties routinely contain, English possessives included. So any rendering must break
 either fidelity or the command line, and for a question *about* shell syntax the two are the same
 break. Measured 2026-09-08: handed only a path and told to treat that file as its brief, the lens
 read it, honoured the exclusions, and answered all six uncertainties by number. Passing the path
 also costs nothing against §2, which already places the brief in the orchestrator's scratchpad and
 hands it over by path — this is the same relay, to a second reader.
+
+**"Never re-rendered" bans brief *content* in the command line, not text after the flags.** The
+command accepts focus text and `/review-brief` supplies a fixed instruction there — make the file
+at that path authoritative, and name the four outputs that distinguish adjudication from a second
+discovery pass. It varies with no round and carries nothing a condensation could lose, so the
+objection above does not reach it; read the ban as forbidding a *rendering of the brief*, which is
+the thing that was rejected.
+
+**`/review-brief` composes that command whole, with every value resolved, and prints it as a
+handoff target** ([ADR-0073](0073-operator-handoff-presentation.md)). The plugin sets
+`disable-model-invocation: true`, so an operator types it — into a session that has not read the
+brief and cannot fill in a blank left in it. The two values it needs, the brief's path and the
+pinned base SHA, exist together only in the briefing session, which is what makes that session the
+only one able to compose it. A skill that describes the flags instead of emitting them has kept
+the error-prone half of the job. Measured 2026-09-09, on the round that followed this section
+landing: the briefing session printed a bare `/codex:adversarial-review --base <sha>` in its fenced
+block and left the brief's path in the surrounding prose, the operator copied the block — which is
+what a fenced block is for — and the adjudication lens ran **with no brief at all**. The skill had
+warned that a path the lens cannot resolve reduces the round to an unbriefed one; the failure
+arrived by the route that warning did not anticipate, an absent path rather than an unresolvable
+one. Resolving the values is therefore necessary and not sufficient: the command has to be one
+thing the operator can copy. **It crosses into the reviewer session the way the brief's path does
+— carried by the operator**, stated here rather than left to inference: §2 pins that channel for
+the brief and nothing pinned it for the command, which left `/review-prep` instructed to relay a
+block whose provenance no document named.
+
+**That measurement names no PR, unlike this document's other citations, and the reason is worth
+stating rather than leaving as a gap.** The round produced no branch — it was a briefing handed
+between two sessions — so its only first-hand record is an operator transcript outside this
+repository, the same limitation §1's PR #104 citation carries and for the same reason. Read the
+incident as one round's observation. **The mechanism behind it needs no transcript**: at
+`63f48f8`, the commit this change branched from, `/review-brief` names
+`/codex:adversarial-review` four times and composes it zero times — there is no command anywhere
+in the file for a fenced block to have carried. That is checkable from this repository's history,
+and it is what the decision rests on. **And the path inside it is written with forward slashes**, because
+the tokenizer above eats the backslashes of the Windows form and hands the lens a path resolving
+to nothing — the same unbriefed round, reached from a block that looks correct.
 
 **Interim, and stated so it is not mistaken for the end state:** §2 has `/review-prep` absorb the
 brief into the carrier, and prep does not do that yet — BRIEF-4 owns it. Until then the second

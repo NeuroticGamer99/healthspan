@@ -75,6 +75,19 @@ Record:
   This is the one datum that must not be reconstructed later (a re-derived range can misrepresent
   what was reviewed), so the on-disk copy matters most here.
 - **Branch** — `git rev-parse --abbrev-ref HEAD`.
+- **Base SHA** — `git rev-parse "<the base from step 1>^{commit}"`. Step 1 pins the scope as a
+  command, in which the base appears as a **ref** — `origin/main` by default, a branch name or tag
+  when the user names one — and a ref is not a comparable value. `/review-brief` hands the
+  adjudication lens a resolved SHA, so step 3 item 5's mismatch check has a SHA on one side and
+  nothing on the other unless the base is resolved here, once.
+  **Quote the whole revision**, as written. `/land` carries the measurement: unquoted, PowerShell's
+  parser splits `^{commit}` off into an argument of its own and git answers about the wrong one —
+  `git rev-parse` exits 128, and `git cat-file -e` exits 129 on ``unknown switch `n'``. Both shells
+  pass the quoted form through intact.
+  **What this records is what the ref meant at prep time**, which is the property the comparison
+  wants rather than an incidental one: a later `git fetch` moving `origin/main` does not
+  retroactively change the round's base, so the resolved value and not the ref name is what the
+  carrier keeps — the same reasoning the tree hash below is kept for.
 - **Full HEAD SHA** — `git rev-parse HEAD`. `/review-handoff` compares this against HEAD at
   transcription time; a mismatch means you committed between the review and the handoff, and the
   report must record *this* reviewed SHA, not the later one.
@@ -121,7 +134,36 @@ Final message:
    and tell the user to state that intended scope to `/code-review` — a bare command reviews its own
    default range, which would then differ from the pin. If the pin is just the default branch diff,
    the bare command already matches it and no extra instruction is needed.
-5. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
+5. **The adjudication lens's command, relayed verbatim**, when this round was briefed (ADR-0072
+   §1 — an external round runs two lenses and is not complete until both have reported).
+   `/review-brief` (`.claude/skills/review-brief/SKILL.md`, step 6) composes the whole
+   `/codex:adversarial-review` line with every value resolved and hands it over as a fenced block;
+   reprint **that block**, unchanged, in a block of its own. **It reaches this session the way the
+   brief's path does — carried by the operator** (ADR-0072 §2), since the two skills run in
+   different sessions and nothing else crosses that boundary. If it was not carried over, that is
+   the case the last sentence of this item covers: say the round is running one lens.
+   Do not compose a line here: the values in it — the brief's absolute path, the pinned base SHA —
+   belong to the briefing session, and a second spelling of the command in this file is a second
+   thing to drift. If no brief reached this session, say the round is running **one** lens, rather
+   than running one silently.
+
+   **First compare that command's `--base` against the carrier's `Base SHA`, and stop on a
+   mismatch.** Compare it against that recorded value and nothing else — the scope command names
+   the base as a ref, and a ref against a SHA is not a comparison that can succeed or a mismatch
+   that means anything. Relaying verbatim is right and is not sufficient: step 1 deliberately
+   permits a custom base and a dirty-tree scope, so this session can pin a range the briefing
+   session never saw — and the relayed command still carries the brief's base. Nothing downstream
+   would notice.
+   The adjudication lens would answer about one diff while `/code-review` looked at another, and
+   the round's two reports would be merged as though they covered the same surface, which is worse
+   than a round that ran one lens: the gap is invisible in both reports. The brief's base is the
+   round's base (`/review-brief` step 4 pins it and its fragment records it), so on a mismatch this
+   session is the deviation — **say so and stop, naming both SHAs**, rather than relaying a command
+   the pin contradicts or silently re-pointing it. Re-briefing at the intended scope, or accepting
+   the brief's, is the operator's call and needs their answer, not a guess. The repair is cheap and
+   is the reason this fails closed: `/review-brief` is re-runnable, and a round compared across two
+   diffs is not repairable after the fact.
+6. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
    capture its findings. The carrier file preserves the scope and SHAs across compaction, but the
    *findings themselves* live only in conversation context until the report is written — so a new
    session would still lose them.
