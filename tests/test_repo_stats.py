@@ -789,6 +789,34 @@ def _small_report(
     return rs.build_report(source)
 
 
+def _distinct_report(
+    *, commit: str | None = None, date: str | None = None
+) -> rs.Report:
+    """A point whose every numeric field holds a different number.
+
+    `_small_report`'s counts collapse to 1s and 0s, so a renderer printing
+    one column's value where another's belongs emits identical output and an
+    exact-row oracle over it still passes. Review found exactly that live in
+    both tidy-long writers -- `blank` for `physical` in the CSV, the `Docs`
+    total for `Code (py+sql)` in the markdown -- with the whole suite green.
+    Measured here: implementation is files 2, physical 9, code 5, comment 1,
+    blank 3, bytes 45; the markdown row is 3 / 16 / 5 / 7 / 1. Every value
+    differs from every other in its own row, which is what makes a swapped
+    column visible at all.
+    """
+    return rs.build_report(
+        DictSource(
+            {
+                "src/pkg/mod.py": b"# a comment\nx = 1\ny = 2\n\n\n\nz = 3\n",
+                "src/pkg/other.py": b"w = 4\nv = 5\n",
+                "specs/adr/0001-a.md": b"## Status\n\nAccepted\n\nContext\n\nWhy\n",
+            },
+            commit=commit,
+            date=date,
+        )
+    )
+
+
 def test_render_markdown_has_table_totals_ratios_and_footnotes() -> None:
     out = rs.render_markdown(_small_report())
     assert "## Repo size so far" in out
@@ -868,6 +896,36 @@ def test_render_history_csv_is_tidy_long() -> None:
     assert {r[0] for r in rows[1:]} == {"aaaaaaa", "bbbbbbb"}
     assert {r[-1] for r in rows[1:]} == {str(rs.CATEGORIES_VERSION)}
 
+    # The payload, not only the shape. Every assertion above survived review's
+    # substitution of `blank` for `physical` in the row builder, because none
+    # of them reads a number.
+    detailed = list(
+        csv.reader(
+            io.StringIO(
+                rs.render_history_csv(
+                    [
+                        _distinct_report(
+                            commit="cccccccccccc", date="2026-05-01T10:00:00+00:00"
+                        )
+                    ]
+                )
+            )
+        )
+    )
+    impl = next(r for r in detailed[1:] if r[2] == rs.LABEL_IMPL)
+    assert impl == [
+        "ccccccc",
+        "2026-05-01",
+        rs.LABEL_IMPL,
+        "2",  # files
+        "9",  # physical
+        "5",  # code
+        "1",  # comment
+        "3",  # blank
+        "45",  # bytes
+        str(rs.CATEGORIES_VERSION),
+    ]
+
 
 def test_render_history_json_wraps_the_same_point_shape() -> None:
     point = _small_report(commit="a" * 40, date="2026-03-02T00:00:00+00:00")
@@ -887,6 +945,15 @@ def test_render_history_md_is_one_row_per_point() -> None:
     assert out[0] == "## Repo shape over 2 point(s)"
     body = [line for line in out if line.startswith(("| aaaaaaa", "| bbbbbbb"))]
     assert len(body) == 2
+
+    # Which number sits in which column. Review swapped the `Code (py+sql)`
+    # cell for the `Docs` total and the assertions above stayed green, since
+    # the row count and the header say nothing about the cells.
+    point = _distinct_report(commit="cccccccccccc", date="2026-05-01T10:00:00+00:00")
+    row = rs.render_history_md([point]).splitlines()[4]
+    cells = [cell.strip() for cell in row.strip("|").split("|")]
+    # Commit, Date, Files, Lines, Code (py+sql), Docs, ADRs.
+    assert cells == ["ccccccc", "2026-05-01", "3", "16", "5", "7", "1"]
 
 
 def _degraded_pair() -> tuple[rs.Report, rs.Report]:
