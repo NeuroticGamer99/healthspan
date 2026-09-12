@@ -1383,31 +1383,101 @@ def test_build_series_does_not_re_resolve_the_shas_it_was_given(
     assert calls.count("log") == 0
 
 
-def test_worktree_refs_carry_index_blob_ids_except_where_they_would_lie(
+def test_the_working_tree_is_cached_by_content_not_by_its_index_id(
     git_repo: Path,
 ) -> None:
-    """The working-tree source emitted `blob=None` for everything, so the cache
-    `_run_diff` shares between its two ends was inert on this side.
+    """The cache must still answer across a diff's two ends, without an index id.
 
-    Measured before: 0 of 297 refs carried an id, the head report recorded 0
-    cache gets, and every file was re-read and re-AST-parsed although the
-    byte-identical blobs had just been classified into that cache -- making
-    `diff <base>` *slower* than `diff <base> <head>`.
+    `WorkTree` once carried the index blob id so `_run_diff`'s shared cache had
+    a key on this side -- measured, 0 of 297 refs had an id before that, every
+    file was re-read and re-AST-parsed although the byte-identical blobs had
+    just been classified into that cache, and `diff <base>` came out *slower*
+    than `diff <base> <head>`.
 
-    The exception is the whole correctness of it: `read()` returns what is on
-    **disk** while an index id names what is in the **index**, so a path with
-    uncommitted edits must come back `None` or the cache would answer the edit
-    with the committed file's counts.
+    The id was unsound (see the sibling test below), so the key now comes from
+    the bytes actually read. This pins what the id was for: identical content
+    still lands on one cache entry, whichever side produced it.
     """
-    clean = {ref.path: ref.blob for ref in rs.WorkTree().files()}
-    assert all(blob for blob in clean.values()), "no ids at all; nothing is cached"
+    assert all(ref.blob is None for ref in rs.WorkTree().files())
 
+    cache: rs.BlobCache = {}
+    with rs.BlobReader() as reader:
+        rs.build_report(rs.GitRev("HEAD", reader), cache)
+    entries_after_rev = len(cache)
+    assert entries_after_rev, "the revision side cached nothing; test proves nothing"
+
+    # The tree is clean, so every working-tree file has the same content as
+    # HEAD: the second report must add no new entry, i.e. it hit all of them.
+    rs.build_report(rs.WorkTree(), cache)
+    assert len(cache) == entries_after_rev
+
+    # And one changed file adds exactly one entry rather than re-caching the lot.
     (git_repo / "src" / "mod.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
-    dirty = {ref.path: ref.blob for ref in rs.WorkTree().files()}
-    assert dirty["src/mod.py"] is None
-    assert dirty["README.md"] == clean["README.md"]
-    # And the uncommitted edit is still what gets counted, cache or no cache.
-    assert rs.build_report(rs.WorkTree(), {}).per_category[rs.LABEL_IMPL].physical == 2
+    rs.build_report(rs.WorkTree(), cache)
+    assert len(cache) == entries_after_rev + 1
+
+
+def test_an_edit_git_calls_unmodified_is_still_counted(git_repo: Path) -> None:
+    """`diff-files` is not a byte-identity test, and the cache must not treat it
+    as one.
+
+    Measured on the shape this closes: five lines added to an
+    `assume-unchanged` file gave `snapshot` 8 physical lines and `diff HEAD`
+    **+0** for the same tree in the same second -- because `diff-files` skips
+    those entries, so the path kept its index id and the cache answered the
+    read with HEAD's counts. The committed-content answer was the *cheaper*
+    one, which is why it won.
+
+    Asserted through the cache rather than through `files()`: an id that is
+    never consulted cannot lie, and it is being consulted that was the defect.
+    """
+    _run_git(git_repo, "update-index", "--assume-unchanged", "src/mod.py")
+    (git_repo / "src" / "mod.py").write_text(
+        "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\n", encoding="utf-8"
+    )
+    assert not rs._git_out("diff-files", "--name-only").strip(), (  # pyright: ignore[reportPrivateUsage]
+        "premise: git reports this tree clean"
+    )
+
+    # Prime the cache from HEAD, which is what a diff or a history walk does,
+    # then measure the working tree through that same cache.
+    cache: rs.BlobCache = {}
+    with rs.BlobReader() as reader:
+        head = rs.build_report(rs.GitRev("HEAD", reader), cache)
+    tree = rs.build_report(rs.WorkTree(), cache)
+    assert head.per_category[rs.LABEL_IMPL].physical == 1
+    assert tree.per_category[rs.LABEL_IMPL].physical == 5
+
+
+def test_the_content_id_is_gits_own_blob_id(git_repo: Path) -> None:
+    """`_content_id` has to agree with git, or the two ends never share an entry.
+
+    The whole reason a working-tree file can be keyed without an index id is
+    that the id it gets instead is the one git would give the same bytes -- so
+    `GitRev`'s entry and `WorkTree`'s entry for identical content are the same
+    key. Pinned against `git hash-object` rather than against a literal: a
+    hand-copied sha would pass while agreeing with nothing.
+
+    Includes CRLF bytes deliberately. That is the quiet half of the defect this
+    keying closes -- a file written CRLF and staged under `* text=auto eol=lf`
+    sits on disk with more bytes than its index blob, and `diff-files` stays
+    silent -- and it matters here that such content gets an id of its *own*
+    rather than the normalized blob's.
+    """
+    for content in (b"", b"x = 1\n", b"a = 1\r\nb = 2\r\n", b"\x00\xff binary"):
+        (git_repo / "probe.bin").write_bytes(content)
+        expected = (
+            subprocess.run(  # noqa: S603 - fixed executable, test paths
+                [_GIT, "-C", str(git_repo), "hash-object", "--no-filters", "probe.bin"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+                env=_neutral_git_env(git_repo.parent),
+            )
+            .stdout.decode()
+            .strip()
+        )
+        assert rs._content_id(content) == expected  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_wedged_cat_file_fails_the_report_rather_than_hanging_it(

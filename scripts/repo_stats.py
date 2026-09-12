@@ -123,6 +123,7 @@ import argparse
 import ast
 import contextlib
 import csv
+import hashlib
 import io
 import json
 import shutil
@@ -402,23 +403,28 @@ class WorkTree:
     date: str | None = None
 
     def files(self) -> list[FileRef]:
-        # `-s` for the index blob id alongside the path, in the one spawn that
-        # was already being made. Without it every working-tree FileRef carried
-        # `blob=None`, so the cache `_run_diff` shares between its two ends was
-        # structurally inert on this side: measured, 0 of 297 refs had an id,
-        # the head report recorded 0 cache gets, and all 297 files were re-read
-        # and re-AST-parsed although 273 byte-identical blobs had been
-        # classified into that very cache milliseconds earlier. `diff HEAD~1`
-        # came out *slower* than `diff HEAD~1 HEAD` as a result, against a
-        # comment promising "largely cache hits" for exactly the spelling the
-        # help text advertises.
+        # `blob` stays None on this side, always. An index id names what is in
+        # the *index* while `read()` below returns what is on *disk*, and no
+        # cheap test proves those are the same bytes. `diff-files` looks like
+        # that test and is not: it compares *converted* content and it skips
+        # entries flagged `assume-unchanged` or `skip-worktree` outright.
+        # Measured, both holes are reachable here -- five lines added to an
+        # assume-unchanged file gave `snapshot` 8 physical lines and
+        # `diff HEAD` +0 for the same tree in the same second, and a file
+        # written CRLF then staged under this repo's own `* text=auto eol=lf`
+        # sat 21 bytes on disk against an 18-byte index blob with `diff-files`
+        # silent. An id that can lie is worse than no id: it is consulted
+        # *before* the read, so the wrong answer is the one that costs nothing
+        # to produce.
         #
-        # A path whose working-tree content differs from its index entry gets
-        # `blob=None` back, because `read()` below returns what is on *disk*
-        # while the id names what is in the *index* -- caching under it would
-        # answer an uncommitted edit with the committed file's counts, which is
-        # the whole point of reading the working tree. `diff-files` is the
-        # question asked exactly: index against worktree.
+        # The optimization that id was added for is kept, and moved to where it
+        # is sound: `build_report` derives the cache key from the bytes it just
+        # read (`_content_id`), which is git's own blob id for that content, so
+        # the cache `_run_diff` shares between its two ends still answers a
+        # working-tree file with the revision side's entry whenever the content
+        # really is identical. What is no longer skipped is the *read*; what is
+        # still skipped is the AST parse, which is what the 297-ref measurement
+        # was actually about.
         #
         # Deduplicated, and that is not defensive: `ls-files` emits one line per
         # *index stage*, so during an unresolved merge a conflicted path arrives
@@ -428,20 +434,16 @@ class WorkTree:
         # this harness drives. Deduplicated here rather than with git's own
         # `--deduplicate` so the rule does not depend on a git version, which is
         # also what `check_personal_containment._distinct` decided, for this
-        # same reason on this same command. A conflicted path also has three
-        # *different* index ids and no single right answer, so dropping it to
-        # `blob=None` falls out of taking the first entry and rejecting the
-        # rest -- stale ids are what the dirty set below removes anyway.
-        dirty = set(_split_z(_git_out("diff-files", "--name-only", "-z")))
-        blobs: dict[str, str | None] = {}
-        for entry in _split_z(_git_out("ls-files", "-s", "-z")):
-            meta, _, path = entry.partition("\t")
-            if not path or path in blobs or not _included(path):
-                continue
-            fields = meta.split()
-            stale = path in dirty or len(fields) < 3 or fields[2] != "0"
-            blobs[path] = None if stale else fields[1]
-        return [FileRef(p, blobs[p]) for p in sorted(blobs)]
+        # same reason on this same command. A set is the whole mechanism: the
+        # three stages of a conflicted path differ only in content, which this
+        # side no longer reads an id from, so they collapse to the one path
+        # `read()` will open.
+        paths = {
+            path
+            for path in _split_z(_git_out("ls-files", "-z"))
+            if path and _included(path)
+        }
+        return [FileRef(p, None) for p in sorted(paths)]
 
     def read(self, ref: FileRef) -> bytes:
         return (REPO_ROOT / ref.path).read_bytes()
@@ -891,6 +893,14 @@ def adr_status_breakdown(
     thing -- a status word, not a count -- and one dict holding two value shapes
     keyed the same way is how the language half of `BlobCache`'s key came to be
     missing in the first place.
+
+    Keyed on the ref's blob, so it is live for `GitRev` and inert for
+    `WorkTree`, which carries no id -- deliberately, and for the reason
+    `WorkTree.files` gives at length: an index id is consulted before the read
+    and does not have to be what is on disk. This was the second site of that
+    one defect. Nothing is lost by the exemption, because the working tree is
+    one point rather than a series, and a status the cache would have saved a
+    read for is a status this function has to read the file to learn anyway.
     """
     if status_cache is None:
         status_cache = {}
@@ -997,6 +1007,29 @@ def categorize(refs: list[FileRef]) -> tuple[dict[str, list[FileRef]], list[str]
     return buckets, uncounted
 
 
+def _content_id(data: bytes) -> str:
+    """Git's blob id for these exact bytes.
+
+    The cache key for anything read off disk. Spelled as git spells it -- sha1
+    over ``blob <len>\\0`` and the content -- so a working-tree file and the
+    revision holding the same content land on one key and `_run_diff`'s shared
+    cache answers across its two ends.
+
+    Derived from the bytes that were actually classified, which is the whole
+    point: `WorkTree` deliberately carries no index id, because an index id is
+    consulted *before* the read and git will call a file unmodified whose disk
+    bytes differ (eol conversion, `assume-unchanged`, `skip-worktree`).
+
+    Not a security decision -- git's object names are sha1 and this has to
+    match them, which is what `usedforsecurity=False` states. That argument is
+    also what satisfies the linter here: a `noqa: S324` beside it is reported
+    as unused, so do not add one back.
+    """
+    return hashlib.sha1(
+        b"blob %d\0%b" % (len(data), data), usedforsecurity=False
+    ).hexdigest()
+
+
 def build_report(
     source: TreeSource,
     cache: BlobCache | None = None,
@@ -1014,25 +1047,44 @@ def build_report(
     )
     if cache is None:
         cache = {}
+
+    def read_or_warn(ref: FileRef) -> bytes | None:
+        try:
+            return source.read(ref)
+        except OSError as exc:
+            # PermissionError, a file removed mid-scan, a directory that
+            # matched as a file: skip with a warning rather than crash -- the
+            # docstring promises exit 0 once the tree enumerated. A closure so
+            # the two call sites below cannot word this warning differently.
+            report.warnings.append(
+                f"{_printable(ref.path)}: unreadable ({exc.strerror or exc}); skipped"
+            )
+            return None
+
     for cat in CATEGORIES:
         counts = Counts()
         for ref in buckets[cat.label]:
-            key = (ref.blob, cat.lang) if ref.blob is not None else None
-            hit = cache.get(key) if key is not None else None
+            # A pre-read key only where the source can vouch for it: `GitRev`
+            # names a blob it is about to stream out of the object database, so
+            # the id *is* the content. `WorkTree` supplies none, so its key is
+            # taken from the bytes that were actually read -- the two meet in
+            # the same cache, because `_content_id` is git's own blob id.
+            data: bytes | None = None
+            if ref.blob is not None:
+                key = (ref.blob, cat.lang)
+            else:
+                data = read_or_warn(ref)
+                if data is None:
+                    continue
+                key = (_content_id(data), cat.lang)
+            hit = cache.get(key)
             if hit is not None:
                 fc, unparseable = hit
             else:
-                try:
-                    data = source.read(ref)
-                except OSError as exc:
-                    # PermissionError, a file removed mid-scan, a directory that
-                    # matched as a file: skip with a warning rather than crash --
-                    # the docstring promises exit 0 once the tree enumerated.
-                    report.warnings.append(
-                        f"{_printable(ref.path)}: unreadable "
-                        f"({exc.strerror or exc}); skipped"
-                    )
-                    continue
+                if data is None:
+                    data = read_or_warn(ref)
+                    if data is None:
+                        continue
                 try:
                     fc, warn = classify(data, cat.lang, display=ref.path)
                 except UnicodeDecodeError:
@@ -1041,8 +1093,7 @@ def build_report(
                     )
                     continue
                 unparseable = warn is not None
-                if key is not None:
-                    cache[key] = (fc, unparseable)
+                cache[key] = (fc, unparseable)
             counts.add(fc)
             if unparseable:
                 # Re-formatted here rather than carried in the cache, because the
