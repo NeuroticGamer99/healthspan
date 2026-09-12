@@ -660,9 +660,12 @@ def test_build_report_skips_an_unreadable_file() -> None:
     )
     report = rs.build_report(source)
     assert report.per_category[rs.LABEL_IMPL].files == 1
-    assert any("gone.py" in w and "unreadable" in w for w in report.warnings), (
-        report.warnings
-    )
+    # Exact, not a substring pair: review reordered the message to
+    # "skipped, unreadable (...)" and a `"gone.py" in w and "unreadable" in w`
+    # oracle stayed green while both siblings reddened.
+    assert report.warnings == [
+        "src/pkg/gone.py: unreadable (Permission denied); skipped"
+    ]
 
 
 def test_build_report_carries_source_identity() -> None:
@@ -1460,30 +1463,38 @@ def test_worktree_reads_uncommitted_edits(git_repo: Path) -> None:
     assert report.per_category[rs.LABEL_IMPL].physical == 2
 
 
+@pytest.mark.parametrize("leave_a_directory", [True, False])
 def test_the_working_tree_only_warns_about_a_file_it_cannot_read(
-    git_repo: Path,
+    git_repo: Path, leave_a_directory: bool
 ) -> None:
     """The working-tree half of the skip/stop split, driven through the real
     `WorkTree` instead of a stand-in that assumes its contract.
 
     Every other test of this behaviour hands `build_report` a `DictSource`
     whose `read` raises `PermissionError`. That pins `read_or_warn`'s
-    `except OSError` and says nothing about what `WorkTree.read` itself
-    raises -- so the counter-mutation review found live stayed green across
-    all 156 tests: wrapping `path.read_bytes()` in
+    `except` clause and says nothing about what `WorkTree.read` itself
+    raises -- so the counter-mutation review found live left the whole suite
+    green: wrapping `path.read_bytes()` in
     `except OSError: raise StatsError(...)`, the way `BlobReader`
     deliberately does on the *revision* side, turns one unreadable local file
     into an exit-2 abort of the whole run, which is the reverse of what the
     module docstring promises. `StatsError` is not an `OSError`, so nothing
     downstream would catch it.
 
-    A directory standing where a tracked file was is the portable way to
-    reach a real `OSError` here: git keeps listing the path from the index,
-    and the errno differs by platform (`EISDIR`, `EACCES` on Windows) but the
-    class does not.
+    Both cases start from the index still listing a path the working tree can
+    no longer hand over, which is what reaches `WorkTree.read` at all. **They
+    raise different `OSError` subclasses, and that is the point of running
+    both**: a directory standing in the file's place raises `EACCES` on
+    Windows, so a catch narrowed from `OSError` to `PermissionError` -- the
+    breadth the code's own comment claims -- still swallows it and this test
+    still passes. The deleted-file case raises `FileNotFoundError`, which such
+    a catch drops, and it is the one that holds the clause open. Review found
+    that narrowing live against the directory case alone.
     """
-    (git_repo / "src" / "mod.py").unlink()
-    (git_repo / "src" / "mod.py").mkdir()
+    target = git_repo / "src" / "mod.py"
+    target.unlink()
+    if leave_a_directory:
+        target.mkdir()
     assert "src/mod.py" in [r.path for r in rs.WorkTree().files()], (
         "premise: the index still lists it, so the read is reached at all"
     )
