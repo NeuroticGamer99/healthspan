@@ -430,12 +430,14 @@ because `/review-handoff` is obliged to answer them by number. This is prompted 
 substituted: an invented uncertainty is worse than none, since it directs real attention at a
 question nobody had.
 
-**Two commands, not one** (ADR-0072 §1). An external round fans out to two lenses, so the
-section holds both: `/code-review` for discovery, and `/codex:adversarial-review` — the one
-external command that accepts instructions — for adjudication, coverage and the numbered
-uncertainties. `/review-prep` composes the first, in the reviewer session, against the scope it
-pins there. **This skill composes the second, whole**, because the two values it needs — the
-brief's path and the pinned base — exist nowhere else at the moment the operator has to type it.
+**Two commands, not one** (ADR-0072 §1). An external round runs two lenses: `/code-review` for
+discovery, and `/codex:adversarial-review` — the one external command that accepts instructions —
+for adjudication, coverage and the numbered uncertainties. **The exact-commands section carries
+`/code-review` only**, for the digest reason given where the section list is stated; this skill
+composes the adjudication command and step 7 emits it separately. `/review-prep` composes the
+first, in the reviewer session, against the scope it pins there. **This skill composes the second,
+whole**, because the two values it needs — the brief's path and the pinned base — exist nowhere
+else at the moment the operator has to type it.
 
 **The second reaches the brief by path, not by a rendering of it**: hand it the brief's absolute
 path and tell it to treat that file as its brief. Do not condense, summarise or re-render the
