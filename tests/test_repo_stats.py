@@ -2185,8 +2185,12 @@ def test_a_file_named_like_the_resolved_sha_does_not_become_a_pathspec(
     _run_git(git_repo, "add", "-A")
     _run_git(git_repo, "commit", "-m", "a file named like a sha")
 
-    # The premise: git really cannot tell these apart unaided.
-    with pytest.raises(rs.StatsError, match="failed"):
+    # The premise: git really cannot tell these apart unaided. Matched on the
+    # ambiguity wording, not on "failed" -- `_git_out` formats *every* non-zero
+    # exit as "git ... failed: ...", so that spelling is satisfied by an
+    # unresolvable ref just as well, and would leave the premise unproven in
+    # exactly the case where the decoy setup had silently stopped working.
+    with pytest.raises(rs.StatsError, match="both revision and filename"):
         rs._git_out("log", "--format=%H", sha)  # pyright: ignore[reportPrivateUsage]
 
     # Terminated, it is read as a revision: the walk ends at that commit and
