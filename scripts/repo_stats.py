@@ -2232,14 +2232,16 @@ def _run_diff(args: argparse.Namespace) -> int:
         # content. What makes the hit happen now is `_content_id` -- the
         # working-tree side is keyed on git's own blob id for the bytes it
         # read, so content identical to the revision side lands on that side's
-        # entry. Re-measured after the change rather than carried over, and
-        # measured for *both* mechanisms against one tree rather than quoting
-        # the old comment's figure across two: on `diff HEAD` over this
-        # repository, index-id keying and content keying each hit 275 of 275
-        # head-side gets. Content keying costs nothing here; it does not gain
-        # anything either, and an earlier draft of this comment claimed it did
-        # by comparing today's number against one measured on a tree that had
-        # a dirty file in it.
+        # entry.
+        #
+        # Re-measured after the change, and measured for *both* mechanisms
+        # against one tree: on `diff HEAD` over this repository, index-id
+        # keying and content keying each hit 275 of 275 head-side gets. So
+        # content keying costs nothing here, and gains nothing either. An
+        # earlier draft claimed a gain by setting today's number beside a
+        # figure taken under tree conditions nobody recorded -- which is the
+        # only safe thing to say about it, and is why the comparison above is
+        # measured twice on one tree rather than quoted across two.
         base = build_report(GitRev(base_rev, reader), cache)
         head = (
             build_report(GitRev(head_rev, reader), cache)
