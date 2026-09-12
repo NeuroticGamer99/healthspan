@@ -63,7 +63,7 @@ The markdown and HTML outputs carry these inline, and CSV gets them on **stderr*
 
 **An `Uncounted` report is a third thing again, and it is not a degraded measurement.** Nothing failed: those files are tracked, readable, and claimed by no category, so they are absent from every number in the run. It travels beside the warnings on all four `history` formats and on `diff` — inline in markdown and HTML, on stderr for CSV and JSON. Treat it as a defect in the script's category list rather than a caveat to repeat, the same way `/repo-stats` does for a single point.
 
-**When a revision's blob cannot be read, the exit-2 message names the object, the commit and the path.** The run refuses rather than warning because there the silence would be unrecoverable: the point would report a smaller repository than existed and nothing downstream could tell it from real shrinkage. The `scripts/repo_stats.py` module docstring holds the full reasoning — point there rather than re-deciding it.
+**When a revision's blob cannot be read, the exit-2 message names the object, the commit and the path.** The run refuses because there the silence would be unrecoverable: the point would report a smaller repository than existed and nothing downstream could tell it from real shrinkage. The `scripts/repo_stats.py` module docstring holds the full reasoning — point there rather than re-deciding it.
 
 ## 3. Two things to state, not assume
 
