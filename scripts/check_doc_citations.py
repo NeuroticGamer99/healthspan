@@ -99,6 +99,14 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     # this citation. What a caller may *not* do is re-add a command list beside
     # the pointer — that is judgement, and stays ungated for the reasons
     # ADR-0073 §3 gives.
+    "scripts/run_gates.py": {
+        ".claude/skills/review-brief/SKILL.md": (),
+        ".claude/skills/land/SKILL.md": (),
+        ".claude/skills/ship/SKILL.md": (),
+        ".claude/skills/apply-review/SKILL.md": (),
+        ".claude/skills/wi/SKILL.md": (),
+        "CLAUDE.md": (),
+    },
     # ADR-0072 §1 — the adjudication lens's command is composed once, by
     # `/review-brief`, and relayed unchanged by `/review-prep`. The first
     # owning document here that is itself a skill, which the registry's shape
@@ -117,14 +125,6 @@ CITATIONS: dict[str, dict[str, tuple[str, ...]]] = {
     # reasons ADR-0073 §3 gives for the rest of this registry.
     ".claude/skills/review-brief/SKILL.md": {
         ".claude/skills/review-prep/SKILL.md": ("relayed verbatim",),
-    },
-    "scripts/run_gates.py": {
-        ".claude/skills/review-brief/SKILL.md": (),
-        ".claude/skills/land/SKILL.md": (),
-        ".claude/skills/ship/SKILL.md": (),
-        ".claude/skills/apply-review/SKILL.md": (),
-        ".claude/skills/wi/SKILL.md": (),
-        "CLAUDE.md": (),
     },
 }
 
