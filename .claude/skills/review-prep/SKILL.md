@@ -75,6 +75,19 @@ Record:
   This is the one datum that must not be reconstructed later (a re-derived range can misrepresent
   what was reviewed), so the on-disk copy matters most here.
 - **Branch** — `git rev-parse --abbrev-ref HEAD`.
+- **Base SHA** — `git rev-parse "<the base from step 1>^{commit}"`. Step 1 pins the scope as a
+  command, in which the base appears as a **ref** — `origin/main` by default, a branch name or tag
+  when the user names one — and a ref is not a comparable value. `/review-brief` hands the
+  adjudication lens a resolved SHA, so step 3 item 5's mismatch check has a SHA on one side and
+  nothing on the other unless the base is resolved here, once.
+  **Quote the whole revision**, as written. `/land` carries the measurement: unquoted, PowerShell's
+  parser splits `^{commit}` off into an argument of its own and git answers about the wrong one —
+  `git rev-parse` exits 128, and `git cat-file -e` exits 129 on ``unknown switch `n'``. Both shells
+  pass the quoted form through intact.
+  **What this records is what the ref meant at prep time**, which is the property the comparison
+  wants rather than an incidental one: a later `git fetch` moving `origin/main` does not
+  retroactively change the round's base, so the resolved value and not the ref name is what the
+  carrier keeps — the same reasoning the tree hash below is kept for.
 - **Full HEAD SHA** — `git rev-parse HEAD`. `/review-handoff` compares this against HEAD at
   transcription time; a mismatch means you committed between the review and the handoff, and the
   report must record *this* reviewed SHA, not the later one.
@@ -131,8 +144,11 @@ Final message:
    thing to drift. If no brief reached this session, say the round is running **one** lens, rather
    than running one silently.
 
-   **First compare that command's `--base` against the scope step 1 pinned, and stop on a
-   mismatch.** Relaying verbatim is right and is not sufficient: step 1 deliberately permits a
+   **First compare that command's `--base` against the carrier's `Base SHA`, and stop on a
+   mismatch.** Compare it against that recorded value and nothing else — the scope command names
+   the base as a ref, and a ref against a SHA is not a comparison that can succeed or a mismatch
+   that means anything. Relaying verbatim is right and is not sufficient: step 1 deliberately
+   permits a
    custom base and a dirty-tree scope, so this session can pin a range the briefing session never
    saw — and the relayed command still carries the brief's base. Nothing downstream would notice.
    The adjudication lens would answer about one diff while `/code-review` looked at another, and
