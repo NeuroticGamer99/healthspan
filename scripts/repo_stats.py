@@ -1457,16 +1457,25 @@ def list_commits(
         args.append(f"--since={since}")
     if until:
         args.append(f"--until={until}")
-    # Resolved, and terminated with `--`, because `git log` disambiguates its
-    # trailing argument against the *filesystem*: a bare `src` is not a
-    # revision, so git reads it as a pathspec and answers with the commits that
-    # touched that directory. Measured, `history --ref src` exited 0 with a
-    # 2-point series where the walk is 205 -- a path-filtered answer wearing a
-    # series' clothes, and nothing in the output says so. `resolve_rev` makes a
-    # non-revision an exit-2 StatsError naming it, which is what `snapshot` and
-    # `diff` already do; `--` stops git reaching for the second reading even
-    # for a branch that shares a directory's name, which it otherwise refuses
-    # as ambiguous.
+    # Resolved, because `git log` disambiguates its trailing argument against
+    # the *filesystem*: a bare `src` is not a revision, so git reads it as a
+    # pathspec and answers with the commits that touched that directory.
+    # Measured, `history --ref src` exited 0 with a 2-point series where the
+    # walk is 205 -- a path-filtered answer wearing a series' clothes, with
+    # nothing in the output saying so. `resolve_rev` makes a non-revision an
+    # exit-2 StatsError naming it, which is what `snapshot` and `diff` already
+    # do.
+    #
+    # The `--` guards something narrower, and it is worth stating exactly
+    # because the obvious reading is wrong. It is *not* what saves a branch
+    # sharing a directory's name: `resolve_rev` asks `rev-parse --verify
+    # <ref>^{commit}`, which is revision-only, so a branch `src` beside a
+    # directory `src` resolves cleanly with no ambiguity to break (measured).
+    # By this line the argument is a 40-hex sha, and the one thing that can
+    # still collide with it is a *file named that sha* -- at which point
+    # `git log <sha>` exits 128 as ambiguous (measured) and `git log <sha> --`
+    # exits 0. Pathological, cheap to hold, and pinned by a test rather than
+    # left as an untested good intention.
     args.extend([resolve_rev(ref), "--"])
     commits: list[tuple[str, str]] = []
     for line in _git_out(*args).decode("utf-8", "replace").splitlines():
@@ -2213,10 +2222,19 @@ def _run_diff(args: argparse.Namespace) -> int:
     # most of their blobs, so the second report is largely cache hits.
     cache: BlobCache = {}
     with BlobReader() as reader:
-        # `WorkTree` carries index blob ids too, so the head report really does
-        # hit this cache when it is the working tree -- it did not before, which
-        # made `diff <base>` slower than `diff <base> <head>` despite doing
-        # strictly less work. Measured after: 274 of 275 gets are hits.
+        # The head report really does hit this cache when it is the working
+        # tree -- it did not originally, which made `diff <base>` slower than
+        # `diff <base> <head>` despite doing strictly less work.
+        #
+        # The *reason* changed and this comment did not, which a review caught:
+        # it used to read "`WorkTree` carries index blob ids too", and that
+        # stopped being true when those ids were removed for lying about disk
+        # content. What makes the hit happen now is `_content_id` -- the
+        # working-tree side is keyed on git's own blob id for the bytes it
+        # read, so content identical to the revision side lands on that side's
+        # entry. Re-measured after the change rather than carried over:
+        # `diff HEAD` is 275 of 275 head-side gets hit, where the old
+        # index-id mechanism managed 274 of 275.
         base = build_report(GitRev(base_rev, reader), cache)
         head = (
             build_report(GitRev(head_rev, reader), cache)

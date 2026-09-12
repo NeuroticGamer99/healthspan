@@ -2129,6 +2129,73 @@ def test_main_history_every_week_reaches_sample_commits(
     assert points(per_week) == {head}
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["history"], id="history-csv-the-default-format"),
+        pytest.param(["diff", "HEAD~1"], id="diff-csv"),
+    ],
+)
+def test_the_cli_announces_an_uncounted_file_on_stderr(
+    git_repo: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    """The wiring, not the function — driven through `main`.
+
+    `_emit_diagnostics` was unit-tested by calling it directly, which proves
+    the emitter works and nothing about whether either subcommand calls it.
+    Measured: replacing **both** call sites with `pass` left all 147 tests
+    green. That is the original defect exactly — the machine formats silent
+    about an uncovered tree — reachable again through the one seam the unit
+    test cannot see.
+
+    CSV both times on purpose: it is `history`'s default format and the one
+    with no slot for prose, so stderr is the only channel it has.
+    """
+    (git_repo / "docs").mkdir()
+    (git_repo / "docs" / "guide.md").write_text("a\nb\n", encoding="utf-8")
+    _run_git(git_repo, "add", "-A")
+    _run_git(git_repo, "commit", "-m", "add an uncovered tree")
+
+    assert rs.main([*argv, "--format", "csv"]) == 0
+    captured = capsys.readouterr()
+    assert "docs/guide.md" not in captured.out, "CSV has no column for this"
+    assert "tracked file(s) in no category" in captured.err
+    assert "docs/guide.md" in captured.err
+
+
+def test_a_file_named_like_the_resolved_sha_does_not_become_a_pathspec(
+    git_repo: Path,
+) -> None:
+    """What the `--` terminator in `list_commits` actually defends against.
+
+    Not a branch sharing a directory's name -- `resolve_rev` asks
+    `rev-parse --verify <ref>^{commit}`, which is revision-only, so that case
+    resolves cleanly and never reaches `git log` ambiguous. By that point the
+    argument is a 40-hex sha, and the only thing left that can collide with it
+    is a file *named* that sha: `git log <sha>` then exits 128 as ambiguous
+    and `git log <sha> --` exits 0 (both measured).
+
+    Pathological, and pinned anyway, because the alternative is a guard no
+    test distinguishes from its neighbour -- which is what a review found
+    here: dropping the `"--"` while keeping `resolve_rev(ref)` left every one
+    of the 147 tests green.
+    """
+    sha = rs.resolve_rev("main")  # pyright: ignore[reportPrivateUsage]
+    (git_repo / sha).write_text("a decoy named like a revision\n", encoding="utf-8")
+    _run_git(git_repo, "add", "-A")
+    _run_git(git_repo, "commit", "-m", "a file named like a sha")
+
+    # The premise: git really cannot tell these apart unaided.
+    with pytest.raises(rs.StatsError, match="failed"):
+        rs._git_out("log", "--format=%H", sha)  # pyright: ignore[reportPrivateUsage]
+
+    # Terminated, it is read as a revision: the walk ends at that commit and
+    # carries the history behind it, rather than filtering on a path.
+    commits = rs.list_commits(sha)
+    assert len(commits) == 2, "the fixture's two commits, oldest first"
+    assert commits[-1][0] == sha
+
+
 def test_main_diff_subcommand_renders_a_delta(
     git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
