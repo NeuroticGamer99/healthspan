@@ -106,12 +106,13 @@ the **working tree** is reported as a warning and skipped: it is one file, the
 operator can see it, and every other number stands.
 
 Not every warning is a skip, and the distinction is reported rather than
-flattened. A file that is unreadable or not valid UTF-8 is skipped and is
-absent from the counts. A Python file that will not *parse* is kept and
-counted in full -- only its docstrings move from ``comment`` to ``code``, so
-``code`` comes out **over**stated while files and physical lines are
-unaffected. Every diagnostic header once called both "skipped" and claimed the
-numbers "understate the tree", printed directly above a line reading "could
+flattened. A file that is not valid UTF-8 is skipped and is absent from the
+counts, as is a working-tree file that could not be read -- at a revision that
+second case exits 2 rather than warning. A Python file that will not *parse* is
+kept and counted in full -- only its docstrings move from ``comment`` to
+``code``, so ``code`` comes out **over**stated while files and physical lines
+are unaffected. Every diagnostic header once called both "skipped" and claimed
+the numbers "understate the tree", printed directly above a line reading "could
 not parse as Python; docstrings counted as code".
 
 The working tree's counts are keyed on their **content**, never on the index

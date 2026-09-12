@@ -56,7 +56,7 @@ Write output files to the scratchpad, not into the repository. A series is a rep
 
 **If a run reports a degraded measurement, say so before quoting any number — and say which kind, because they distort in opposite directions.** Read the per-file lines, not the header count:
 
-- **A blob that is not valid UTF-8, or a file that could not be read, is skipped** and is therefore absent from that point's counts. In a `diff` its absence at the *head* renders as *negative growth* — a shrinking repo that did not shrink — and its absence at the *base* renders as growth that did not happen.
+- **A blob that is not valid UTF-8 is skipped wherever it came from; a file that could not be *read* is skipped only in the working tree** — at a revision that second case stops the run at exit 2 instead of warning. A skipped file is absent from that point's counts, so in a `diff` its absence at the *head* renders as *negative growth* — a shrinking repo that did not shrink — and its absence at the *base* renders as growth that did not happen.
 - **A Python file that will not parse is not skipped.** It is counted in full; only its docstrings move from `comment` to `code`. Files and physical lines are unaffected and `code` is *overstated*. Reporting this one as a missing file is wrong twice over, and the tool said exactly that until PR #109.
 
 The markdown and HTML outputs carry these inline, and CSV gets them on **stderr** — a tidy-long table has no column for prose. JSON gets both: `warnings` and `uncounted` are structured fields on every point, *and* the stderr copy is printed, so a redirected `--out` file is still complete on its own. Do not narrate a degraded run as if it were clean.
