@@ -23,7 +23,9 @@ Naming three endpoints (`diff main..HEAD v0.3`) is refused rather than resolved 
 
 Options: `--all` keeps categories that did not change (default is only those that did); `--format json` carries both full reports plus the delta; `--format csv` is tidy-long over `(category, metric, base, head, delta, categories_version)` and keeps every category, since a missing row and a zero are indistinguishable once pivoted.
 
-Ratios render as transitions (`3.97:1 → 4.01:1`), and the ADR line names only the buckets that moved. Read a `+0` row as "files changed, net size did not" — not as "nothing happened there".
+Ratios render as transitions (`3.97:1 → 4.01:1`), and the ADR line names only the buckets that moved.
+
+**Every column a row is filtered on is now a column you can see**, so read a `+0` cell as that metric alone. The table carries `Δ Files`, `Δ Lines`, `Δ Code`, `Δ Comment`, `Δ Blank` and `Δ Bytes` — the whole of what "did this category change?" is decided on — which means that by default a displayed row always has at least one non-zero cell, and a row of `+0` everywhere appears only under `--all`, where it means the category genuinely did not move. This guidance previously read "a `+0` row means files changed, net size did not"; that was describing a *defect* — a byte-only change survived the filter into a table with no bytes column and rendered as `+0` across the board — rather than behaviour to rely on.
 
 **Cross-check against git when it is cheap.** `git diff --stat <base>` reports insertions and deletions; this reports *net physical growth*. They agree when little was rewritten in place and diverge on a refactor — if they disagree wildly, that is information, not an error.
 

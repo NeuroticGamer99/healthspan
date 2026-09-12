@@ -1179,6 +1179,26 @@ def test_the_chart_names_the_files_it_warns_about() -> None:
     assert "ccccccc: docs/guide.md" in out
 
 
+def test_the_chart_escapes_the_paths_it_names() -> None:
+    """A path is attacker-shaped input to an HTML document, and these are paths.
+
+    `&` and `<` are legal in a filename on every platform this runs on, so a
+    tracked file called `a&b<c>.md` lands verbatim in the `<li>` unless it is
+    escaped — breaking the document at best. `_detail`'s docstring says it
+    escapes for exactly this reason and nothing pinned it: review removed the
+    `escape()` call and the whole suite stayed green, because every fixture
+    used a path with no special characters in it.
+    """
+    clean = _small_report(commit="a" * 12, date="2026-01-01T00:00:00+00:00")
+    hostile = rs.build_report(DictSource({"docs/a&b<c>.md": b"x\n"}, label="bbbbbbb"))
+    hostile.commit, hostile.date = "b" * 12, "2026-06-01T00:00:00+00:00"
+    assert hostile.uncounted == ["docs/a&b<c>.md"], "the fixture planted no leak"
+
+    out = rs.render_history_html([clean, hostile])
+    assert "docs/a&amp;b&lt;c&gt;.md" in out
+    assert "docs/a&b<c>.md" not in out
+
+
 def test_render_history_html_draws_one_band_per_category() -> None:
     reports = [
         _small_report(commit="a" * 12, date="2026-03-02T10:00:00+00:00"),
@@ -1802,6 +1822,74 @@ def test_a_timeout_that_lands_on_a_successful_read_is_still_a_timeout(
     with pytest.raises(rs.StatsError, match=r"did not answer.*within"):
         reader.read("0" * 40)
     assert healthy.killed, "premise: the watchdog really did kill the child"
+
+
+def test_the_watchdog_waits_for_a_callback_already_in_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`settle()` joins the timer, and that join is what makes `fired` mean
+    anything.
+
+    The sibling test above stubs a timer that has *finished* firing before
+    `settle()` runs, so it pins the `fired` check and nothing else: review
+    confirmed that deleting `timer.join()` left the entire suite green, with
+    the fix's own docstring claiming the join is "what makes `fired`
+    authoritative".
+
+    So this stub models the state the join exists for — a callback **in
+    flight**. The worker blocks until `join()` releases it, which makes the
+    ordering deterministic rather than a race against a sleep: without the
+    join, `fired` is still unset when `settle()` reads it and the timeout goes
+    unreported; with it, the callback completes first and the read is correctly
+    blamed on the clock.
+    """
+    payload = b"x = 1\n"
+    released = threading.Event()
+
+    class InFlight:
+        """A timer whose callback has started and has not finished."""
+
+        def __init__(self, interval: float, function: object) -> None:
+            del interval
+            fn = cast("Callable[[], None]", function)
+
+            def in_flight() -> None:
+                released.wait(timeout=10)
+                fn()
+
+            self._worker = threading.Thread(target=in_flight)
+
+        def start(self) -> None:
+            self._worker.start()
+
+        def cancel(self) -> None: ...
+
+        def join(self, timeout: float | None = None) -> None:
+            del timeout
+            released.set()
+            self._worker.join(timeout=10)
+
+    class Healthy:
+        def __init__(self) -> None:
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(
+                b"%s blob %d\n%s\n" % (b"0" * 40, len(payload), payload)
+            )
+            self.killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+    healthy = Healthy()
+    reader = rs.BlobReader()
+    monkeypatch.setattr(reader, "_ensure", lambda: healthy)
+    monkeypatch.setattr(rs.threading, "Timer", InFlight)
+    try:
+        with pytest.raises(rs.StatsError, match=r"did not answer.*within"):
+            reader.read("0" * 40)
+    finally:
+        released.set()  # never leave the worker parked if the assertion fails
+    assert healthy.killed, "premise: the callback ran, so the join really waited"
 
 
 def test_a_blob_git_does_not_have_is_named_in_the_error(
