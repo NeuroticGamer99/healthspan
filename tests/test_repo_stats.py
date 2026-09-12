@@ -956,6 +956,82 @@ def test_render_history_md_is_one_row_per_point() -> None:
     assert cells == ["ccccccc", "2026-05-01", "3", "16", "5", "7", "1"]
 
 
+def test_every_writer_reads_the_same_counts_field_into_the_same_column() -> None:
+    """Which `Counts` field each emitter puts in each column, for the three
+    writers the two tidy-long ones above do not cover.
+
+    One rule, five sites. Review found the swap live in `render_history_md`
+    and `render_history_csv`, they were pinned, and the identical swap was
+    then found live in the three writers here -- `render_json`'s per-category
+    payload (which `render_diff_json` reuses for its `base` and `head`
+    halves), `render_markdown`'s snapshot table, and `_DIFF_METRICS`, which
+    drives both diff writers. Every one was invisible for the same reason:
+    the standing fixtures give several fields equal values, so reading the
+    wrong one changes nothing. Hence one test over one distinct-valued
+    fixture rather than an assertion bolted onto each writer's own test.
+
+    The diff rows are pinned as whole `(base, head, delta)` triples because
+    that is what makes two metrics distinguishable: `files` and `code` share
+    a base here, and `files` and `blank` share a head, but no two of the six
+    triples are equal.
+    """
+    report = _distinct_report(commit="c" * 12, date="2026-05-01T10:00:00+00:00")
+    expected = {
+        "files": 2,
+        "physical": 9,
+        "code": 5,
+        "comment": 1,
+        "blank": 3,
+        "bytes": 45,
+    }
+
+    # `render_json` -- and, through `_report_payload`, the diff's base/head.
+    payload = json.loads(rs.render_json(report))
+    assert payload["categories"][rs.LABEL_IMPL] == expected
+
+    # The snapshot table a human reads first. Bytes render as KiB, so the
+    # five count columns are what this pins.
+    row = next(
+        line
+        for line in rs.render_markdown(report).splitlines()
+        if line.startswith(f"| {rs.LABEL_IMPL} ")
+    )
+    cells = [cell.strip() for cell in row.strip("|").split("|")]
+    assert cells[1:6] == ["2", "9", "5", "1", "3"]
+
+    # `_DIFF_METRICS`: the wire name on the left, the `Counts` attribute it
+    # reads on the right. `_pair()` cannot see a mix-up between `physical`
+    # and `code` because it gives them equal values in both reports.
+    base = rs.build_report(
+        DictSource(
+            {"src/pkg/mod.py": b"# c\n# d\nx = 1\n\n\n\n"},
+            label="aaaaaaa",
+            commit="a" * 40,
+        )
+    )
+    head = rs.build_report(
+        DictSource(
+            {
+                "src/pkg/mod.py": (
+                    b"# c\n# d\n# e\nx = 1\ny = 2\nz = 3\nw = 4\nv = 5\nu = 6\n\n"
+                )
+            },
+            label="bbbbbbb",
+            commit="b" * 40,
+        )
+    )
+    rows = list(csv.reader(io.StringIO(rs.render_diff_csv(base, head))))
+    impl = {r[1]: r[2:5] for r in rows[1:] if r[0] == rs.LABEL_IMPL}
+    assert impl == {
+        "files": ["1", "1", "0"],
+        "physical": ["6", "10", "4"],
+        "code": ["1", "6", "5"],
+        "comment": ["2", "3", "1"],
+        "blank": ["3", "1", "-2"],
+        "bytes": ["17", "49", "32"],
+    }
+
+
 def _degraded_pair() -> tuple[rs.Report, rs.Report]:
     """Two reports where the head skipped a file it could previously read.
 
