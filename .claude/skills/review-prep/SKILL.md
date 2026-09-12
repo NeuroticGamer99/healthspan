@@ -130,6 +130,20 @@ Final message:
    belong to the briefing session, and a second spelling of the command in this file is a second
    thing to drift. If no brief reached this session, say the round is running **one** lens, rather
    than running one silently.
+
+   **First compare that command's `--base` against the scope step 1 pinned, and stop on a
+   mismatch.** Relaying verbatim is right and is not sufficient: step 1 deliberately permits a
+   custom base and a dirty-tree scope, so this session can pin a range the briefing session never
+   saw — and the relayed command still carries the brief's base. Nothing downstream would notice.
+   The adjudication lens would answer about one diff while `/code-review` looked at another, and
+   the round's two reports would be merged as though they covered the same surface, which is worse
+   than a round that ran one lens: the gap is invisible in both reports. The brief's base is the
+   round's base (`/review-brief` step 4 pins it and its fragment records it), so on a mismatch this
+   session is the deviation — **say so and stop, naming both SHAs**, rather than relaying a command
+   the pin contradicts or silently re-pointing it. Re-briefing at the intended scope, or accepting
+   the brief's, is the operator's call and needs their answer, not a guess. The repair is cheap and
+   is the reason this fails closed: `/review-brief` is re-runnable, and a round compared across two
+   diffs is not repairable after the fact.
 6. The follow-up: **in this same session**, after `/code-review` finishes, run `/review-handoff` to
    capture its findings. The carrier file preserves the scope and SHAs across compaction, but the
    *findings themselves* live only in conversation context until the report is written — so a new
