@@ -148,9 +148,9 @@ Final message:
    mismatch.** Compare it against that recorded value and nothing else — the scope command names
    the base as a ref, and a ref against a SHA is not a comparison that can succeed or a mismatch
    that means anything. Relaying verbatim is right and is not sufficient: step 1 deliberately
-   permits a
-   custom base and a dirty-tree scope, so this session can pin a range the briefing session never
-   saw — and the relayed command still carries the brief's base. Nothing downstream would notice.
+   permits a custom base and a dirty-tree scope, so this session can pin a range the briefing
+   session never saw — and the relayed command still carries the brief's base. Nothing downstream
+   would notice.
    The adjudication lens would answer about one diff while `/code-review` looked at another, and
    the round's two reports would be merged as though they covered the same surface, which is worse
    than a round that ran one lens: the gap is invisible in both reports. The brief's base is the
