@@ -138,7 +138,10 @@ Final message:
    §1 — an external round runs two lenses and is not complete until both have reported).
    `/review-brief` (`.claude/skills/review-brief/SKILL.md`, step 6) composes the whole
    `/codex:adversarial-review` line with every value resolved and hands it over as a fenced block;
-   reprint **that block**, unchanged, in a block of its own.
+   reprint **that block**, unchanged, in a block of its own. **It reaches this session the way the
+   brief's path does — carried by the operator** (ADR-0072 §2), since the two skills run in
+   different sessions and nothing else crosses that boundary. If it was not carried over, that is
+   the case the last sentence of this item covers: say the round is running one lens.
    Do not compose a line here: the values in it — the brief's absolute path, the pinned base SHA —
    belong to the briefing session, and a second spelling of the command in this file is a second
    thing to drift. If no brief reached this session, say the round is running **one** lens, rather

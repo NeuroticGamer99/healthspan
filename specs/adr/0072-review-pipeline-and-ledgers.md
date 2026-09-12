@@ -119,7 +119,10 @@ what a fenced block is for — and the adjudication lens ran **with no brief at 
 warned that a path the lens cannot resolve reduces the round to an unbriefed one; the failure
 arrived by the route that warning did not anticipate, an absent path rather than an unresolvable
 one. Resolving the values is therefore necessary and not sufficient: the command has to be one
-thing the operator can copy.
+thing the operator can copy. **It crosses into the reviewer session the way the brief's path does
+— carried by the operator**, stated here rather than left to inference: §2 pins that channel for
+the brief and nothing pinned it for the command, which left `/review-prep` instructed to relay a
+block whose provenance no document named.
 
 **That measurement names no PR, unlike this document's other citations, and the reason is worth
 stating rather than leaving as a gap.** The round produced no branch — it was a briefing handed

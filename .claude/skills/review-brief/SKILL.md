@@ -385,8 +385,11 @@ brief's absolute path, the brief's filename **is** the digest of its own bytes, 
 written into the brief either names the file the brief is about to stop being (hash first, then
 rename, and the embedded path is stale) or changes the digest that decides the name (substitute
 first, and the path cannot be known yet). There is no ordering that resolves it, which is why the
-resolved line lives outside the hashed bytes. Keeping it out also keeps one spelling: step 7's
-block is the only place the resolved command exists, so there is no second copy to drift.
+resolved line lives outside the hashed bytes. Keeping it out also keeps one **author**: step 7's
+block is the only place the resolved command is composed, so no artifact holds a copy that can
+drift from it. `/review-prep` does print it a second time, and that is a relay rather than a second
+spelling — it reprints step 7's block unchanged and is forbidden to compose its own, which is the
+distinction that makes one author enough.
 
 **Gate results are mechanically filled.** Run the gates through `python3 scripts/run_gates.py` —
 never assemble their commands by hand — and state which were green at brief time. The interpreter
