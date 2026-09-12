@@ -33,11 +33,14 @@ once, at both sites, and stayed wrong at both. A reader who acted on the
 corrected text would have closed `ledger` and believed the family closed. That
 is the shape: a count of a family spread across several files is not checkable
 by reading any one of them, and the fix for a claim nobody can check is to make
-something check it. **And "six files" is what this sentence said until it was
-re-read during `/land`** -- six is the number of *runners*; they live in five
-files, because `ledger` holds two. The paragraph arguing that hand-written
-counts rot was carrying one, wrong, in three files. The number is gone rather
-than corrected: `_RUNNERS` below is the enumeration, and it is checked.
+something check it. **And the corrected sentence then said "six files", which
+was also wrong** -- six was the number of *runners*, and they lived in fewer
+files than that because `ledger` holds two.
+The paragraph arguing that hand-written counts rot was carrying one,
+wrong, in three places; a later branch added a seventh runner and left all three
+stale again. Every number is gone rather than corrected: `_RUNNERS` below is the
+enumeration, it is checked, and `len(_RUNNERS)` is the only honest way to say
+how many there are.
 
 The exclusions, recorded rather than silent (and deliberately not counted, for
 the reason the first of them gives):
@@ -56,12 +59,24 @@ the reason the first of them gives):
   count of a family spread across several files is not checkable by reading any
   one of them, and then wrote one. Anyone who wants the number can run
   `git_runner_defects` over `tests/`, which is the point.
-- **`subprocess.Popen`.** It takes no `timeout=`; a Popen child is bounded by
-  `proc.wait(timeout=...)` instead, which this scan cannot see.
-  `review_worktree._spawn` is the one git caller built that way, and
-  `tests/test_review_worktree.py` holds its bound directly -- including the
-  straggler case `subprocess.run(timeout=...)` mishandles, which is why it is
-  spelled that way.
+- **`subprocess.Popen`.** It takes no `timeout=`; a Popen child is bounded
+  outside the call -- by `proc.wait(timeout=...)`, or by a watchdog that kills
+  it -- and this scan sees neither. The exclusion is recorded per caller, with
+  where each one's bound is pinned, because the premise underneath it is what
+  went stale: this read "`review_worktree._spawn` is the one git caller built
+  that way", and a later branch added the second with no bound and no test,
+  leaving a justification that had quietly stopped being true.
+  - `review_worktree._spawn` -- `tests/test_review_worktree.py` holds its bound
+    directly, including the straggler case `subprocess.run(timeout=...)`
+    mishandles, which is why it is spelled that way.
+  - `repo_stats.BlobReader` -- one long-lived `git cat-file --batch` for a whole
+    run, so the bound cannot be a `wait()`: the blocking call is a *pipe read*,
+    and a hung child stops the report at whichever blob it was on. Bounded by
+    `BlobReader._watchdog`, and pinned by
+    `tests/test_repo_stats.py::test_a_wedged_cat_file_fails_the_report_rather_than_hanging_it`.
+
+  Any third Popen git caller owes the same: a bound, a test naming it, and a row
+  here. An entry with no test is the shape this exclusion already shipped once.
 - **A second runner in a file already listed in `_RUNNERS`.** The completeness
   check below compares module *stems*, so it demands a behavioural row for a
   runner in a new file and not for a sibling of one already covered. Per-call-
@@ -69,7 +84,7 @@ the reason the first of them gives):
   function will *execute* a call means modelling when each part of a `def` runs
   -- decorators and defaults eagerly, annotations (PEP 649) and PEP 695 bounds
   lazily -- and keeping that correct across interpreter releases costs more than
-  the residual risk is worth for six subprocess calls in five files. What
+  the residual risk is worth at the size `_RUNNERS` records. What
   remains uncovered needs three things at once: a second runner in a listed
   file, a guard whose body swallows rather than raises (the shape check still
   demands the `try` and both handler types), and nobody noticing. Revisit if a
@@ -89,6 +104,7 @@ import check_spec_links
 import diff_harness
 import ledger
 import pytest
+import repo_stats
 import run_gates
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -99,7 +115,8 @@ SCANNED_DIRS = ("scripts", "src")
 
 # Names that resolve to the git executable at a call site. A bare `"git"` is the
 # PATH-resolved spelling; `_GIT` is the `shutil.which("git") or "git"` constant
-# four of these modules share.
+# several of these modules share. Not a count: it said "four" while `grep`
+# returned five, which is this file's own lesson arriving in its own constants.
 GIT_PROGRAM_NAMES = frozenset({"git"})
 GIT_PROGRAM_IDENTIFIERS = frozenset({"_GIT"})
 
@@ -426,6 +443,10 @@ def _check_spec_links_md_sources() -> object:
     return check_spec_links.md_sources()
 
 
+def _repo_stats_git_out() -> object:
+    return repo_stats._git_out("status")  # pyright: ignore[reportPrivateUsage]
+
+
 def _check_personal_containment_git() -> object:
     return check_personal_containment._git(REPO_ROOT, "status")  # pyright: ignore[reportPrivateUsage]
 
@@ -456,6 +477,7 @@ _RUNNERS = [
         _check_personal_containment_git,
         check_personal_containment.ContainmentError,
     ),
+    ("repo_stats._git_out", repo_stats, _repo_stats_git_out, repo_stats.StatsError),
 ]
 
 _FAILURES = [
@@ -521,7 +543,7 @@ def test_the_behavioural_table_covers_every_scanned_runner() -> None:
     then removed: closing the gap needs a model of when each part of a `def`
     executes (decorators and defaults eagerly, annotations and PEP 695 bounds
     lazily), and that model costs more to keep correct across interpreter
-    releases than the residual risk is worth for six subprocess calls. The risk
+    releases than the residual risk is worth at this table's size. The risk
     that remains needs three things at once -- a second runner in an
     already-listed file, a guard whose body swallows rather than raises (the
     shape check still demands the `try` and both handler types), and nobody
