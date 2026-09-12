@@ -378,6 +378,16 @@ and what it excludes); **angles for this round**; **already verified, with evide
 orchestrator's own uncertainties, numbered**; **the reporting bar**; and **the exact commands to
 run**.
 
+**That last section holds `/code-review` only. The adjudication command is never written into the
+brief** — it is composed here and emitted by step 7, and the brief carries a one-line note saying
+so rather than a copy of it. The reason is a circularity, not tidiness: the command contains the
+brief's absolute path, the brief's filename **is** the digest of its own bytes, so a command
+written into the brief either names the file the brief is about to stop being (hash first, then
+rename, and the embedded path is stale) or changes the digest that decides the name (substitute
+first, and the path cannot be known yet). There is no ordering that resolves it, which is why the
+resolved line lives outside the hashed bytes. Keeping it out also keeps one spelling: step 7's
+block is the only place the resolved command exists, so there is no second copy to drift.
+
 **Gate results are mechanically filled.** Run the gates through `python3 scripts/run_gates.py` —
 never assemble their commands by hand — and state which were green at brief time. The interpreter
 is part of the invocation, twice over: the script carries no execute bit, so a bare
@@ -439,8 +449,9 @@ round, and it carries no brief content for a condensation to lose.
 `/codex:adversarial-review` on the operator's behalf — the plugin sets
 `disable-model-invocation: true`, so the operator types it, into a session that has not read this
 brief and cannot fill a blank left in it. A skill that describes the flags instead of emitting
-them has handed over the part that is easy and kept the part that is error-prone. The shape, with
-every angle-bracketed value replaced before it is printed:
+them has handed over the part that is easy and kept the part that is error-prone. Compose it here,
+emit it at step 7, and write it into no artifact in between — the shape, with every
+angle-bracketed value replaced before it is printed:
 
 ```text
 /codex:adversarial-review --base <base SHA> --scope branch --model gpt-6-astra --background Read the brief at <brief absolute path, forward slashes> and treat that file as your brief for this review. Honour its do-not-re-run and settled lists, answer its numbered uncertainties by number, state what you examined, and challenge the premises the brief itself asserts.
