@@ -67,6 +67,14 @@ comparison decides both.)
   under "Uncounted". Coverage is therefore self-reporting: a newly added tree
   announces itself instead of silently sitting outside the table.
 
+  That report reaches **every** output, which took a second pass to be true:
+  it began life in the snapshot table, the snapshot JSON and the diff table
+  only, so ``history``'s default CSV, its markdown table, its HTML chart and
+  the diff CSV all rendered an uncovered tree as nothing at all. A detector
+  silent in the default format is the defect it exists to find. Markdown and
+  HTML carry it inline; CSV and JSON, having no slot for prose, carry it on
+  stderr.
+
 The ADR-status breakdown reads each numbered ``NNNN-*.md`` (excluding the
 ``0000-template.md``) ``## Status`` field, matching the convention that
 ``scripts/check_adr_index.py`` already relies on.
@@ -96,6 +104,22 @@ and that git is required.
 Exit 0 when the tree could be enumerated, and an individual unreadable file in
 the **working tree** is reported as a warning and skipped: it is one file, the
 operator can see it, and every other number stands.
+
+Not every warning is a skip, and the distinction is reported rather than
+flattened. A file that is unreadable or not valid UTF-8 is skipped and is
+absent from the counts. A Python file that will not *parse* is kept and
+counted in full -- only its docstrings move from ``comment`` to ``code``, so
+``code`` comes out **over**stated while files and physical lines are
+unaffected. Every diagnostic header once called both "skipped" and claimed the
+numbers "understate the tree", printed directly above a line reading "could
+not parse as Python; docstrings counted as code".
+
+The working tree's counts are keyed on their **content**, never on the index
+id of the path they came from. ``git diff-files`` looks like a proof that disk
+and index agree and is not one: it compares converted content and it skips
+``assume-unchanged``/``skip-worktree`` entries outright. Both holes were
+reachable, so ``WorkTree`` supplies no blob id at all and the cache key is
+git's own id for the bytes actually read.
 
 A blob that cannot be read **at a revision** is not that, and exits 2. The
 difference is deliberate and was a disputed call, settled here: the working
@@ -1123,28 +1147,75 @@ def warning_lines(reports: list[Report]) -> list[str]:
     return [f"{r.source_label}: {w}" for r in reports for w in r.warnings]
 
 
-def _emit_warnings(reports: list[Report], out: str | None) -> None:
-    """Put a degraded-measurement marker somewhere a machine format has no slot
-    for one.
+#: How a degraded measurement is described, in one place.
+#:
+#: Every earlier spelling said the files were "skipped" and the numbers
+#: "understate" the tree. Both halves are wrong for the commonest warning
+#: there is. An unparseable Python file is *retained* and fully counted --
+#: `classify` returns real counts beside its warning -- with only its
+#: docstrings moved from `comment` to `code`. Measured on one file: files
+#: 1 -> 1, physical 5 -> 6, code 1 -> **6**, comment 4 -> **0**. So the run
+#: printed "some files were skipped, so the numbers below understate the
+#: tree" directly above a line reading "could not parse as Python;
+#: docstrings counted as code" -- contradicting itself in two adjacent
+#: lines, and overstating `code` while claiming an undercount.
+#:
+#: "Understate" was not safe even for a genuine skip. A file skipped at a
+#: diff's *base* makes the base smaller and the delta **larger**: growth
+#: overstated, not understated.
+#:
+#: Neutral, therefore, and the per-file lines below say which happened.
+_DEGRADED = (
+    "measured in a degraded way — a skipped file is absent from the numbers "
+    "entirely; a file that would not parse is present, with its docstrings "
+    "counted as code"
+)
+
+
+def uncounted_lines(reports: list[Report]) -> list[str]:
+    """Every uncounted path across a set of reports, tagged with its point.
+
+    The companion to `warning_lines`, and it exists because the leak check was
+    reporting to nobody in three of its formats. `Report.uncounted` reached the
+    snapshot table, the snapshot JSON and the diff table -- and not `history`'s
+    default CSV, its markdown table, its HTML chart, or the diff CSV, with
+    `_emit_warnings` reading only `Report.warnings` so stderr stayed silent
+    too. Measured with a planted `docs/guide.md`: 0 mentions in any of the
+    four, nothing on stderr, exit 0.
+
+    That is the failure this whole change set exists to end, reappearing inside
+    its own detector: an uncovered tree is exactly what nobody notices, and the
+    default output format was where it went unannounced.
+    """
+    return [f"{r.source_label}: {p}" for r in reports for p in r.uncounted]
+
+
+def _emit_diagnostics(reports: list[Report]) -> None:
+    """Put the degraded-measurement and coverage markers somewhere a machine
+    format has no slot for them.
 
     CSV has fixed columns and adding a diagnostics column to a tidy-long table
-    would put prose in a numeric pivot, so the marker goes to stderr -- which
-    also keeps it out of a redirected file, the reason the walk-progress notice
-    already goes there. Called for every format, not only the ones with no
-    inline section: a warning is worth saying twice more than it is worth
+    would put prose in a numeric pivot, so the markers go to stderr -- which
+    also keeps them out of a redirected file, the reason the walk-progress
+    notice already goes there. Called for every format, not only the ones with
+    no inline section: this is worth saying twice more than it is worth
     missing, and when `--out` is in play the terminal is the *only* place the
     operator is looking.
     """
-    lines = warning_lines(reports)
-    if not lines:
-        return
-    print(
-        f"repo_stats: {len(lines)} warning(s) — some files were skipped, so the "
-        "numbers below understate the tree:",
-        file=sys.stderr,
-    )
-    for line in lines:
-        print(f"  {line}", file=sys.stderr)
+    warnings = warning_lines(reports)
+    if warnings:
+        print(f"repo_stats: {len(warnings)} file(s) {_DEGRADED}:", file=sys.stderr)
+        for line in warnings:
+            print(f"  {line}", file=sys.stderr)
+    uncounted = uncounted_lines(reports)
+    if uncounted:
+        print(
+            f"repo_stats: {len(uncounted)} tracked file(s) in no category, so "
+            "absent from every number reported:",
+            file=sys.stderr,
+        )
+        for line in uncounted:
+            print(f"  {line}", file=sys.stderr)
 
 
 def _ratio(numer: int, denom: int) -> str:
@@ -1386,7 +1457,17 @@ def list_commits(
         args.append(f"--since={since}")
     if until:
         args.append(f"--until={until}")
-    args.append(ref)
+    # Resolved, and terminated with `--`, because `git log` disambiguates its
+    # trailing argument against the *filesystem*: a bare `src` is not a
+    # revision, so git reads it as a pathspec and answers with the commits that
+    # touched that directory. Measured, `history --ref src` exited 0 with a
+    # 2-point series where the walk is 205 -- a path-filtered answer wearing a
+    # series' clothes, and nothing in the output says so. `resolve_rev` makes a
+    # non-revision an exit-2 StatsError naming it, which is what `snapshot` and
+    # `diff` already do; `--` stops git reaching for the second reading even
+    # for a branch that shares a directory's name, which it otherwise refuses
+    # as ambiguous.
+    args.extend([resolve_rev(ref), "--"])
     commits: list[tuple[str, str]] = []
     for line in _git_out(*args).decode("utf-8", "replace").splitlines():
         sha, _, date = line.partition("\t")
@@ -1510,13 +1591,20 @@ def render_history_md(reports: list[Report]) -> str:
     warnings = warning_lines(reports)
     if warnings:
         out.append("")
-        out.append(
-            f"_{len(warnings)} file(s) were skipped across these points, so the "
-            "rows above understate them:_"
-        )
+        out.append(f"_{len(warnings)} file(s) across these points were {_DEGRADED}:_")
         out.append("")
         for w in warnings:
             out.append(f"- {w}")
+    uncounted = uncounted_lines(reports)
+    if uncounted:
+        out.append("")
+        out.append(
+            f"_{len(uncounted)} tracked file(s) across these points are in no "
+            "category, so absent from every row above:_"
+        )
+        out.append("")
+        for u in uncounted:
+            out.append(f"- {u}")
     return "\n".join(out)
 
 
@@ -1670,13 +1758,19 @@ def render_history_html(reports: list[Report]) -> str:
         for i, label in enumerate(labels)
     )
     span = f"{(points[0].date or '')[:10]} → {(points[-1].date or '')[:10]}"
-    skipped = warning_lines(points)
-    note = (
-        f'<p class="sub warn">⚠ {len(skipped)} file(s) skipped across these '
-        "points — the bands understate them.</p>\n"
-        if skipped
-        else ""
-    )
+    degraded = warning_lines(points)
+    uncounted = uncounted_lines(points)
+    note = ""
+    if degraded:
+        note += (
+            f'<p class="sub warn">⚠ {len(degraded)} file(s) across these points '
+            f"were {escape(_DEGRADED)}.</p>\n"
+        )
+    if uncounted:
+        note += (
+            f'<p class="sub warn">⚠ {len(uncounted)} tracked file(s) across these '
+            "points are in no category, so absent from every band.</p>\n"
+        )
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
@@ -1837,9 +1931,7 @@ def render_diff(base: Report, head: Report, *, show_all: bool = False) -> str:
     warnings = warning_lines([base, head])
     if warnings:
         out.append("")
-        out.append(
-            "**Warnings** — files skipped, so these deltas understate the change"
-        )
+        out.append(f"**Warnings** — {len(warnings)} file(s) {_DEGRADED}")
         out.append("")
         for w in warnings:
             out.append(f"- {w}")
@@ -2111,7 +2203,7 @@ def _run_history(args: argparse.Namespace) -> int:
         "html": render_history_html,
     }
     _write_out(renderers[args.format](reports), args.out)
-    _emit_warnings(reports, args.out)
+    _emit_diagnostics(reports)
     return 0
 
 
@@ -2138,7 +2230,7 @@ def _run_diff(args: argparse.Namespace) -> int:
     else:
         text = render_diff(base, head, show_all=args.all)
     _write_out(text, args.out)
-    _emit_warnings([base, head], args.out)
+    _emit_diagnostics([base, head])
     return 0
 
 

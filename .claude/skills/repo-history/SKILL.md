@@ -48,7 +48,14 @@ Narrow the walk with `--since`, `--until`, and `--ref`.
 
 Write output files to the scratchpad, not into the repository. A series is a report, not a tracked artifact.
 
-**If a run reports skipped files, say so before quoting any number.** A file whose *content* could not be decoded — a blob that is not valid UTF-8, a Python file that will not parse — is skipped with a warning and is therefore absent from that point's counts, so in a `diff` its absence renders as *negative growth*: a shrinking repo that did not shrink. The markdown and HTML outputs carry the warnings inline; CSV and JSON have no slot for prose, so the same list goes to **stderr**. Do not narrate a degraded run as if it were clean.
+**If a run reports a degraded measurement, say so before quoting any number — and say which kind, because they distort in opposite directions.** Read the per-file lines, not the header count:
+
+- **A blob that is not valid UTF-8, or a file that could not be read, is skipped** and is therefore absent from that point's counts. In a `diff` its absence at the *head* renders as *negative growth* — a shrinking repo that did not shrink — and its absence at the *base* renders as growth that did not happen.
+- **A Python file that will not parse is not skipped.** It is counted in full; only its docstrings move from `comment` to `code`. Files and physical lines are unaffected and `code` is *overstated*. Reporting this one as a missing file is wrong twice over, and the tool said exactly that until PR #109.
+
+The markdown and HTML outputs carry these inline; CSV and JSON have no slot for prose, so the same list goes to **stderr**. Do not narrate a degraded run as if it were clean.
+
+**An `Uncounted` report is a third thing again, and it is not a degraded measurement.** Nothing failed: those files are tracked, readable, and claimed by no category, so they are absent from every number in the run. It travels beside the warnings on all four `history` formats and on `diff` — inline in markdown and HTML, on stderr for CSV and JSON. Treat it as a defect in the script's category list rather than a caveat to repeat, the same way `/repo-stats` does for a single point.
 
 **A blob that could not be *read* at a revision is a different thing and you will not see it here — the run stops.** It exits 2 naming the object, the commit and the path, rather than warning and carrying on, because at a revision that silence is unrecoverable: the point would report a smaller repository than existed and nothing downstream could tell it from real shrinkage. The working tree keeps the gentler behaviour (one local, visible file; every other number stands). The `scripts/repo_stats.py` module docstring holds the full reasoning — point there rather than re-deciding it.
 

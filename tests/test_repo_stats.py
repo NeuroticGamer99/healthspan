@@ -915,9 +915,110 @@ def test_a_skipped_file_is_named_in_the_history_table_and_chart() -> None:
     base.date = head.date = "2026-03-02T10:00:00+00:00"
     base.commit, head.commit = "a" * 40, "b" * 40
     md = rs.render_history_md([base, head])
-    assert "skipped across these points" in md
+    assert "were measured in a degraded way" in md
     assert "bbbbbbb: specs/a.md: not valid UTF-8 (skipped)" in md
-    assert "skipped across these points" in rs.render_history_html([base, head])
+    assert "measured in a degraded way" in rs.render_history_html([base, head])
+
+
+def _uncovered_pair() -> tuple[rs.Report, rs.Report]:
+    """Two reports where the head gained a file no category claims.
+
+    Not a *degraded* measurement -- nothing failed to read or parse -- but an
+    incomplete one, and the two are reported through separate channels because
+    they mean different things to a reader.
+    """
+    base = rs.build_report(DictSource({"specs/a.md": b"one\n"}, label="aaaaaaa"))
+    head = rs.build_report(
+        DictSource(
+            {"specs/a.md": b"one\n", "docs/guide.md": b"x\ny\n"}, label="bbbbbbb"
+        )
+    )
+    return base, head
+
+
+def test_an_uncounted_file_reaches_every_history_output() -> None:
+    """The leak check reported to nobody in three of its four formats.
+
+    `Report.uncounted` reached the snapshot table, the snapshot JSON and the
+    diff table -- and not history's default CSV, its markdown table, its HTML
+    chart, or the diff CSV, because the stderr emitter read `Report.warnings`
+    alone. Measured with a planted `docs/guide.md`: zero mentions in any of
+    them, nothing on stderr, exit 0.
+
+    Asserted per format rather than once, because the defect was *per format*:
+    a single check would have passed against the two that already worked.
+    """
+    base, head = _uncovered_pair()
+    assert head.uncounted == ["docs/guide.md"], "the fixture planted no leak"
+    assert base.uncounted == []
+    base.date = head.date = "2026-03-02T10:00:00+00:00"
+    base.commit, head.commit = "a" * 40, "b" * 40
+
+    assert "bbbbbbb: docs/guide.md" in rs.render_history_md([base, head])
+    assert "in no category" in rs.render_history_html([base, head])
+    assert "docs/guide.md" in rs.render_history_json([base, head])
+
+
+def test_the_machine_formats_announce_an_uncounted_file_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CSV has no slot for prose, so stderr is the only channel it has.
+
+    This is the half that made the leak check silent in the *default* output:
+    `history` with no `--format` is CSV, and CSV is where an uncovered tree was
+    least likely to be noticed.
+    """
+    base, head = _uncovered_pair()
+    rs._emit_diagnostics([base, head])  # pyright: ignore[reportPrivateUsage]
+    err = capsys.readouterr().err
+    assert "1 tracked file(s) in no category" in err
+    assert "bbbbbbb: docs/guide.md" in err
+
+
+def test_a_retained_file_is_not_reported_as_a_skipped_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unparseable Python file is counted, not skipped, and it inflates
+    `code` rather than understating anything.
+
+    Every diagnostic header once said the files were "skipped" and the numbers
+    "understate the tree", printed directly above a line reading "could not
+    parse as Python; docstrings counted as code" -- self-contradictory in two
+    adjacent lines. Measured on one file: files 1 -> 1, physical 5 -> 6, code
+    1 -> **6**, comment 4 -> **0**.
+
+    The two claims are asserted separately: that the counts really do move the
+    way the old prose denied, and that no output still makes either claim.
+    """
+    clean = rs.build_report(
+        DictSource({"src/m.py": b'"""One\nTwo\nThree\n"""\nx = 1\n'}, label="aaaaaaa")
+    )
+    broken = rs.build_report(
+        DictSource(
+            {"src/m.py": b'"""One\nTwo\nThree\n"""\nx = 1\ndef (\n'}, label="bbbbbbb"
+        )
+    )
+    assert broken.warnings, "the fixture did not actually fail to parse"
+    assert clean.per_category[rs.LABEL_IMPL].files == 1
+    assert broken.per_category[rs.LABEL_IMPL].files == 1, "retained, not skipped"
+    assert clean.per_category[rs.LABEL_IMPL].code == 1
+    assert broken.per_category[rs.LABEL_IMPL].code == 6, "code went UP"
+    assert broken.per_category[rs.LABEL_IMPL].comment == 0
+
+    broken.date = clean.date = "2026-03-02T10:00:00+00:00"
+    broken.commit, clean.commit = "b" * 40, "a" * 40
+    rs._emit_diagnostics([broken])  # pyright: ignore[reportPrivateUsage]
+    surfaces = [
+        capsys.readouterr().err,
+        rs.render_history_md([clean, broken]),
+        rs.render_history_html([clean, broken]),
+        rs.render_diff(clean, broken),
+    ]
+    for text in surfaces:
+        assert "docstrings counted as code" in text, "the per-file line must survive"
+        assert "understate" not in text
+        assert "file(s) skipped" not in text
+        assert "files skipped" not in text
 
 
 def test_warning_lines_attributes_each_warning_to_its_point() -> None:
@@ -1761,6 +1862,26 @@ def test_list_commits_is_chronological_and_first_parent(git_repo: Path) -> None:
     commits = rs.list_commits("main")
     assert len(commits) == 2
     assert commits[0][1] <= commits[1][1]  # oldest first
+
+
+def test_a_directory_name_is_not_accepted_as_a_revision(git_repo: Path) -> None:
+    """`git log <arg>` disambiguates against the filesystem, so an unresolvable
+    revision that happens to name a directory becomes a *pathspec*.
+
+    Measured on the live repository before the fix: `history --ref src` exited
+    **0** with a 2-point series where the real walk is 205 -- a path-filtered
+    answer presented as a series, with nothing in the output saying so. The
+    assertion is on the message as well as the refusal, because `git log`'s own
+    wording for an absent path and an absent revision overlap, and reporting a
+    mistyped revision as something about a file is the confusion `resolve_rev`
+    was written to end.
+    """
+    assert (git_repo / "src").is_dir(), "premise: the name resolves as a path"
+    with pytest.raises(rs.StatsError, match="not a revision in this repository: 'src'"):
+        rs.list_commits("src")
+
+    # And the series a caller asked for is still the series they get.
+    assert len(rs.list_commits("main")) == 2
 
 
 def test_build_series_produces_one_report_per_commit(git_repo: Path) -> None:
