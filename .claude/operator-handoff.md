@@ -48,6 +48,15 @@ it into the next command, carry it to another session. When you emit one:
    warning, and a block that looked correct when it was copied. Forward slashes survive every
    layer this repository hands a command to, and Windows accepts them.
 
+   **Slashes are the part that generalizes; they are not the whole hazard.** The same parsers eat
+   other characters a path can legally contain — `codex@1.0.6`'s tokenizer also drops `'` and `"`,
+   and a shell layer consumes backticks, `$` and newlines — so a caller embedding a path in a
+   command target owes its transport a check, not just a rewrite. Which characters, and whether
+   the right answer is to refuse or to quote, depends on the layers that specific command crosses,
+   so it belongs to the caller rather than here: `/review-brief` states its own set and refuses to
+   emit. What this rule fixes globally is the spelling, because backslashes break *every* such
+   transport; what it cannot fix globally is a character set that varies by destination.
+
 A command target obeys all five, and its embedded paths obey them too: a fenced command
 carrying an unresolved `<scratchpad>` is a template the user cannot run, which is worse than
 prose, because it looks runnable.

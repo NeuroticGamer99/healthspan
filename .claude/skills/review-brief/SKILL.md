@@ -474,6 +474,20 @@ standing one.
   own tokenizer drops `\` as an escape, so a Windows-spelled brief path arrives de-separated and
   resolves to nothing — the unbriefed round again, this time from a block that looked correct when
   it was copied.
+- **Normalizing slashes is necessary and not sufficient — check the resolved path and refuse.**
+  Four other characters mangle it, by the same two layers: the tokenizer opens a quoted run on `'`
+  or `"` and drops the character, and the shell layer consumes backticks, `$` and newlines. These
+  are reachable in a real scratchpad path, not hypothetical — a Windows account named `O'Brien`
+  gives `C:/Users/o'brien/...`, which arrives as `C:/Users/obrien/...` (measured against
+  `codex@1.0.6`). So before printing the command, inspect the resolved path: if it carries `'`,
+  `"`, a backtick, `$`, a newline, or a backslash still standing after normalization, **do not
+  emit the command** — say which character, and that the round cannot be briefed by path until the
+  brief sits somewhere whose path survives the transport (writing it to a directory without that
+  character is the repair). **Escaping is deliberately not the remedy**: ADR-0072 §1 already
+  rejected rendering content into this command line because the transport forbids characters the
+  content routinely carries, and an escaping layer for the path is the same bet one field over,
+  across the same two parsers. A round that loudly cannot start beats one that silently ran
+  unbriefed, which is the failure this whole section exists to close.
 - **Keep the prose free of `'`, `"`, backticks, `$` and newlines**, which is why it is written flat
   and without possessives. The same tokenizer opens a quoted run on `'` or `"` and drops the
   character; the shell layer that carries the arguments consumes backticks, `$` and newlines. The
