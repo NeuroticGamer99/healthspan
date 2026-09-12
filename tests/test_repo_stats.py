@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -1104,6 +1105,80 @@ def test_a_full_length_series_labels_its_rightmost_point() -> None:
     assert ticks[-1] == "2026-12-31"
 
 
+def test_a_two_point_chart_labels_both_of_its_endpoints() -> None:
+    """The near-final tick suppression deleted the series' own start.
+
+    `tick_at.discard(n - 2)` exists so a tick does not land on top of the
+    always-drawn final one. At n = 2, `n - 2` is index 0 — the first endpoint —
+    so a two-point chart rendered a single date, its right edge, and a reader
+    had no way to see when the span began. Measured before the guard:
+    `['2026-06-01']` for a series starting in January.
+
+    Read off the tick elements for the reason the sibling test above records:
+    the subtitle names both dates, so a substring search over the document
+    passes under the defect.
+    """
+    reports = [
+        _small_report(commit="a" * 12, date="2026-01-01T00:00:00+00:00"),
+        _small_report(commit="b" * 12, date="2026-06-01T00:00:00+00:00"),
+    ]
+    ticks = re.findall(
+        r'text-anchor="middle">([^<]+)</text>', rs.render_history_html(reports)
+    )
+    assert ticks == ["2026-01-01", "2026-06-01"]
+
+
+def test_a_byte_only_change_is_not_rendered_as_an_all_zero_row() -> None:
+    """`_is_zero` votes on `nbytes`; the table had no column for it.
+
+    A category whose only change is its size survives the changed-only filter
+    and gets a row — which, with no bytes column, rendered as `+0` in every
+    cell including the Total. Measured: 12 bytes to 18, every cell `+0`, a row
+    asserting that something changed while showing nothing that did.
+    """
+    base = rs.build_report(DictSource({"src/a.py": b"x = 1\ny = 2\n"}, label="aaaaaaa"))
+    head = rs.build_report(
+        DictSource({"src/a.py": b"x = 1   \ny = 2   \n"}, label="bbbbbbb")
+    )
+    impl = rs.category_deltas(base, head)[rs.LABEL_IMPL]
+    assert impl.physical == 0, "premise: only bytes moved"
+    assert impl.code == 0, "premise: only bytes moved"
+    assert impl.nbytes == 6
+
+    out = rs.render_diff(base, head)
+    assert "Δ Bytes" in out
+    row = next(line for line in out.splitlines() if rs.LABEL_IMPL in line)
+    assert "+6" in row, f"the only thing that changed is missing from: {row}"
+    total = next(line for line in out.splitlines() if "**Total**" in line)
+    assert "+6" in total
+
+
+def test_the_chart_names_the_files_it_warns_about() -> None:
+    """The HTML is handed over as a standalone file, so a count is not enough.
+
+    The banner reported how many files were degraded or uncounted and named
+    none of them, with the per-file lines going only to the stderr of the run
+    that produced the file — while the skill told a reader the HTML carries
+    them inline. Either the artifact is self-contained or the prose is wrong;
+    this pins the former.
+    """
+    clean = _small_report(commit="a" * 12, date="2026-01-01T00:00:00+00:00")
+    degraded = rs.build_report(
+        DictSource({"specs/a.md": b"\xff\xfe not utf-8\n"}, label="bbbbbbb")
+    )
+    degraded.commit, degraded.date = "b" * 12, "2026-06-01T00:00:00+00:00"
+    uncovered = rs.build_report(
+        DictSource({"docs/guide.md": b"a\nb\n"}, label="ccccccc")
+    )
+    uncovered.commit, uncovered.date = "c" * 12, "2026-09-01T00:00:00+00:00"
+    assert degraded.warnings, "the fixture produced no warning"
+    assert uncovered.uncounted, "the fixture planted no uncovered file"
+
+    out = rs.render_history_html([clean, degraded, uncovered])
+    assert "bbbbbbb: specs/a.md: not valid UTF-8 (skipped)" in out
+    assert "ccccccc: docs/guide.md" in out
+
+
 def test_render_history_html_draws_one_band_per_category() -> None:
     reports = [
         _small_report(commit="a" * 12, date="2026-03-02T10:00:00+00:00"),
@@ -1550,6 +1625,54 @@ def test_an_edit_git_calls_unmodified_is_still_counted(git_repo: Path) -> None:
     assert tree.per_category[rs.LABEL_IMPL].physical == 5
 
 
+def test_a_tracked_symlink_is_counted_as_git_stores_it(git_repo: Path) -> None:
+    """The working tree must count the link, not what the link points at.
+
+    `Path.read_bytes()` follows a symlink, so on POSIX the working tree counted
+    the *target* -- possibly a large file, possibly one outside the repository
+    entirely -- while any revision counted git's mode-120000 blob, which holds
+    only the target path as a string. The same clean tree therefore measured
+    differently depending on which source read it, against the promise that the
+    live table and every historical point measure the same set by the same
+    rule.
+
+    Asserted as parity between the two sources rather than against a literal
+    byte count, because parity is the property that was broken.
+
+    Windows without developer mode cannot create the link at all, and needs no
+    fix there either: with `core.symlinks=false` git writes an ordinary file
+    holding the target text, which is already what this test demands.
+    """
+    target = git_repo / "src" / "target.py"
+    target.write_text("a = 1\nb = 2\nc = 3\nd = 4\n", encoding="utf-8")
+    link = git_repo / "src" / "link.py"
+    try:
+        link.symlink_to("target.py")
+    except (OSError, NotImplementedError) as exc:  # Windows without the privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+    if not link.is_symlink():
+        pytest.skip("the filesystem materialized a copy, not a link")
+    _run_git(git_repo, "add", "-A")
+    _run_git(git_repo, "commit", "-m", "a tracked symlink")
+
+    mode = rs._git_out("ls-files", "-s", "src/link.py").split()[0]  # pyright: ignore[reportPrivateUsage]
+    assert mode == b"120000", "premise: git tracked this as a symlink"
+
+    ref = next(r for r in rs.WorkTree().files() if r.path == "src/link.py")
+    assert rs.WorkTree().read(ref) == b"target.py"
+    # Parity: the revision side reads the same bytes for the same tree.
+    with rs.BlobReader() as reader:
+        rev = rs.GitRev("HEAD", reader)
+        rev_ref = next(r for r in rev.files() if r.path == "src/link.py")
+        assert rev.read(rev_ref) == rs.WorkTree().read(ref)
+
+    # And the counts agree, which is what a reader of the reports sees.
+    with rs.BlobReader() as reader:
+        from_rev = rs.build_report(rs.GitRev("HEAD", reader))
+    from_tree = rs.build_report(rs.WorkTree())
+    assert from_tree.per_category[rs.LABEL_IMPL] == from_rev.per_category[rs.LABEL_IMPL]
+
+
 def test_the_content_id_is_gits_own_blob_id(git_repo: Path) -> None:
     """`_content_id` has to agree with git, or the two ends never share an entry.
 
@@ -1621,6 +1744,64 @@ def test_a_wedged_cat_file_fails_the_report_rather_than_hanging_it(
     with pytest.raises(rs.StatsError, match=r"did not answer.*within"):
         reader.read("0" * 40)
     assert wedged.killed, "the watchdog never fired, so the read merely failed"
+
+
+def test_a_timeout_that_lands_on_a_successful_read_is_still_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The watchdog's success path never consulted `fired`.
+
+    `Timer.cancel()` only un-schedules a callback that has not started, so a
+    timeout expiring just as the final read returns kills the shared child
+    while that read succeeds — and the read returned its bytes with `fired`
+    never checked. The blob was accepted and the *next* read failed on a pipe
+    this one had killed, reporting the timeout against an innocent object (or
+    not at all, when the killed read was the last).
+
+    Driven through a Timer stub that fires on `start()` rather than by racing a
+    real clock: the state under test is "fired is set **and** the read
+    succeeded", and waiting for a real timer to land in that window is not
+    something a test can arrange. `kill()` is a no-op here for the same reason
+    — the point is precisely that the read still produced good bytes.
+    """
+    payload = b"x = 1\n"
+
+    class Immediate:
+        """A `threading.Timer` that has already fired by the time it returns."""
+
+        def __init__(self, interval: float, function: object) -> None:
+            del interval
+            self._fn = cast("Callable[[], None]", function)
+
+        def start(self) -> None:
+            self._fn()
+
+        def cancel(self) -> None: ...
+
+        def join(self, timeout: float | None = None) -> None:
+            del timeout
+
+    class Healthy:
+        """Answers correctly and survives `kill()` — a read that beat the clock."""
+
+        def __init__(self) -> None:
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(
+                b"%s blob %d\n%s\n" % (b"0" * 40, len(payload), payload)
+            )
+            self.killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+    healthy = Healthy()
+    reader = rs.BlobReader()
+    monkeypatch.setattr(reader, "_ensure", lambda: healthy)
+    monkeypatch.setattr(rs.threading, "Timer", Immediate)
+
+    with pytest.raises(rs.StatsError, match=r"did not answer.*within"):
+        reader.read("0" * 40)
+    assert healthy.killed, "premise: the watchdog really did kill the child"
 
 
 def test_a_blob_git_does_not_have_is_named_in_the_error(

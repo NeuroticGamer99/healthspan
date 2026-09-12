@@ -150,6 +150,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -470,7 +471,29 @@ class WorkTree:
         return [FileRef(p, None) for p in sorted(paths)]
 
     def read(self, ref: FileRef) -> bytes:
-        return (REPO_ROOT / ref.path).read_bytes()
+        path = REPO_ROOT / ref.path
+        if path.is_symlink():
+            # A symlink's *content*, as git stores it: a mode-120000 blob holds
+            # the target path as a string. `read_bytes()` follows the link
+            # instead and hands back whatever it points at, so the same clean
+            # tree measured two ways disagreed -- `snapshot` counting the
+            # target's lines and any revision counting the one-line target
+            # name -- against this tool's whole promise that the live table and
+            # every historical point measure the same set by the same rule.
+            #
+            # It also read *outside the repository*, which in this repository
+            # is the sharper half: a link pointing into the sibling personal
+            # directory (ADR-0079) would have been opened and counted. Nothing
+            # here emits file content, so no value could escape into a report,
+            # but a tool that walks tracked paths has no business following one
+            # out of the tree.
+            #
+            # Windows needs no special case and gets none: with
+            # `core.symlinks=false` git checks a symlink out as an ordinary
+            # file containing the target text, so `is_symlink()` is False and
+            # the `read_bytes()` below already returns exactly these bytes.
+            return os.readlink(path).encode("utf-8", "surrogateescape")
+        return path.read_bytes()
 
 
 @contextlib.contextmanager
@@ -607,6 +630,18 @@ class BlobReader:
         `Timer` object and no wall-clock. `fired` is read after cancelling so a
         kill that already happened is reported as the timeout it was rather than
         as the truncated read it looks like from inside the pipe.
+
+        Cancelled **and joined**, and checked on the success path too. Neither
+        was true at first, and `Timer.cancel()` only un-schedules a callback
+        that has not started: if the timeout expires just as the final read
+        returns, `cancel()` is a no-op, `expire()` kills the shared child, and
+        the read that just succeeded returns normally with `fired` never
+        consulted. The blob is accepted, and the *next* one fails on a pipe
+        whose child this read killed -- so the timeout is reported against an
+        innocent object, or not at all when the killed read was the last. The
+        window is microseconds against a 30-second timer, and it is the kind
+        that costs an hour to diagnose when it does happen, because the error
+        names the wrong blob.
         """
         fired = threading.Event()
 
@@ -617,14 +652,27 @@ class BlobReader:
 
         timer = threading.Timer(_GIT_TIMEOUT, expire)
         timer.start()
-        try:
-            yield
-        except StatsError:
+
+        def settle() -> None:
+            """Stop the timer, wait out any callback already running, then rule.
+
+            `join()` is what makes `fired` authoritative: without it the answer
+            depends on whether `expire()` happened to reach `fired.set()` yet.
+            """
+            timer.cancel()
+            timer.join()
             if fired.is_set():
                 raise StatsError(
                     f"git cat-file did not answer for {sha} within {_GIT_TIMEOUT}s"
                 ) from None
+
+        try:
+            yield
+        except StatsError:
+            settle()  # raises the timeout in its place when that is what it was
             raise
+        else:
+            settle()
         finally:
             timer.cancel()
 
@@ -1752,7 +1800,13 @@ def render_history_html(reports: list[Report]) -> str:
     # are collected into a set with `n - 1` added, which also keeps a near-final
     # tick from being drawn on top of it.
     tick_at = set(range(0, n, max(1, (n - 1) // 6) if n > 1 else 1))
-    tick_at.discard(n - 2)
+    if n > 2:
+        # Guarded, because at n = 2 the "near-final" tick *is* index 0 -- the
+        # series' own start -- and discarding it left a two-point chart
+        # labelled with one date, its right edge. Measured before the guard:
+        # ticks came out as ['2026-06-01'] alone for a span beginning in
+        # January. Crowding is only possible with a third point to crowd.
+        tick_at.discard(n - 2)
     tick_at.add(n - 1)
     ticks: list[str] = []
     for i in sorted(tick_at):
@@ -1767,18 +1821,38 @@ def render_history_html(reports: list[Report]) -> str:
         for i, label in enumerate(labels)
     )
     span = f"{(points[0].date or '')[:10]} → {(points[-1].date or '')[:10]}"
+
+    def _detail(lines: list[str], summary: str) -> str:
+        """A count the reader can act on, which means naming the files.
+
+        The counts alone shipped first and a review caught it: this file is
+        handed over on its own -- offline, no network, "hand it over as a
+        file" is what the skill says -- so a banner reading "3 file(s) were
+        measured in a degraded way" with the per-file lines only on the
+        *stderr* of the run that produced it is not a complete artifact. The
+        markdown renderer names them; this one said it did and did not.
+
+        Escaped, because these are paths: `_printable` has already made them
+        safe to *write*, and `escape` is what makes them safe to put in HTML.
+        """
+        items = "".join(f"<li>{escape(line)}</li>" for line in lines)
+        return (
+            f'<details class="sub warn"><summary>⚠ {escape(summary)}</summary>\n'
+            f"<ul>{items}</ul>\n</details>\n"
+        )
+
     degraded = warning_lines(points)
     uncounted = uncounted_lines(points)
     note = ""
     if degraded:
-        note += (
-            f'<p class="sub warn">⚠ {len(degraded)} file(s) across these points '
-            f"were {escape(_DEGRADED)}.</p>\n"
+        note += _detail(
+            degraded, f"{len(degraded)} file(s) across these points were {_DEGRADED}."
         )
     if uncounted:
-        note += (
-            f'<p class="sub warn">⚠ {len(uncounted)} tracked file(s) across these '
-            "points are in no category, so absent from every band.</p>\n"
+        note += _detail(
+            uncounted,
+            f"{len(uncounted)} tracked file(s) across these points are in no "
+            "category, so absent from every band.",
         )
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
@@ -1879,7 +1953,22 @@ def _is_zero(counts: Counts) -> bool:
 def render_diff(base: Report, head: Report, *, show_all: bool = False) -> str:
     """The change in shape between two points, category by category."""
     deltas = category_deltas(base, head)
-    header = ["Category", "Δ Files", "Δ Lines", "Δ Code", "Δ Comment", "Δ Blank"]
+    # `Δ Bytes` is the column `_is_zero` already votes on. That predicate asks
+    # the whole dataclass -- `nbytes` included -- so a category whose only
+    # change is its size survives the changed-only filter and gets a row; with
+    # no column to show it in, that row rendered as `+0` across the board,
+    # Total included. Measured: 12 bytes to 18, every cell `+0`. Either the
+    # filter stops noticing size or the table shows it, and a reformatting pass
+    # that moves bytes and nothing else is a real thing to want reported.
+    header = [
+        "Category",
+        "Δ Files",
+        "Δ Lines",
+        "Δ Code",
+        "Δ Comment",
+        "Δ Blank",
+        "Δ Bytes",
+    ]
     rows: list[list[str]] = []
     for cat in CATEGORIES:
         d = deltas[cat.label]
@@ -1893,6 +1982,7 @@ def render_diff(base: Report, head: Report, *, show_all: bool = False) -> str:
                 _signed(d.code),
                 _signed(d.comment),
                 _signed(d.blank),
+                _signed(d.nbytes),
             ]
         )
     tb, th = _totals(base), _totals(head)
@@ -1904,6 +1994,7 @@ def render_diff(base: Report, head: Report, *, show_all: bool = False) -> str:
             f"**{_signed(th.code - tb.code)}**",
             f"**{_signed(th.comment - tb.comment)}**",
             f"**{_signed(th.blank - tb.blank)}**",
+            f"**{_signed(th.nbytes - tb.nbytes)}**",
         ]
     )
 
