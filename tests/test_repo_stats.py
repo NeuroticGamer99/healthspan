@@ -1460,6 +1460,47 @@ def test_worktree_reads_uncommitted_edits(git_repo: Path) -> None:
     assert report.per_category[rs.LABEL_IMPL].physical == 2
 
 
+def test_the_working_tree_only_warns_about_a_file_it_cannot_read(
+    git_repo: Path,
+) -> None:
+    """The working-tree half of the skip/stop split, driven through the real
+    `WorkTree` instead of a stand-in that assumes its contract.
+
+    Every other test of this behaviour hands `build_report` a `DictSource`
+    whose `read` raises `PermissionError`. That pins `read_or_warn`'s
+    `except OSError` and says nothing about what `WorkTree.read` itself
+    raises -- so the counter-mutation review found live stayed green across
+    all 156 tests: wrapping `path.read_bytes()` in
+    `except OSError: raise StatsError(...)`, the way `BlobReader`
+    deliberately does on the *revision* side, turns one unreadable local file
+    into an exit-2 abort of the whole run, which is the reverse of what the
+    module docstring promises. `StatsError` is not an `OSError`, so nothing
+    downstream would catch it.
+
+    A directory standing where a tracked file was is the portable way to
+    reach a real `OSError` here: git keeps listing the path from the index,
+    and the errno differs by platform (`EISDIR`, `EACCES` on Windows) but the
+    class does not.
+    """
+    (git_repo / "src" / "mod.py").unlink()
+    (git_repo / "src" / "mod.py").mkdir()
+    assert "src/mod.py" in [r.path for r in rs.WorkTree().files()], (
+        "premise: the index still lists it, so the read is reached at all"
+    )
+
+    report = rs.build_report(rs.WorkTree())
+
+    assert len(report.warnings) == 1, report.warnings
+    assert report.warnings[0].startswith("src/mod.py: unreadable (")
+    assert report.warnings[0].endswith("); skipped")
+
+    # "it is one file, the operator can see it, and every other number
+    # stands" -- the half a `StatsError` would take with it.
+    assert report.per_category[rs.LABEL_IMPL].files == 0
+    assert report.per_category[rs.LABEL_SPECS].files == 1
+    assert report.per_category[rs.LABEL_TOOLING].files == 1
+
+
 def test_personal_paths_are_never_enumerated_at_any_revision(git_repo: Path) -> None:
     """ADR-0079: `specs/personal/` must not exist, and if it somehow does it is
     neither counted nor read -- including in history, where a past commit is
