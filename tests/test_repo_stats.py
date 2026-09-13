@@ -1056,6 +1056,22 @@ def test_every_snapshot_writer_reads_the_same_counts_field_into_the_same_column(
         "**6**",
     ]
 
+    # The KiB column needs its own fixture rather than a seventh entry in the
+    # slices above. `_kib` divides by 1024 and rounds to one decimal, so under
+    # ~52 bytes every field renders "0.0" and the column cannot say which one
+    # it was given -- the same blindness as an equal-value fixture, arriving
+    # through the rounding instead. Review found both swaps live in the gap
+    # those slices left. Here the byte totals are 1500 and 1700 against line
+    # counts of 250 and 350, so `_kib` tells them apart.
+    big = rs.build_report(
+        DictSource({"src/pkg/mod.py": b"x = 1\n" * 250, "specs/a.md": b"a\n" * 100})
+    )
+    big_lines = rs.render_markdown(big).splitlines()
+    row = next(line for line in big_lines if line.startswith(f"| {rs.LABEL_IMPL} "))
+    assert [cell.strip() for cell in row.strip("|").split("|")][6] == "1.5"
+    total = next(line for line in big_lines if line.startswith("| **Total**"))
+    assert [cell.strip() for cell in total.strip("|").split("|")][6] == "**1.7**"
+
 
 def test_every_diff_writer_reads_the_same_counts_field_into_the_same_column() -> None:
     """The diff half of the same rule, over a pair whose deltas all differ.
