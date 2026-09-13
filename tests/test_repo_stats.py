@@ -956,52 +956,21 @@ def test_render_history_md_is_one_row_per_point() -> None:
     assert cells == ["ccccccc", "2026-05-01", "3", "16", "5", "7", "1"]
 
 
-def test_every_writer_reads_the_same_counts_field_into_the_same_column() -> None:
-    """Which `Counts` field each emitter puts in each column, for the three
-    writers the two tidy-long ones above do not cover.
+def _distinct_pair() -> tuple[rs.Report, rs.Report]:
+    """A base and head whose every delta field is a different number.
 
-    One rule, five sites. Review found the swap live in `render_history_md`
-    and `render_history_csv`, they were pinned, and the identical swap was
-    then found live in the three writers here -- `render_json`'s per-category
-    payload (which `render_diff_json` reuses for its `base` and `head`
-    halves), `render_markdown`'s snapshot table, and `_DIFF_METRICS`, which
-    drives both diff writers. Every one was invisible for the same reason:
-    the standing fixtures give several fields equal values, so reading the
-    wrong one changes nothing. Hence one test over one distinct-valued
-    fixture rather than an assertion bolted onto each writer's own test.
+    `_pair()` gives `physical` and `code` equal values in both reports, so a
+    diff writer reading one where the other belongs emits identical output.
+    Measured here -- base (files 1, physical 6, code 1, comment 2, blank 3,
+    bytes 17), head (1, 10, 6, 3, 1, 49), delta (0, 4, 5, 1, -2, 32). Two
+    columns still collide within a single report (`files` and `code` share a
+    base, `files` and `blank` share a head), which is why the CSV rows below
+    are pinned as whole `(base, head, delta)` triples: no two of the six
+    triples are equal, and that is what makes two metrics distinguishable.
 
-    The diff rows are pinned as whole `(base, head, delta)` triples because
-    that is what makes two metrics distinguishable: `files` and `code` share
-    a base here, and `files` and `blank` share a head, but no two of the six
-    triples are equal.
+    Implementation is the only populated category, so `_totals` equals the
+    implementation row and a swap inside it reaches the Total assertions.
     """
-    report = _distinct_report(commit="c" * 12, date="2026-05-01T10:00:00+00:00")
-    expected = {
-        "files": 2,
-        "physical": 9,
-        "code": 5,
-        "comment": 1,
-        "blank": 3,
-        "bytes": 45,
-    }
-
-    # `render_json` -- and, through `_report_payload`, the diff's base/head.
-    payload = json.loads(rs.render_json(report))
-    assert payload["categories"][rs.LABEL_IMPL] == expected
-
-    # The snapshot table a human reads first. Bytes render as KiB, so the
-    # five count columns are what this pins.
-    row = next(
-        line
-        for line in rs.render_markdown(report).splitlines()
-        if line.startswith(f"| {rs.LABEL_IMPL} ")
-    )
-    cells = [cell.strip() for cell in row.strip("|").split("|")]
-    assert cells[1:6] == ["2", "9", "5", "1", "3"]
-
-    # `_DIFF_METRICS`: the wire name on the left, the `Counts` attribute it
-    # reads on the right. `_pair()` cannot see a mix-up between `physical`
-    # and `code` because it gives them equal values in both reports.
     base = rs.build_report(
         DictSource(
             {"src/pkg/mod.py": b"# c\n# d\nx = 1\n\n\n\n"},
@@ -1020,9 +989,80 @@ def test_every_writer_reads_the_same_counts_field_into_the_same_column() -> None
             commit="b" * 40,
         )
     )
+    return base, head
+
+
+def test_every_snapshot_writer_reads_the_same_counts_field_into_the_same_column() -> (
+    None
+):
+    """Which `Counts` field each snapshot emitter puts in each column.
+
+    One rule, eight sites, found three rounds running: first
+    `render_history_md` and `render_history_csv` (pinned in their own tests
+    above), then `render_json`'s per-category payload and `render_markdown`'s
+    table, then `_totals`, which feeds every **Total** row in the module.
+    Each was invisible for the same reason -- the standing fixtures give
+    several fields equal values, so reading the wrong one changes nothing --
+    which is why this pins the mapping over one distinct-valued fixture
+    rather than bolting an assertion onto each writer's own test.
+
+    Split from the diff writers deliberately: bundling every writer into one
+    function meant a second simultaneous regression stayed hidden behind the
+    first failing assertion.
+    """
+    report = _distinct_report(commit="c" * 12, date="2026-05-01T10:00:00+00:00")
+
+    # `render_json` -- and, through `_report_payload`, the diff's base/head.
+    payload = json.loads(rs.render_json(report))
+    assert payload["categories"][rs.LABEL_IMPL] == {
+        "files": 2,
+        "physical": 9,
+        "code": 5,
+        "comment": 1,
+        "blank": 3,
+        "bytes": 45,
+    }
+
+    # The snapshot table a human reads first. Bytes render as KiB, so the
+    # five count columns are what these pin.
+    lines = rs.render_markdown(report).splitlines()
+    row = next(line for line in lines if line.startswith(f"| {rs.LABEL_IMPL} "))
+    assert [cell.strip() for cell in row.strip("|").split("|")][1:6] == [
+        "2",
+        "9",
+        "5",
+        "1",
+        "3",
+    ]
+
+    # `_totals`, which sums the six fields by hand and is read by every
+    # **Total** row in the module.
+    total = next(line for line in lines if line.startswith("| **Total**"))
+    assert [cell.strip() for cell in total.strip("|").split("|")][1:6] == [
+        "**3**",
+        "**16**",
+        "**9**",
+        "**1**",
+        "**6**",
+    ]
+
+
+def test_every_diff_writer_reads_the_same_counts_field_into_the_same_column() -> None:
+    """The diff half of the same rule, over a pair whose deltas all differ.
+
+    Three separate mappings live here and none is reachable from the other:
+    `render_diff_csv` subtracts inline through `_DIFF_METRICS`,
+    `category_deltas` hand-copies six field pairs for `render_diff` and for
+    `render_diff_json`'s `delta.categories`, and `_totals` feeds both
+    **Total** rows and `delta.total`. Review found a field swap live in each.
+    """
+    base, head = _distinct_pair()
+
+    # `_DIFF_METRICS`: the wire name on the left, the attribute it reads on
+    # the right. This path never calls `category_deltas` -- it subtracts
+    # `hv - bv` itself, which is why the two need separate oracles.
     rows = list(csv.reader(io.StringIO(rs.render_diff_csv(base, head))))
-    impl = {r[1]: r[2:5] for r in rows[1:] if r[0] == rs.LABEL_IMPL}
-    assert impl == {
+    assert {r[1]: r[2:5] for r in rows[1:] if r[0] == rs.LABEL_IMPL} == {
         "files": ["1", "1", "0"],
         "physical": ["6", "10", "4"],
         "code": ["1", "6", "5"],
@@ -1030,6 +1070,40 @@ def test_every_writer_reads_the_same_counts_field_into_the_same_column() -> None
         "blank": ["3", "1", "-2"],
         "bytes": ["17", "49", "32"],
     }
+
+    # `category_deltas`, and the order `render_diff` reads it back in.
+    lines = rs.render_diff(base, head).splitlines()
+    row = next(line for line in lines if line.startswith(f"| {rs.LABEL_IMPL} "))
+    assert [cell.strip() for cell in row.strip("|").split("|")][1:] == [
+        "+0",
+        "+4",
+        "+5",
+        "+1",
+        "-2",
+        "+32",
+    ]
+    total = next(line for line in lines if line.startswith("| **Total**"))
+    assert [cell.strip() for cell in total.strip("|").split("|")][1:] == [
+        "**+0**",
+        "**+4**",
+        "**+5**",
+        "**+1**",
+        "**-2**",
+        "**+32**",
+    ]
+
+    # The same two mappings again on the JSON wire.
+    delta = json.loads(rs.render_diff_json(base, head))["delta"]
+    expected = {
+        "files": 0,
+        "physical": 4,
+        "code": 5,
+        "comment": 1,
+        "blank": -2,
+        "bytes": 32,
+    }
+    assert delta["categories"][rs.LABEL_IMPL] == expected
+    assert delta["total"] == expected
 
 
 def _degraded_pair() -> tuple[rs.Report, rs.Report]:
