@@ -849,21 +849,31 @@ def test_render_markdown_lists_uncounted_files_when_there_are_some() -> None:
 def test_docs_ratio_counts_every_markdown_category() -> None:
     """The label says "all markdown lines", so the number must include the
     harness and tooling rows -- the defect that made this ratio wrong was a
-    hand-kept list of three category names beside that label."""
+    hand-kept list of three category names beside that label.
+
+    Every file carries a blank line so that `physical` and `code` differ in
+    both halves: markdown sums to 10 physical against 5 code, Python to 3
+    physical against 1 code. With one line per file they were equal, and this
+    test -- the only one written to verify these two helpers -- could not tell
+    `docs_physical` reading `.physical` from reading `.code`. Review found
+    both swaps live here; the suite caught them only through
+    `render_history_md`, which happens to call these helpers, so the coverage
+    would have vanished on any refactor of that unrelated function.
+    """
     source = DictSource(
         {
-            "src/pkg/mod.py": b"x = 1\n",  # 1 code line
-            "specs/top.md": b"a\n",
-            "specs/reviews/r.md": b"b\n",
-            "specs/adr/0001-a.md": b"c\n",
-            ".claude/skills/land/SKILL.md": b"d\n",
-            "README.md": b"e\n",
+            "src/pkg/mod.py": b"# c\nx = 1\n\n",  # 3 physical, 1 code
+            "specs/top.md": b"a\n\n",
+            "specs/reviews/r.md": b"b\n\n",
+            "specs/adr/0001-a.md": b"c\n\n",
+            ".claude/skills/land/SKILL.md": b"d\n\n",
+            "README.md": b"e\n\n",
         }
     )
     report = rs.build_report(source)
-    assert rs.docs_physical(report) == 5  # all five markdown files, not three
+    assert rs.docs_physical(report) == 10  # all five markdown files, not three
     assert rs.code_total(report) == 1
-    assert "Docs : code — 5.00:1" in rs.render_markdown(report)
+    assert "Docs : code — 10.00:1" in rs.render_markdown(report)
 
 
 def test_render_json_is_valid_and_structured() -> None:
