@@ -1445,6 +1445,33 @@ def test_the_chart_escapes_the_paths_it_names() -> None:
     assert "docs/a&b<c>.md" not in out
 
 
+def test_the_chart_plots_physical_lines_and_says_so_on_its_axis() -> None:
+    """Which `Counts` field the stacked bands are built from.
+
+    Three review rounds ruled this site out with the same reasoning: the
+    function reads one field (`.physical`) and never a second, so there is no
+    pair to swap. That is wrong -- the field it reads is still a choice, and
+    nothing checked it. A 53-mutation sweep over every `Counts` read in the
+    module found exactly two survivors, and this was the real one: swapping
+    `.physical` for `.files` in the series makes the chart plot file counts
+    while labelling itself lines, with all 161 tests green.
+
+    The y axis is where the number becomes assertable -- it prints
+    `int(peak * frac)`, and `peak` is the stack sum. Lines total 16 here
+    against 3 files and 9 code, so the top label names the field.
+    """
+    out = rs.render_history_html(
+        [_distinct_report(commit="c" * 12, date="2026-05-01T10:00:00+00:00")]
+    )
+    assert re.findall(r'text-anchor="end">([^<]+)</text>', out) == [
+        "0",
+        "4",
+        "8",
+        "12",
+        "16",
+    ]
+
+
 def test_render_history_html_draws_one_band_per_category() -> None:
     reports = [
         _small_report(commit="a" * 12, date="2026-03-02T10:00:00+00:00"),
